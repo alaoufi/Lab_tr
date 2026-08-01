@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application' version '8.5.2'
+}
+
+android {
+    namespace 'me.alaoufi.dalili'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "me.alaoufi.dalili"
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            // توقيع تجريبي (debug) حتى يُثبَّت مباشرة بلا إعداد إضافي.
+            // لتوزيعه لاحقًا رسميًا أنشئ مفتاح توقيع خاص بك عبر Android Studio
+            // (Build > Generate Signed Bundle / APK) واستبدل هذا القسم.
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+// androidx.core و androidx.activity يجلبان نسختين مختلفتين من مكتبة Kotlin
+// القياسية (1.6.21 و1.8.22) فتتكرّر الأصناف ويفشل البناء. توحيدها على 1.8.22
+// يحلّ التعارض (حزمتا jdk7/jdk8 صارتا فارغتين منذ 1.8 ومحتواهما داخل الأساسية).
+configurations.configureEach {
+    resolutionStrategy {
+        force 'org.jetbrains.kotlin:kotlin-stdlib:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.22'
+        force 'org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.8.22'
+    }
+}
+
+dependencies {
+    // FileProvider (مشاركة الصورة الناتجة كملف) + ComponentActivity الحديثة
+    // (اختيار الملف عند الاستيراد + زر الرجوع) بدون AppCompat/Material كاملة
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.activity:activity:1.9.0'
+}
