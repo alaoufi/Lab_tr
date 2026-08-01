@@ -8,6 +8,7 @@
 
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
 var DB = { pin_hash: null, meds: [], labs: [], cart: { meds: [], labs: [] }, out: null };
+/* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
    التحليل يظهران دائمًا، فليسا ضمن القائمة. */
@@ -37,7 +38,9 @@ function parseList(raw, fallback) {
   catch (e) { return fallback.slice(); }
 }
 function applyData(data) {
-  if (!data) return;
+  // تشغيل أول بلا بيانات محفوظة يصل هنا بـnull — نكمل بالقيم الافتراضية
+  // بدل الخروج، وإلا بقي DB.out فارغًا وانهارت الطباعة والإعدادات.
+  data = data || {};
   DB.meds = Array.isArray(data.meds) ? data.meds : [];
   DB.labs = Array.isArray(data.labs) ? data.labs : [];
   var c = data.cart || {};
@@ -141,7 +144,40 @@ async function sha256(text) {
   var buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
 }
-var TAB = 'meds';
+/* ── التنقل: صفحة رئيسية + صفحات داخلية بسهم رجوع ──
+   NAV مكدّس بسيط: goPage يدفع صفحة، وسهم الرجوع (وزر الرجوع في الجهاز)
+   يسحب آخر واحدة. هكذا يعود «المكتبة» لمن دخلها من الإعدادات إلى
+   الإعدادات، ولمن دخلها من الرئيسية إلى الرئيسية. */
+var NAV = ['home'];
+function curPage() { return NAV[NAV.length - 1]; }
+window.goPage = function (p) {
+  if (curPage() !== p) NAV.push(p);
+  window.scrollTo(0, 0);
+  render();
+};
+window.goBack = function () {
+  if (NAV.length > 1) NAV.pop();
+  window.scrollTo(0, 0);
+  render();
+};
+window.goHome = function () { NAV = ['home']; window.scrollTo(0, 0); render(); };
+
+/** زر الرجوع في الجهاز: يغلق المودال، ثم يرجع صفحة، وإلا يخرج من التطبيق. */
+window.onAndroidBack = function () {
+  var mb = $('modal-bg');
+  if (mb && mb.className.indexOf('on') >= 0) { closeModal(); return true; }
+  if (NAV.length > 1) { goBack(); return true; }
+  return false;
+};
+
+var PAGES = {
+  home:     { icon: '💊🧪', title: 'دليلي الطبي' },
+  meds:     { icon: '💊', title: 'العلاجات' },
+  labs:     { icon: '🧪', title: 'التحاليل' },
+  settings: { icon: '⚙️', title: 'الإعدادات' },
+  'lib:labs': { icon: '📚', title: 'مكتبة التحاليل' },
+  'lib:meds': { icon: '📚', title: 'مكتبة العلاجات' }
+};
 
 async function boot() {
   Store.load();
@@ -169,13 +205,15 @@ window.tryUnlock = async function () {
 
 function showApp() {
   $('lock').className = 'scr'; $('app').className = 'scr on';
-  renderTabs();
+  render();
 }
 
-/* ── إعدادات: تعيين/تغيير/إزالة رمز القفل + نسخ احتياطي ── */
-window.openSettings = function () {
+/* ── صفحة الإعدادات: رمز القفل + الحقول المرسلة + المكتبة + النسخ الاحتياطي ── */
+window.openSettings = function () { goPage('settings'); };
+function renderSettings() {
   var hasPin = !!DB.pin_hash;
-  openModal('⚙️ الإعدادات',
+  var lib = window.LIBRARY || { labs: [], meds: [] };
+  h('page',
     '<div class="settings-sec">'
     + '<div class="settings-lbl">حماية التطبيق</div>'
     + (hasPin
@@ -190,8 +228,8 @@ window.openSettings = function () {
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">المكتبة الجاهزة (مدمجة داخل التطبيق)</div>'
-    + '<button class="btn full" onclick="openLibrary(\'labs\')">🧪 إضافة من مكتبة التحاليل</button>'
-    + '<button class="btn full" onclick="openLibrary(\'meds\')">💊 إضافة من مكتبة العلاجات</button>'
+    + '<button class="btn full" onclick="goPage(\'lib:labs\')">🧪 مكتبة التحاليل (' + lib.labs.length + ')</button>'
+    + '<button class="btn full" onclick="goPage(\'lib:meds\')">💊 مكتبة العلاجات (' + lib.meds.length + ')</button>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">النسخ الاحتياطي (يبقى على جهازك فقط)</div>'
@@ -200,9 +238,9 @@ window.openSettings = function () {
     + '<input type="file" accept="application/json" onchange="importBackup(this)" style="display:none"></label>'
     + '</div>'
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
-    + '<div class="muted">جميع بياناتك محفوظة محليًا على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا.</div></div>'
+    + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا. التطبيق لا يملك صلاحية إنترنت أصلًا.</div></div>'
   );
-};
+}
 function outBlock(kind, title, fields) {
   var sel = DB.out[kind];
   return '<div class="out-grp"><div class="out-t">' + title + '</div>'
@@ -235,26 +273,33 @@ function libCats() {
   libList().forEach(function (o) { if (cats.indexOf(o.category) < 0) cats.push(o.category); });
   return cats;
 }
+/* البحث يشمل كل نص العنصر — البحث عن «صيام» أو «مضاد حيوي» يجب أن يجد
+   ما ورد في المتطلبات والمحاذير لا في الاسم وحده. */
 function libHay(o) {
   return norm(LIB_KIND === 'meds'
-    ? [o.trade_name, o.scientific_name, o.category, o.uses].join(' ')
-    : [o.code, o.name, o.category, o.purpose].join(' '));
+    ? [o.trade_name, o.scientific_name, o.category, o.uses, o.cautions].join(' ')
+    : [o.code, o.name, o.category, o.purpose, o.requirements, o.prohibitions].join(' '));
 }
 function libCount() {
   var e = $('lib-n'); if (e) e.textContent = Object.keys(LIB_SEL).length;
 }
 
-window.openLibrary = function (kind) {
+window.openLibrary = function (kind) { goPage('lib:' + kind); };
+
+/** يُعيد بناء قائمة «الموجود عندي» — تُستدعى عند فتح الصفحة وبعد كل إضافة. */
+function libSyncMine() {
+  LIB_MINE = {};
+  (LIB_KIND === 'meds' ? DB.meds : DB.labs).forEach(function (o) { LIB_MINE[libKey(LIB_KIND, o)] = 1; });
+}
+function renderLibraryPage(kind) {
   LIB_KIND = kind;
   var lib = libList();
-  if (!lib.length) return toast('المكتبة غير متوفرة', 'er');
-  LIB_SEL = {}; LIB_MINE = {};
-  (kind === 'meds' ? DB.meds : DB.labs).forEach(function (o) { LIB_MINE[libKey(kind, o)] = 1; });
-
-  openModal(kind === 'meds' ? '📚 مكتبة العلاجات' : '📚 مكتبة التحاليل',
-    '<div class="lib-bar">'
+  if (!lib.length) { h('page', emptyBox('📚', 'المكتبة غير متوفرة', 'ملف library.js مفقود')); return; }
+  LIB_SEL = {};
+  libSyncMine();
+  h('page', '<div class="lib-bar">'
     + '<button class="btn primary full" style="margin:0" onclick="libAdd()">'
-    + '➕ إضافة المحدد (<span id="lib-n">0</span>)</button>'
+    + '➕ إضافة المحدد: <span id="lib-n">0</span></button>'
     + '<input id="lib-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث في المكتبة…" oninput="libRender()">'
     + '<div class="muted" style="margin-top:7px">'
     + lib.length + (kind === 'meds' ? ' علاجًا' : ' تحليلًا') + ' في ' + libCats().length + ' تصنيفًا. '
@@ -262,15 +307,16 @@ window.openLibrary = function (kind) {
     + (kind === 'meds' ? ' الجرعات فارغة عمدًا — أضِفها بنفسك بعد الإضافة.' : '')
     + '</div></div><div id="lib-list"></div>');
   libRender();
-};
+}
 
 function libItem(i, ci) {
   var o = libList()[i];
   var have = !!LIB_MINE[libKey(LIB_KIND, o)];
   var nm = LIB_KIND === 'meds' ? o.trade_name : (o.code ? o.code + ' — ' + o.name : o.name);
+  // الاسم ظاهر في السطر الأول — لا نكرّره في السطر الوصفي
   var sub = LIB_KIND === 'meds'
     ? [o.scientific_name, o.uses].filter(Boolean).join(' • ')
-    : [o.name, o.purpose].filter(Boolean).join(' • ');
+    : (o.purpose || o.requirements || '');
   return '<label class="lib-i' + (have ? ' have' : '') + '" data-cat="' + ci + '">'
     + '<input type="checkbox" id="lib-c-' + i + '"' + (have ? ' disabled' : '')
     + (LIB_SEL[i] ? ' checked' : '') + ' onchange="libToggle(' + i + ')">'
@@ -315,6 +361,12 @@ window.libAll = function (ci) {
   }
   libCount();
 };
+/** صياغة عربية سليمة للعدد: مفرد ومثنى وجمع قلة وجمع كثرة. */
+function countWord(n, one, two, few, many) {
+  if (n === 1) return one;
+  if (n === 2) return two;
+  return n + ' ' + (n <= 10 ? few : many);
+}
 window.libAdd = function () {
   var lib = libList(), kind = LIB_KIND;
   var items = Object.keys(LIB_SEL).map(function (k) {
@@ -326,8 +378,12 @@ window.libAdd = function () {
   if (!items.length) return toast('لم تحدد شيئًا بعد', 'er');
   if (kind === 'meds') DB.meds = DB.meds.concat(items); else DB.labs = DB.labs.concat(items);
   Store.addMany(kind, items);
-  LIB_SEL = {}; closeModal(); renderTabs();
-  toast('✅ أُضيف ' + items.length + (kind === 'meds' ? ' علاجًا' : ' تحليلًا'));
+  LIB_SEL = {};
+  libSyncMine();          // المضاف حديثًا يصير باهتًا فلا يُضاف مرتين
+  libCount(); libRender();
+  toast('✅ تمت إضافة ' + (kind === 'meds'
+    ? countWord(items.length, 'علاج واحد', 'علاجين', 'علاجات', 'علاجًا')
+    : countWord(items.length, 'تحليل واحد', 'تحليلين', 'تحاليل', 'تحليلًا')));
 };
 
 window.setupPin = function () {
@@ -368,7 +424,7 @@ window.importBackup = function (input) {
         DB.cart.meds = DB.cart.meds.filter(function (id) { return DB.meds.some(function (m) { return m.id === id; }); });
         DB.cart.labs = DB.cart.labs.filter(function (id) { return DB.labs.some(function (t) { return t.id === id; }); });
         Store.replaceAll(); Store.setOut('meds'); Store.setOut('labs');
-        closeModal(); renderTabs(); toast('✅ تم الاستيراد');
+        closeModal(); render(); toast('✅ تم الاستيراد');
       });
     } catch (e) { toast('ملف غير صالح', 'er'); }
   };
@@ -387,14 +443,57 @@ function confirmBox(msg, onYes) {
   var b = $('cb-yes'); if (b) b.onclick = onYes;
 }
 
-/* ── التبويبات ── */
-window.goTab = function (t) { TAB = t; renderTabs(); };
-function renderTabs() {
-  h('tabbar', ['meds', 'labs'].map(function (t) {
-    var lbl = t === 'meds' ? '💊 العلاجات' : '🧪 التحاليل';
-    return '<button class="tab' + (TAB === t ? ' on' : '') + '" onclick="goTab(\'' + t + '\')">' + lbl + '</button>';
-  }).join(''));
-  if (TAB === 'meds') renderMeds(); else renderLabs();
+/* ── موزّع الصفحات ── */
+function render() {
+  var p = curPage(), meta = PAGES[p] || PAGES.home;
+  var bk = $('hdr-back'), st = $('hdr-set');
+  if (bk) bk.style.display = NAV.length > 1 ? '' : 'none';
+  if (st) st.style.display = (p === 'settings') ? 'none' : '';
+  h('hdr-title', esc(meta.title));
+  h('hdr-icon', meta.icon);
+
+  if (p === 'meds') renderMeds();
+  else if (p === 'labs') renderLabs();
+  else if (p === 'settings') renderSettings();
+  else if (p === 'lib:labs') renderLibraryPage('labs');
+  else if (p === 'lib:meds') renderLibraryPage('meds');
+  else renderHome();
+}
+
+/* ── الصفحة الرئيسية ── */
+function homeCard(page, icon, title, sub) {
+  return '<button class="hcard" onclick="goPage(\'' + page + '\')">'
+    + '<span class="hci">' + icon + '</span>'
+    + '<span class="hct">' + esc(title) + '</span>'
+    + '<span class="hcs">' + esc(sub) + '</span></button>';
+}
+function renderHome() {
+  var lib = window.LIBRARY || { labs: [], meds: [] };
+  var nm = DB.meds.length, nl = DB.labs.length;
+  var html = '<div class="hero"><div class="hero-t">أهلًا بك 👋</div>'
+    + '<div class="hero-s">كتالوجك الشخصي للعلاجات والتحاليل — يعمل بلا إنترنت، وبياناتك على جهازك وحده.</div></div>';
+
+  var cart = DB.cart.meds.length + DB.cart.labs.length;
+  if (cart) {
+    html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
+      + (DB.cart.meds.length ? '<button class="btn white sm" onclick="goPage(\'meds\')">علاجات (' + DB.cart.meds.length + ')</button>' : '')
+      + (DB.cart.labs.length ? '<button class="btn white sm" onclick="goPage(\'labs\')">تحاليل (' + DB.cart.labs.length + ')</button>' : '')
+      + '</div>';
+  }
+
+  html += '<div class="hgrid">'
+    + homeCard('meds', '💊', 'العلاجات', nm ? countWord(nm, 'علاج واحد', 'علاجان', 'علاجات', 'علاجًا') : 'لا شيء بعد')
+    + homeCard('labs', '🧪', 'التحاليل', nl ? countWord(nl, 'تحليل واحد', 'تحليلان', 'تحاليل', 'تحليلًا') : 'لا شيء بعد')
+    + homeCard('lib:meds', '📚', 'مكتبة العلاجات', lib.meds.length + ' جاهزًا')
+    + homeCard('lib:labs', '📚', 'مكتبة التحاليل', lib.labs.length + ' جاهزًا')
+    + '</div>';
+
+  html += '<div class="hquick">'
+    + '<button class="btn primary" onclick="medForm()">+ إضافة علاج</button>'
+    + '<button class="btn primary" onclick="labForm()">+ إضافة تحليل</button>'
+    + '</div>'
+    + '<button class="btn full" style="margin-top:10px" onclick="goPage(\'settings\')">⚙️ الإعدادات والنسخ الاحتياطي</button>';
+  h('page', html);
 }
 
 /* ════════════════════════ 💊 العلاجات ════════════════════════ */
@@ -471,9 +570,9 @@ function cartBar(kind, n) {
 window.toggleCart = function (kind, id) {
   var arr = DB.cart[kind]; var i = arr.indexOf(id);
   if (i >= 0) arr.splice(i, 1); else arr.push(id);
-  Store.setCart(kind); renderTabs();
+  Store.setCart(kind); render();
 };
-window.clearCart = function (kind) { DB.cart[kind] = []; Store.setCart(kind); renderTabs(); };
+window.clearCart = function (kind) { DB.cart[kind] = []; Store.setCart(kind); render(); };
 
 window.medForm = function (id) {
   var m = id ? (DB.meds.find(function (x) { return x.id === id; }) || {}) : {};
@@ -500,13 +599,14 @@ window.medSave = function (id) {
   var rec;
   if (id) { rec = DB.meds.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.meds.push(body); rec = body; }
-  Store.upsertMed(rec); closeModal(); toast('✅ تم الحفظ'); renderTabs();
+  Store.upsertMed(rec); closeModal(); toast('✅ تم الحفظ');
+  if (curPage() === 'home') goPage('meds'); else render();
 };
 window.medDel = function (id) {
   confirmBox('حذف هذا العلاج؟', function () {
     DB.meds = DB.meds.filter(function (x) { return x.id !== id; });
     DB.cart.meds = DB.cart.meds.filter(function (x) { return x !== id; });
-    Store.remove('meds', id); closeModal(); toast('🗑️ تم الحذف'); renderTabs();
+    Store.remove('meds', id); closeModal(); toast('🗑️ تم الحذف'); render();
   });
 };
 
@@ -591,13 +691,14 @@ window.labSave = function (id) {
   var rec;
   if (id) { rec = DB.labs.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.labs.push(body); rec = body; }
-  Store.upsertLab(rec); closeModal(); toast('✅ تم الحفظ'); renderTabs();
+  Store.upsertLab(rec); closeModal(); toast('✅ تم الحفظ');
+  if (curPage() === 'home') goPage('labs'); else render();
 };
 window.labDel = function (id) {
   confirmBox('حذف هذا التحليل؟', function () {
     DB.labs = DB.labs.filter(function (x) { return x.id !== id; });
     DB.cart.labs = DB.cart.labs.filter(function (x) { return x !== id; });
-    Store.remove('labs', id); closeModal(); toast('🗑️ تم الحذف'); renderTabs();
+    Store.remove('labs', id); closeModal(); toast('🗑️ تم الحذف'); render();
   });
 };
 

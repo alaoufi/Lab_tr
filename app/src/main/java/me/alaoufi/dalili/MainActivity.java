@@ -73,14 +73,20 @@ public class MainActivity extends ComponentActivity {
 
         webView.loadUrl("file:///android_asset/index.html");
 
+        // زر الرجوع في الجهاز يُسلَّم أولًا للواجهة: تغلق المودال أو ترجع
+        // صفحة، وإن لم يكن هناك ما يُرجَع إليه ("false") يخرج من التطبيق.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (webView.canGoBack()) webView.goBack();
-                else {
-                    setEnabled(false);
-                    getOnBackPressedDispatcher().onBackPressed();
-                }
+                final OnBackPressedCallback self = this;
+                webView.evaluateJavascript(
+                        "(function(){try{return !!(window.onAndroidBack&&window.onAndroidBack());}catch(e){return false;}})()",
+                        (String handled) -> {
+                            if (!"true".equals(handled)) {
+                                self.setEnabled(false);
+                                getOnBackPressedDispatcher().onBackPressed();
+                            }
+                        });
             }
         });
     }
