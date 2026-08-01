@@ -217,61 +217,106 @@ window.toggleOut = function (kind, key) {
   Store.setOut(kind);
 };
 
-/* ── المكتبة الجاهزة: نسخ عناصر مصنّفة إلى قاعدة بيانات المستخدم ── */
-var LIB_SEL = {};
+/* ── المكتبة الجاهزة: نسخ عناصر مصنّفة إلى قاعدة بيانات المستخدم ──
+   المكتبة كبيرة (مئات العناصر) فالعرض مقسّم على تصنيفات مطويّة، ومعها بحث
+   يعرض النتائج قائمةً مسطّحة. البحث يُحدِّث قائمة النتائج فقط حتى لا يفقد
+   حقل البحث تركيزه أثناء الكتابة. */
+var LIB_SEL = {}, LIB_KIND = 'labs', LIB_MINE = {};
+
 function norm(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
 function libKey(kind, o) {
   return kind === 'meds'
     ? norm(o.trade_name) + '|' + norm(o.scientific_name)
     : norm(o.code) + '|' + norm(o.name);
 }
-window.openLibrary = function (kind) {
-  var lib = (window.LIBRARY || {})[kind] || [];
-  if (!lib.length) return toast('المكتبة غير متوفرة', 'er');
-  LIB_SEL = {};
-  var mine = {};
-  (kind === 'meds' ? DB.meds : DB.labs).forEach(function (o) { mine[libKey(kind, o)] = 1; });
-
+function libList() { return (window.LIBRARY || {})[LIB_KIND] || []; }
+function libCats() {
   var cats = [];
-  lib.forEach(function (o) { if (cats.indexOf(o.category) < 0) cats.push(o.category); });
-
-  var body = '<div class="lib-bar">'
-    + '<button class="btn primary full" style="margin:0" onclick="libAdd(\'' + kind + '\')">'
-    + '➕ إضافة المحدد (<span id="lib-n">0</span>)</button>'
-    + '<div class="muted" style="margin-top:7px">العناصر الباهتة مضافة عندك مسبقًا.'
-    + (kind === 'meds' ? ' الجرعات فارغة عمدًا — أضِفها بنفسك بعد الإضافة.' : '') + '</div></div>';
-
-  cats.forEach(function (cat, ci) {
-    var inner = '<div style="padding:4px 6px 8px"><button class="btn sm" onclick="libAll(\'' + kind + '\',' + ci + ')">تحديد كل التصنيف</button></div>';
-    lib.forEach(function (o, i) {
-      if (o.category !== cat) return;
-      var have = !!mine[libKey(kind, o)];
-      var nm = kind === 'meds' ? o.trade_name : (o.code ? o.code + ' — ' + o.name : o.name);
-      var sub = kind === 'meds' ? (o.scientific_name || '') : (o.purpose || o.requirements || '');
-      inner += '<label class="lib-i' + (have ? ' have' : '') + '" data-cat="' + ci + '">'
-        + '<input type="checkbox" id="lib-c-' + i + '"' + (have ? ' disabled' : '')
-        + ' onchange="libToggle(\'' + kind + '\',' + i + ')">'
-        + '<span><span class="lib-t">' + esc(nm) + '</span>'
-        + (sub ? '<span class="lib-s"><br>' + esc(sub) + '</span>' : '') + '</span></label>';
-    });
-    body += accBlock('📁 ' + cat, inner, false);
-  });
-  openModal(kind === 'meds' ? '📚 مكتبة العلاجات' : '📚 مكتبة التحاليل', body);
-};
-window.libToggle = function (kind, i) {
-  if (LIB_SEL[i]) delete LIB_SEL[i]; else LIB_SEL[i] = 1;
+  libList().forEach(function (o) { if (cats.indexOf(o.category) < 0) cats.push(o.category); });
+  return cats;
+}
+function libHay(o) {
+  return norm(LIB_KIND === 'meds'
+    ? [o.trade_name, o.scientific_name, o.category, o.uses].join(' ')
+    : [o.code, o.name, o.category, o.purpose].join(' '));
+}
+function libCount() {
   var e = $('lib-n'); if (e) e.textContent = Object.keys(LIB_SEL).length;
+}
+
+window.openLibrary = function (kind) {
+  LIB_KIND = kind;
+  var lib = libList();
+  if (!lib.length) return toast('المكتبة غير متوفرة', 'er');
+  LIB_SEL = {}; LIB_MINE = {};
+  (kind === 'meds' ? DB.meds : DB.labs).forEach(function (o) { LIB_MINE[libKey(kind, o)] = 1; });
+
+  openModal(kind === 'meds' ? '📚 مكتبة العلاجات' : '📚 مكتبة التحاليل',
+    '<div class="lib-bar">'
+    + '<button class="btn primary full" style="margin:0" onclick="libAdd()">'
+    + '➕ إضافة المحدد (<span id="lib-n">0</span>)</button>'
+    + '<input id="lib-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث في المكتبة…" oninput="libRender()">'
+    + '<div class="muted" style="margin-top:7px">'
+    + lib.length + (kind === 'meds' ? ' علاجًا' : ' تحليلًا') + ' في ' + libCats().length + ' تصنيفًا. '
+    + 'العناصر الباهتة مضافة عندك مسبقًا.'
+    + (kind === 'meds' ? ' الجرعات فارغة عمدًا — أضِفها بنفسك بعد الإضافة.' : '')
+    + '</div></div><div id="lib-list"></div>');
+  libRender();
 };
-window.libAll = function (kind, ci) {
-  var boxes = document.querySelectorAll('.lib-i[data-cat="' + ci + '"] input:not([disabled])');
+
+function libItem(i, ci) {
+  var o = libList()[i];
+  var have = !!LIB_MINE[libKey(LIB_KIND, o)];
+  var nm = LIB_KIND === 'meds' ? o.trade_name : (o.code ? o.code + ' — ' + o.name : o.name);
+  var sub = LIB_KIND === 'meds'
+    ? [o.scientific_name, o.uses].filter(Boolean).join(' • ')
+    : [o.name, o.purpose].filter(Boolean).join(' • ');
+  return '<label class="lib-i' + (have ? ' have' : '') + '" data-cat="' + ci + '">'
+    + '<input type="checkbox" id="lib-c-' + i + '"' + (have ? ' disabled' : '')
+    + (LIB_SEL[i] ? ' checked' : '') + ' onchange="libToggle(' + i + ')">'
+    + '<span><span class="lib-t">' + esc(nm) + '</span>'
+    + (sub ? '<span class="lib-s"><br>' + esc(sub) + '</span>' : '') + '</span></label>';
+}
+
+window.libRender = function () {
+  var lib = libList();
+  var q = norm(($('lib-q') || {}).value);
+  var hits = [];
+  lib.forEach(function (o, i) { if (!q || libHay(o).indexOf(q) >= 0) hits.push(i); });
+  if (!hits.length) { h('lib-list', emptyBox('🔎', 'لا نتائج', 'جرّب كلمة أخرى')); return; }
+
+  if (q) {
+    // نتائج البحث قائمة مسطّحة — التصنيفات المطويّة تخفي المطلوب
+    h('lib-list', '<div class="acc"><div class="acc-b">'
+      + hits.map(function (i) { return libItem(i, -1); }).join('') + '</div></div>');
+    return;
+  }
+  var cats = libCats(), html = '';
+  cats.forEach(function (cat, ci) {
+    var idx = hits.filter(function (i) { return lib[i].category === cat; });
+    if (!idx.length) return;
+    html += accBlock('📁 ' + cat + ' (' + idx.length + ')',
+      '<div style="padding:4px 6px 8px"><button class="btn sm" onclick="libAll(' + ci + ')">تحديد كل التصنيف</button></div>'
+      + idx.map(function (i) { return libItem(i, ci); }).join(''), false);
+  });
+  h('lib-list', html);
+};
+
+window.libToggle = function (i) {
+  if (LIB_SEL[i]) delete LIB_SEL[i]; else LIB_SEL[i] = 1;
+  libCount();
+};
+window.libAll = function (ci) {
+  // نعدّل مربعات الاختيار مباشرةً بدل إعادة الرسم حتى لا ينطوي التصنيف المفتوح
+  var boxes = document.querySelectorAll('#lib-list .lib-i[data-cat="' + ci + '"] input:not([disabled])');
   for (var k = 0; k < boxes.length; k++) {
     boxes[k].checked = true;
     LIB_SEL[parseInt(boxes[k].id.slice(6), 10)] = 1;
   }
-  var e = $('lib-n'); if (e) e.textContent = Object.keys(LIB_SEL).length;
+  libCount();
 };
-window.libAdd = function (kind) {
-  var lib = (window.LIBRARY || {})[kind] || [];
+window.libAdd = function () {
+  var lib = libList(), kind = LIB_KIND;
   var items = Object.keys(LIB_SEL).map(function (k) {
     var src = lib[parseInt(k, 10)]; if (!src) return null;
     var o = {}; for (var f in src) if (Object.prototype.hasOwnProperty.call(src, f)) o[f] = src[f];
