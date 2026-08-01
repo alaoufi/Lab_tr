@@ -23,9 +23,9 @@ public class DbBridge {
         this.db = db;
     }
 
-    /** لا يُسمح إلا بالجدولين المعروفين — اسم الجدول يدخل في نص SQL. */
+    /** لا يُسمح إلا بالجداول المعروفة — اسم الجدول يدخل في نص SQL. */
     private static boolean validKind(String kind) {
-        return "meds".equals(kind) || "labs".equals(kind);
+        return DaliliDb.isKind(kind);
     }
 
     /** كل البيانات دفعة واحدة عند الإقلاع: {pin_hash, meds, labs, cart}. */
@@ -39,24 +39,15 @@ public class DbBridge {
         }
     }
 
+    /** إضافة أو تعديل عنصر في أي قسم (meds / labs / recipes). */
     @JavascriptInterface
-    public boolean upsertMed(String json) {
+    public boolean upsertItem(String kind, String json) {
+        if (!validKind(kind)) return false;
         try {
-            db.upsertMed(new JSONObject(json));
+            db.upsert(kind, new JSONObject(json));
             return true;
         } catch (Exception e) {
-            Log.e(TAG, "upsertMed failed", e);
-            return false;
-        }
-    }
-
-    @JavascriptInterface
-    public boolean upsertLab(String json) {
-        try {
-            db.upsertLab(new JSONObject(json));
-            return true;
-        } catch (Exception e) {
-            Log.e(TAG, "upsertLab failed", e);
+            Log.e(TAG, "upsertItem failed", e);
             return false;
         }
     }

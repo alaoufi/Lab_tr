@@ -7,7 +7,9 @@
 'use strict';
 
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
-var DB = { pin_hash: null, meds: [], labs: [], cart: { meds: [], labs: [] }, out: null };
+var KINDS = ['meds', 'labs', 'recipes'];
+var DB = { pin_hash: null, meds: [], labs: [], recipes: [],
+           cart: { meds: [], labs: [], recipes: [] }, out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -29,7 +31,37 @@ var OUT_LABS = [
   ['requirements', 'متطلبات التحليل'],
   ['prohibitions', 'ممنوعات التحليل']
 ];
-var OUT_DEF = { meds: ['dosage', 'uses'], labs: ['code', 'requirements'] };
+var OUT_RECIPES = [
+  ['type', 'نوع الوصفة'],
+  ['purpose', 'الهدف'],
+  ['ingredients', 'المواد المستخدمة'],
+  ['preparation', 'طريقة الإعداد'],
+  ['usage', 'الاستخدام'],
+  ['dose', 'الجرعة'],
+  ['duration', 'مدة الاستخدام'],
+  ['effects', 'الأعراض المتوقعة'],
+  ['precautions', 'الاحتياطات']
+];
+var OUT_DEF = {
+  meds: ['dosage', 'uses'],
+  labs: ['code', 'requirements'],
+  recipes: ['ingredients', 'preparation', 'dose']
+};
+function outDefs(kind) {
+  return kind === 'meds' ? OUT_MEDS : kind === 'labs' ? OUT_LABS : OUT_RECIPES;
+}
+/** مجموعة القسم في الذاكرة. */
+function coll(kind) {
+  return kind === 'meds' ? DB.meds : kind === 'labs' ? DB.labs : DB.recipes;
+}
+function setColl(kind, arr) {
+  if (kind === 'meds') DB.meds = arr; else if (kind === 'labs') DB.labs = arr; else DB.recipes = arr;
+}
+var KIND_LBL = {
+  meds: { one: 'علاج واحد', two: 'علاجان', few: 'علاجات', many: 'علاجًا', title: 'العلاجات', icon: '💊' },
+  labs: { one: 'تحليل واحد', two: 'تحليلان', few: 'تحاليل', many: 'تحليلًا', title: 'التحاليل', icon: '🧪' },
+  recipes: { one: 'وصفة واحدة', two: 'وصفتان', few: 'وصفات', many: 'وصفة', title: 'الوصفات العلاجية', icon: '🌿' }
+};
 var NDB = (typeof window.NativeDb === 'object' && window.NativeDb) ? window.NativeDb : null;
 
 function parseList(raw, fallback) {
@@ -41,18 +73,16 @@ function applyData(data) {
   // تشغيل أول بلا بيانات محفوظة يصل هنا بـnull — نكمل بالقيم الافتراضية
   // بدل الخروج، وإلا بقي DB.out فارغًا وانهارت الطباعة والإعدادات.
   data = data || {};
-  DB.meds = Array.isArray(data.meds) ? data.meds : [];
-  DB.labs = Array.isArray(data.labs) ? data.labs : [];
-  var c = data.cart || {};
-  DB.cart = { meds: Array.isArray(c.meds) ? c.meds : [], labs: Array.isArray(c.labs) ? c.labs : [] };
+  var c = data.cart || {}, st = data.settings || {}, o = data.out || {};
+  DB.cart = {}; DB.out = {};
+  KINDS.forEach(function (k) {
+    setColl(k, Array.isArray(data[k]) ? data[k] : []);
+    DB.cart[k] = Array.isArray(c[k]) ? c[k] : [];
+    // الحقول المرسلة: من جدول الإعدادات داخل التطبيق، أو من النسخة
+    // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
+    DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k]);
+  });
   DB.pin_hash = data.pin_hash || null;
-  // الحقول المرسلة: من جدول الإعدادات داخل التطبيق، أو من النسخة المحفوظة
-  // كاملةً في المتصفح/النسخة الاحتياطية
-  var st = data.settings || {}, o = data.out || {};
-  DB.out = {
-    meds: parseList(o.meds || st.out_meds, OUT_DEF.meds),
-    labs: parseList(o.labs || st.out_labs, OUT_DEF.labs)
-  };
 }
 function blobSave() {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); }
@@ -60,7 +90,8 @@ function blobSave() {
 }
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  return { meds: DB.meds, labs: DB.labs, cart: DB.cart, pin_hash: DB.pin_hash, out: DB.out };
+  return { meds: DB.meds, labs: DB.labs, recipes: DB.recipes,
+           cart: DB.cart, pin_hash: DB.pin_hash, out: DB.out };
 }
 
 /* ── طبقة التخزين: SQLite داخل التطبيق، أو localStorage في المتصفح ── */
@@ -77,13 +108,9 @@ var Store = {
     migrateLegacy();
   },
 
-  upsertMed: function (m) {
+  upsert: function (kind, o) {
     if (!NDB) { blobSave(); return true; }
-    try { return NDB.upsertMed(JSON.stringify(m)) || dbFail(); } catch (e) { return dbFail(); }
-  },
-  upsertLab: function (t) {
-    if (!NDB) { blobSave(); return true; }
-    try { return NDB.upsertLab(JSON.stringify(t)) || dbFail(); } catch (e) { return dbFail(); }
+    try { return NDB.upsertItem(kind, JSON.stringify(o)) || dbFail(); } catch (e) { return dbFail(); }
   },
   remove: function (kind, id) {
     if (!NDB) { blobSave(); return true; }
@@ -174,6 +201,7 @@ var PAGES = {
   home:     { icon: '💊🧪', title: 'دليلي الطبي' },
   meds:     { icon: '💊', title: 'العلاجات' },
   labs:     { icon: '🧪', title: 'التحاليل' },
+  recipes:  { icon: '🌿', title: 'الوصفات العلاجية' },
   settings: { icon: '⚙️', title: 'الإعدادات' },
   'lib:labs': { icon: '📚', title: 'مكتبة التحاليل' },
   'lib:meds': { icon: '📚', title: 'مكتبة العلاجات' }
@@ -225,6 +253,13 @@ function renderSettings() {
     + '<div class="muted" style="margin-bottom:9px">اسم العلاج واسم التحليل يظهران دائمًا. اختر ما يُضاف معهما.</div>'
     + outBlock('meds', '💊 العلاجات', OUT_MEDS)
     + outBlock('labs', '🧪 التحاليل', OUT_LABS)
+    + outBlock('recipes', '🌿 الوصفات', OUT_RECIPES)
+    + '</div>'
+    + '<div class="settings-sec">'
+    + '<div class="settings-lbl">إضافة سريعة</div>'
+    + '<button class="btn full" onclick="medForm()">💊 + إضافة علاج</button>'
+    + '<button class="btn full" onclick="labForm()">🧪 + إضافة تحليل</button>'
+    + '<button class="btn full" onclick="recipeForm()">🌿 + إضافة وصفة</button>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">المكتبة الجاهزة (مدمجة داخل التطبيق)</div>'
@@ -415,15 +450,19 @@ window.importBackup = function (input) {
   reader.onload = function () {
     try {
       var data = JSON.parse(reader.result);
-      if (!data || (!Array.isArray(data.meds) && !Array.isArray(data.labs))) throw new Error('bad');
+      if (!data || !KINDS.some(function (k) { return Array.isArray(data[k]); })) throw new Error('bad');
       confirmBox('استيراد هذه النسخة سيستبدل بياناتك الحالية. متابعة؟', function () {
         var keep = DB.pin_hash;
         applyData(data);
         DB.pin_hash = data.pin_hash || keep;
         // السلة تشير لمعرّفات قد تكون اختفت في النسخة المستوردة
-        DB.cart.meds = DB.cart.meds.filter(function (id) { return DB.meds.some(function (m) { return m.id === id; }); });
-        DB.cart.labs = DB.cart.labs.filter(function (id) { return DB.labs.some(function (t) { return t.id === id; }); });
-        Store.replaceAll(); Store.setOut('meds'); Store.setOut('labs');
+        KINDS.forEach(function (k) {
+          DB.cart[k] = DB.cart[k].filter(function (id) {
+            return coll(k).some(function (x) { return x.id === id; });
+          });
+        });
+        Store.replaceAll();
+        KINDS.forEach(function (k) { Store.setOut(k); });
         closeModal(); render(); toast('✅ تم الاستيراد');
       });
     } catch (e) { toast('ملف غير صالح', 'er'); }
@@ -454,6 +493,7 @@ function render() {
 
   if (p === 'meds') renderMeds();
   else if (p === 'labs') renderLabs();
+  else if (p === 'recipes') renderRecipes();
   else if (p === 'settings') renderSettings();
   else if (p === 'lib:labs') renderLibraryPage('labs');
   else if (p === 'lib:meds') renderLibraryPage('meds');
@@ -461,38 +501,36 @@ function render() {
 }
 
 /* ── الصفحة الرئيسية ── */
-function homeCard(page, icon, title, sub) {
-  return '<button class="hcard" onclick="goPage(\'' + page + '\')">'
+function homeCard(page, icon, title, sub, extra) {
+  return '<button class="hcard' + (extra || '') + '" onclick="goPage(\'' + page + '\')">'
     + '<span class="hci">' + icon + '</span>'
     + '<span class="hct">' + esc(title) + '</span>'
     + '<span class="hcs">' + esc(sub) + '</span></button>';
 }
+/* الرئيسية تعرض الخدمات الثلاث فقط. المكتبة الجاهزة والإضافة السريعة
+   نُقلتا إلى الإعدادات لأنهما لا تُستخدمان باستمرار. */
 function renderHome() {
-  var lib = window.LIBRARY || { labs: [], meds: [] };
-  var nm = DB.meds.length, nl = DB.labs.length;
   var html = '<div class="hero"><div class="hero-t">أهلًا بك 👋</div>'
-    + '<div class="hero-s">كتالوجك الشخصي للعلاجات والتحاليل — يعمل بلا إنترنت، وبياناتك على جهازك وحده.</div></div>';
+    + '<div class="hero-s">كتالوجك الشخصي للعلاجات والتحاليل والوصفات — يعمل بلا إنترنت، وبياناتك على جهازك وحده.</div></div>';
 
-  var cart = DB.cart.meds.length + DB.cart.labs.length;
+  var cart = KINDS.reduce(function (a, k) { return a + DB.cart[k].length; }, 0);
   if (cart) {
     html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
-      + (DB.cart.meds.length ? '<button class="btn white sm" onclick="goPage(\'meds\')">علاجات (' + DB.cart.meds.length + ')</button>' : '')
-      + (DB.cart.labs.length ? '<button class="btn white sm" onclick="goPage(\'labs\')">تحاليل (' + DB.cart.labs.length + ')</button>' : '')
-      + '</div>';
+      + KINDS.map(function (k) {
+        return DB.cart[k].length
+          ? '<button class="btn white sm" onclick="goPage(\'' + k + '\')">' + KIND_LBL[k].title + ' (' + DB.cart[k].length + ')</button>'
+          : '';
+      }).join('') + '</div>';
   }
 
   html += '<div class="hgrid">'
-    + homeCard('meds', '💊', 'العلاجات', nm ? countWord(nm, 'علاج واحد', 'علاجان', 'علاجات', 'علاجًا') : 'لا شيء بعد')
-    + homeCard('labs', '🧪', 'التحاليل', nl ? countWord(nl, 'تحليل واحد', 'تحليلان', 'تحاليل', 'تحليلًا') : 'لا شيء بعد')
-    + homeCard('lib:meds', '📚', 'مكتبة العلاجات', lib.meds.length + ' جاهزًا')
-    + homeCard('lib:labs', '📚', 'مكتبة التحاليل', lib.labs.length + ' جاهزًا')
+    + KINDS.map(function (k, i) {
+      var n = coll(k).length, L = KIND_LBL[k];
+      return homeCard(k, L.icon, L.title,
+        n ? countWord(n, L.one, L.two, L.few, L.many) : 'لا شيء بعد',
+        (i === KINDS.length - 1 && KINDS.length % 2) ? ' wide' : '');
+    }).join('')
     + '</div>';
-
-  html += '<div class="hquick">'
-    + '<button class="btn primary" onclick="medForm()">+ إضافة علاج</button>'
-    + '<button class="btn primary" onclick="labForm()">+ إضافة تحليل</button>'
-    + '</div>'
-    + '<button class="btn full" style="margin-top:10px" onclick="goPage(\'settings\')">⚙️ الإعدادات والنسخ الاحتياطي</button>';
   h('page', html);
 }
 
@@ -539,17 +577,19 @@ function renderMeds() {
   } else {
     var fav = list.filter(function (m) { return m.default_include; });
     if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true);
-    groupBy(list).forEach(function (g) {
-      html += accBlock('💊 ' + g.cat, g.items.map(medRow).join(''), false);
+    var gs = groupBy(list);
+    gs.forEach(function (g) {
+      html += accBlock('💊 ' + g.cat, g.items.map(medRow).join(''), gs.length === 1);
     });
   }
   h('page', html);
 }
-/** تجميع العناصر حسب التصنيف مع الحفاظ على ترتيب ظهور التصنيفات. */
-function groupBy(list) {
+/** تجميع العناصر حسب حقل (تصنيف أو نوع) مع الحفاظ على ترتيب الظهور. */
+function groupBy(list, key, fallback) {
+  key = key || 'category';
   var order = [], byCat = {};
   list.forEach(function (o) {
-    var c = (o.category || 'غير مصنّف').trim() || 'غير مصنّف';
+    var c = (o[key] || '').trim() || (fallback || 'غير مصنّف');
     if (!byCat[c]) { byCat[c] = []; order.push(c); }
     byCat[c].push(o);
   });
@@ -599,7 +639,7 @@ window.medSave = function (id) {
   var rec;
   if (id) { rec = DB.meds.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.meds.push(body); rec = body; }
-  Store.upsertMed(rec); closeModal(); toast('✅ تم الحفظ');
+  Store.upsert('meds', rec); closeModal(); toast('✅ تم الحفظ');
   if (curPage() === 'home') goPage('meds'); else render();
 };
 window.medDel = function (id) {
@@ -643,8 +683,9 @@ function renderLabs() {
   } else {
     var common = list.filter(function (t) { return t.is_common; });
     if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true);
-    groupBy(list).forEach(function (g) {
-      html += accBlock('🧪 ' + g.cat, g.items.map(labRow).join(''), false);
+    var gs = groupBy(list);
+    gs.forEach(function (g) {
+      html += accBlock('🧪 ' + g.cat, g.items.map(labRow).join(''), gs.length === 1);
     });
   }
   h('page', html);
@@ -691,7 +732,7 @@ window.labSave = function (id) {
   var rec;
   if (id) { rec = DB.labs.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.labs.push(body); rec = body; }
-  Store.upsertLab(rec); closeModal(); toast('✅ تم الحفظ');
+  Store.upsert('labs', rec); closeModal(); toast('✅ تم الحفظ');
   if (curPage() === 'home') goPage('labs'); else render();
 };
 window.labDel = function (id) {
@@ -699,6 +740,107 @@ window.labDel = function (id) {
     DB.labs = DB.labs.filter(function (x) { return x.id !== id; });
     DB.cart.labs = DB.cart.labs.filter(function (x) { return x !== id; });
     Store.remove('labs', id); closeModal(); toast('🗑️ تم الحذف'); render();
+  });
+};
+
+/* ════════════════════════ 🌿 الوصفات العلاجية ════════════════════════ */
+var RX_TYPES = ['علاجية', 'وقائية', 'غذائية'];
+var RX_FLD = [
+  ['name', 'اسم الوصفة', 'text'],
+  ['type', 'نوع الوصفة', 'type'],
+  ['purpose', 'الهدف', 'area'],
+  ['ingredients', 'المواد المستخدمة', 'area'],
+  ['preparation', 'طريقة الإعداد', 'area'],
+  ['usage', 'الاستخدام', 'area'],
+  ['dose', 'الجرعة', 'text'],
+  ['duration', 'مدة الاستخدام', 'text'],
+  ['effects', 'الأعراض المتوقعة', 'area'],
+  ['precautions', 'الاحتياطات', 'area']
+];
+
+function recipeRow(r) {
+  var on = DB.cart.recipes.indexOf(r.id) >= 0;
+  return '<div class="card' + (on ? ' sel' : '') + '">'
+    + '<div class="row">'
+    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'recipes\',\'' + r.id + '\')">'
+    + '<div class="grow" onclick="recipeForm(\'' + r.id + '\')">'
+    + '<div class="name">' + esc(r.name) + (r.is_favorite ? ' <span class="star">★</span>' : '')
+    + (r.type ? ' <span class="chip">' + esc(r.type) + '</span>' : '') + '</div>'
+    + (r.purpose ? '<div class="sub">' + esc(r.purpose) + '</div>' : '')
+    + (r.dose ? '<div class="req">⚖️ ' + esc(r.dose) + '</div>' : '')
+    + (r.precautions ? '<div class="ban">⛔ ' + esc(r.precautions) + '</div>' : '')
+    + '</div>'
+    + '<button class="ic" onclick="recipeForm(\'' + r.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="recipeDel(\'' + r.id + '\')">🗑️</button>'
+    + '</div></div>';
+}
+function renderRecipes() {
+  var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var list = DB.recipes.filter(function (r) {
+    return !q || [r.name, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
+  });
+  var html = '<div class="toolbar">'
+    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المواد…" value="' + esc(q) + '" oninput="renderRecipes()">'
+    + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
+  if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
+  if (!list.length) { h('page', html + emptyBox('🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')); return; }
+
+  if (q) {
+    html += list.map(recipeRow).join('');
+  } else {
+    var fav = list.filter(function (r) { return r.is_favorite; });
+    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true);
+    var gs = groupBy(list, 'type', 'بلا نوع');
+    gs.forEach(function (g) {
+      html += accBlock('🌿 ' + g.cat, g.items.map(recipeRow).join(''), gs.length === 1);
+    });
+  }
+  h('page', html);
+}
+window.recipeForm = function (id) {
+  var r = id ? (DB.recipes.find(function (x) { return x.id === id; }) || {}) : {};
+  var body = RX_FLD.map(function (f) {
+    var key = f[0], lbl = f[1], kind = f[2], v = esc(r[key] || '');
+    if (kind === 'type') {
+      return '<div class="f"><label>' + lbl + '</label><div class="segs">'
+        + RX_TYPES.map(function (t) {
+          var on = (r.type || RX_TYPES[0]) === t;
+          return '<button type="button" class="seg' + (on ? ' on' : '') + '" data-t="' + esc(t) + '"'
+            + ' onclick="rxPickType(this)">' + esc(t) + '</button>';
+        }).join('')
+        + '</div><input type="hidden" id="rf-type" value="' + esc(r.type || RX_TYPES[0]) + '"></div>';
+    }
+    return '<div class="f"><label>' + lbl + (key === 'name' ? ' *' : '') + '</label>'
+      + (kind === 'area' ? '<textarea id="rf-' + key + '" class="inp ta">' + v + '</textarea>'
+        : '<input id="rf-' + key + '" class="inp" value="' + v + '">') + '</div>';
+  }).join('');
+  body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
+  body += '<div class="mft"><button class="btn primary" onclick="recipeSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+  openModal(id ? '✏️ تعديل وصفة' : '+ إضافة وصفة', body);
+};
+/** اختيار النوع بأزرار بدل قائمة منسدلة — أوضح على الجوال. */
+window.rxPickType = function (btn) {
+  var wrap = btn.parentNode, kids = wrap.children;
+  for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
+  btn.className = 'seg on';
+  var hidden = $('rf-type'); if (hidden) hidden.value = btn.getAttribute('data-t');
+};
+window.recipeSave = function (id) {
+  var body = {};
+  RX_FLD.forEach(function (f) { var el = $('rf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
+  body.is_favorite = ($('rf-fav') || {}).checked ? 1 : 0;
+  if (!body.name) return toast('اسم الوصفة مطلوب', 'er');
+  var rec;
+  if (id) { rec = DB.recipes.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
+  else { body.id = uid(); DB.recipes.push(body); rec = body; }
+  Store.upsert('recipes', rec); closeModal(); toast('✅ تم الحفظ');
+  if (curPage() !== 'recipes') goPage('recipes'); else render();
+};
+window.recipeDel = function (id) {
+  confirmBox('حذف هذه الوصفة؟', function () {
+    DB.recipes = DB.recipes.filter(function (x) { return x.id !== id; });
+    DB.cart.recipes = DB.cart.recipes.filter(function (x) { return x !== id; });
+    Store.remove('recipes', id); closeModal(); toast('🗑️ تم الحذف'); render();
   });
 };
 
@@ -711,11 +853,14 @@ function outTitle(kind, o, i) {
     return (i + 1) + '. ' + o.trade_name
       + (sel.indexOf('scientific_name') >= 0 && o.scientific_name ? ' (' + o.scientific_name + ')' : '');
   }
-  return (i + 1) + '. ' + (sel.indexOf('code') >= 0 && o.code ? o.code + ' — ' : '') + o.name;
+  if (kind === 'labs') {
+    return (i + 1) + '. ' + (sel.indexOf('code') >= 0 && o.code ? o.code + ' — ' : '') + o.name;
+  }
+  return (i + 1) + '. ' + o.name;
 }
 function outLines(kind, o) {
-  var defs = kind === 'meds' ? OUT_MEDS : OUT_LABS;
-  var merged = kind === 'meds' ? 'scientific_name' : 'code';
+  var defs = outDefs(kind);
+  var merged = kind === 'meds' ? 'scientific_name' : kind === 'labs' ? 'code' : '';
   var sel = DB.out[kind], lines = [];
   defs.forEach(function (f) {
     if (f[0] === merged || sel.indexOf(f[0]) < 0) return;
@@ -725,7 +870,7 @@ function outLines(kind, o) {
   return lines;
 }
 function cartRows(kind) {
-  var src = kind === 'meds' ? DB.meds : DB.labs;
+  var src = coll(kind);
   return DB.cart[kind].map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
     return o ? { title: outTitle(kind, o, i), lines: outLines(kind, o) } : null;
@@ -740,7 +885,7 @@ function cartItemsHtml(kind) {
 window.printCart = function (kind) {
   var body = cartItemsHtml(kind);
   if (!body) return toast('القائمة فارغة', 'er');
-  var title = kind === 'meds' ? 'قائمة علاجات' : 'قائمة تحاليل';
+  var title = cartTitle(kind, false);
   var w = window.open('', '_blank');
   if (!w) return toast('اسمح بالنوافذ المنبثقة', 'er');
   w.document.write('<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>' + title + '</title>'
@@ -768,8 +913,12 @@ function wrapText(ctx, text, maxW) {
   if (cur) out.push(cur);
   return out;
 }
+function cartTitle(kind, withIcon) {
+  var t = kind === 'meds' ? 'قائمة علاجات' : kind === 'labs' ? 'قائمة تحاليل' : 'قائمة وصفات';
+  return withIcon ? KIND_LBL[kind].icon + ' ' + t : t;
+}
 function buildCartCanvas(kind) {
-  var title = kind === 'meds' ? '💊 قائمة علاجات' : '🧪 قائمة تحاليل';
+  var title = cartTitle(kind, true);
   var W = 900, PAD = 36, headH = 130, MAXW = W - PAD * 2 - 28;
   var TITLE_F = 'bold 24px Tahoma, Arial, sans-serif';
   var LINE_F = '17px Tahoma, Arial, sans-serif';
@@ -820,7 +969,7 @@ function buildCartCanvas(kind) {
 window.shareCart = function (kind) {
   var ids = DB.cart[kind]; if (!ids.length) return toast('القائمة فارغة', 'er');
   var canvas = buildCartCanvas(kind);
-  var fname = (kind === 'meds' ? 'قائمة_علاجات' : 'قائمة_تحاليل') + '_' + new Date().toISOString().slice(0, 10) + '.png';
+  var fname = cartTitle(kind, false).replace(/ /g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
 
   // داخل التطبيق الأصلي (APK): جسر Android يستقبل الصورة ويطلق مشاركة نظامية حقيقية
   // (WebView لا يطبّق Web Share API إطلاقًا، بخلاف المتصفح/PWA)

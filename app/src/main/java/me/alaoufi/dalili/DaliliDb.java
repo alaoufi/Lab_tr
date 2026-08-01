@@ -16,13 +16,18 @@ import org.json.JSONObject;
  * تحلّ محل التخزين السابق في localStorage: جداول حقيقية بمفاتيح وفهارس بدل
  * نص JSON واحد، فلا تُفقد البيانات عند مسح ذاكرة WebView، ويبقى الحفظ ذرّيًا
  * (transaction) عند الاستيراد.
+ *
+ * الأقسام الثلاثة (meds / labs / recipes) تتشارك نفس منطق القراءة والكتابة،
+ * ويفرّق بينها جدولُ الأعمدة أدناه فقط — إضافة قسم رابع لاحقًا تعني سطرين هنا.
  */
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 2;
+    private static final int DB_VERSION = 3;
 
-    /** حقول العلاج النصية — نفس أسماء الحقول في الواجهة تمامًا. */
+    /** الأقسام الثلاثة — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
+    public static final String[] KINDS = { "meds", "labs", "recipes" };
+
     private static final String[] MED_TEXT_COLS = {
             "trade_name", "scientific_name", "category", "concentration",
             "dosage", "duration", "uses", "cautions", "notes"
@@ -30,9 +35,32 @@ public class DaliliDb extends SQLiteOpenHelper {
     private static final String[] LAB_TEXT_COLS = {
             "category", "code", "name", "purpose", "requirements", "prohibitions"
     };
+    /** الوصفات: اسمها ونوعها (علاجية/وقائية/غذائية) وتفاصيل تحضيرها واستخدامها. */
+    private static final String[] RECIPE_TEXT_COLS = {
+            "name", "type", "purpose", "ingredients", "preparation",
+            "usage", "dose", "duration", "effects", "precautions"
+    };
 
     public DaliliDb(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
+    }
+
+    public static boolean isKind(String kind) {
+        for (String k : KINDS) if (k.equals(kind)) return true;
+        return false;
+    }
+
+    private static String[] textCols(String kind) {
+        if ("meds".equals(kind)) return MED_TEXT_COLS;
+        if ("labs".equals(kind)) return LAB_TEXT_COLS;
+        return RECIPE_TEXT_COLS;
+    }
+
+    /** عمود العلامة (⭐) يختلف اسمه بين الأقسام لأسباب تاريخية في الواجهة. */
+    private static String flagCol(String kind) {
+        if ("meds".equals(kind)) return "default_include";
+        if ("labs".equals(kind)) return "is_common";
+        return "is_favorite";
     }
 
     @Override
@@ -60,6 +88,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "prohibitions TEXT,"
                 + "is_common INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        createRecipes(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -70,6 +99,24 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_meds_name ON meds(trade_name)");
         db.execSQL("CREATE INDEX idx_meds_category ON meds(category)");
         db.execSQL("CREATE INDEX idx_labs_category ON labs(category)");
+    }
+
+    private void createRecipes(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS recipes ("
+                + "id TEXT PRIMARY KEY,"
+                + "name TEXT NOT NULL,"
+                + "type TEXT,"
+                + "purpose TEXT,"
+                + "ingredients TEXT,"
+                + "preparation TEXT,"
+                + "usage TEXT,"
+                + "dose TEXT,"
+                + "duration TEXT,"
+                + "effects TEXT,"
+                + "precautions TEXT,"
+                + "is_favorite INTEGER NOT NULL DEFAULT 0,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_recipes_type ON recipes(type)");
     }
 
     @Override
@@ -84,6 +131,9 @@ public class DaliliDb extends SQLiteOpenHelper {
             db.execSQL("ALTER TABLE labs ADD COLUMN prohibitions TEXT");
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_meds_category ON meds(category)");
         }
+        if (oldVersion < 3) {
+            createRecipes(db);   // القسم الثالث: الوصفات العلاجية
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -91,41 +141,27 @@ public class DaliliDb extends SQLiteOpenHelper {
     public JSONObject loadAll() throws Exception {
         SQLiteDatabase db = getReadableDatabase();
         JSONObject out = new JSONObject();
-        out.put("meds", readMeds(db));
-        out.put("labs", readLabs(db));
         JSONObject cart = new JSONObject();
-        cart.put("meds", readCart(db, "meds"));
-        cart.put("labs", readCart(db, "labs"));
+        for (String kind : KINDS) {
+            out.put(kind, readItems(db, kind));
+            cart.put(kind, readCart(db, kind));
+        }
         out.put("cart", cart);
         out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
         return out;
     }
 
-    private JSONArray readMeds(SQLiteDatabase db) throws Exception {
+    private JSONArray readItems(SQLiteDatabase db, String kind) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("meds", null, null, null, null, null, "sort_order ASC");
+        Cursor c = db.query(kind, null, null, null, null, null, "sort_order ASC");
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
                 o.put("id", c.getString(c.getColumnIndexOrThrow("id")));
-                for (String col : MED_TEXT_COLS) o.put(col, str(c, col));
-                o.put("default_include", c.getInt(c.getColumnIndexOrThrow("default_include")));
-                arr.put(o);
-            }
-        } finally { c.close(); }
-        return arr;
-    }
-
-    private JSONArray readLabs(SQLiteDatabase db) throws Exception {
-        JSONArray arr = new JSONArray();
-        Cursor c = db.query("labs", null, null, null, null, null, "sort_order ASC");
-        try {
-            while (c.moveToNext()) {
-                JSONObject o = new JSONObject();
-                o.put("id", c.getString(c.getColumnIndexOrThrow("id")));
-                for (String col : LAB_TEXT_COLS) o.put(col, str(c, col));
-                o.put("is_common", c.getInt(c.getColumnIndexOrThrow("is_common")));
+                for (String col : textCols(kind)) o.put(col, str(c, col));
+                String flag = flagCol(kind);
+                o.put(flag, c.getInt(c.getColumnIndexOrThrow(flag)));
                 arr.put(o);
             }
         } finally { c.close(); }
@@ -149,22 +185,16 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     /* ─────────────── كتابة ─────────────── */
 
-    /** إضافة أو تعديل علاج. يُحافظ على ترتيب الإدراج للعناصر الجديدة. */
-    public void upsertMed(JSONObject m) {
-        SQLiteDatabase db = getWritableDatabase();
+    private static ContentValues values(String kind, JSONObject o) {
         ContentValues v = new ContentValues();
-        for (String col : MED_TEXT_COLS) v.put(col, m.optString(col, ""));
-        v.put("default_include", m.optInt("default_include", 0));
-        upsertRow(db, "meds", m.optString("id"), v);
+        for (String col : textCols(kind)) v.put(col, o.optString(col, ""));
+        v.put(flagCol(kind), o.optInt(flagCol(kind), 0));
+        return v;
     }
 
-    /** إضافة أو تعديل تحليل. */
-    public void upsertLab(JSONObject t) {
-        SQLiteDatabase db = getWritableDatabase();
-        ContentValues v = new ContentValues();
-        for (String col : LAB_TEXT_COLS) v.put(col, t.optString(col, ""));
-        v.put("is_common", t.optInt("is_common", 0));
-        upsertRow(db, "labs", t.optString("id"), v);
+    /** إضافة أو تعديل عنصر. يُحافظ على ترتيب الإدراج للعناصر الجديدة. */
+    public void upsert(String kind, JSONObject o) {
+        upsertRow(getWritableDatabase(), kind, o.optString("id"), values(kind, o));
     }
 
     /**
@@ -172,22 +202,13 @@ public class DaliliDb extends SQLiteOpenHelper {
      * المكتبة الجاهزة، فإضافة ٥٠ عنصرًا واحدًا واحدًا بطيئة وغير ذرّية.
      */
     public void upsertMany(String kind, JSONArray items) {
-        boolean meds = "meds".equals(kind);
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
             for (int i = 0; i < items.length(); i++) {
                 JSONObject o = items.optJSONObject(i);
                 if (o == null || o.optString("id").isEmpty()) continue;
-                ContentValues v = new ContentValues();
-                if (meds) {
-                    for (String col : MED_TEXT_COLS) v.put(col, o.optString(col, ""));
-                    v.put("default_include", o.optInt("default_include", 0));
-                } else {
-                    for (String col : LAB_TEXT_COLS) v.put(col, o.optString(col, ""));
-                    v.put("is_common", o.optInt("is_common", 0));
-                }
-                upsertRow(db, kind, o.optString("id"), v);
+                upsertRow(db, kind, o.optString("id"), values(kind, o));
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -224,13 +245,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             db.delete("cart", "kind=?", new String[]{kind});
-            for (int i = 0; i < ids.length(); i++) {
-                ContentValues v = new ContentValues();
-                v.put("kind", kind);
-                v.put("item_id", ids.optString(i));
-                v.put("position", i);
-                db.insert("cart", null, v);
-            }
+            insertCartRows(db, kind, ids);
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
@@ -272,38 +287,24 @@ public class DaliliDb extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            db.delete("meds", null, null);
-            db.delete("labs", null, null);
+            for (String kind : KINDS) db.delete(kind, null, null);
             db.delete("cart", null, null);
 
-            JSONArray meds = data.optJSONArray("meds");
-            for (int i = 0; meds != null && i < meds.length(); i++) {
-                JSONObject m = meds.optJSONObject(i);
-                if (m == null || m.optString("id").isEmpty()) continue;
-                ContentValues v = new ContentValues();
-                v.put("id", m.optString("id"));
-                for (String col : MED_TEXT_COLS) v.put(col, m.optString(col, ""));
-                v.put("default_include", m.optInt("default_include", 0));
-                v.put("sort_order", i + 1);
-                db.insertWithOnConflict("meds", null, v, SQLiteDatabase.CONFLICT_REPLACE);
-            }
-
-            JSONArray labs = data.optJSONArray("labs");
-            for (int i = 0; labs != null && i < labs.length(); i++) {
-                JSONObject t = labs.optJSONObject(i);
-                if (t == null || t.optString("id").isEmpty()) continue;
-                ContentValues v = new ContentValues();
-                v.put("id", t.optString("id"));
-                for (String col : LAB_TEXT_COLS) v.put(col, t.optString(col, ""));
-                v.put("is_common", t.optInt("is_common", 0));
-                v.put("sort_order", i + 1);
-                db.insertWithOnConflict("labs", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+            for (String kind : KINDS) {
+                JSONArray items = data.optJSONArray(kind);
+                for (int i = 0; items != null && i < items.length(); i++) {
+                    JSONObject o = items.optJSONObject(i);
+                    if (o == null || o.optString("id").isEmpty()) continue;
+                    ContentValues v = values(kind, o);
+                    v.put("id", o.optString("id"));
+                    v.put("sort_order", i + 1);
+                    db.insertWithOnConflict(kind, null, v, SQLiteDatabase.CONFLICT_REPLACE);
+                }
             }
 
             JSONObject cart = data.optJSONObject("cart");
             if (cart != null) {
-                insertCartRows(db, "meds", cart.optJSONArray("meds"));
-                insertCartRows(db, "labs", cart.optJSONArray("labs"));
+                for (String kind : KINDS) insertCartRows(db, kind, cart.optJSONArray(kind));
             }
 
             String pin = data.isNull("pin_hash") ? null : data.optString("pin_hash", null);
@@ -332,8 +333,8 @@ public class DaliliDb extends SQLiteOpenHelper {
     /** هل القاعدة فارغة تمامًا؟ (تُستخدم لترحيل بيانات localStorage القديمة مرّة واحدة) */
     public boolean isEmpty() {
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery(
-                "SELECT (SELECT COUNT(*) FROM meds)+(SELECT COUNT(*) FROM labs)", null);
+        Cursor c = db.rawQuery("SELECT (SELECT COUNT(*) FROM meds)"
+                + "+(SELECT COUNT(*) FROM labs)+(SELECT COUNT(*) FROM recipes)", null);
         try { return !c.moveToFirst() || c.getInt(0) == 0; } finally { c.close(); }
     }
 }
