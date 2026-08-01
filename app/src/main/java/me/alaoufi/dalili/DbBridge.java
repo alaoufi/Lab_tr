@@ -61,6 +61,19 @@ public class DbBridge {
         }
     }
 
+    /** إضافة دفعة عناصر (استيراد من المكتبة الجاهزة) في معاملة واحدة. */
+    @JavascriptInterface
+    public boolean upsertMany(String kind, String jsonArray) {
+        if (!validKind(kind)) return false;
+        try {
+            db.upsertMany(kind, new JSONArray(jsonArray));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "upsertMany failed", e);
+            return false;
+        }
+    }
+
     @JavascriptInterface
     public boolean deleteItem(String kind, String id) {
         if (!validKind(kind)) return false;

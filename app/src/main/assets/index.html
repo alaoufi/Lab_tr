@@ -114,6 +114,24 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .settings-lbl{font-size:12px;font-weight:800;color:var(--mid);margin-bottom:8px}
 .muted{font-size:12.5px;color:var(--light);line-height:1.7}
 
+/* اختيار الحقول المرسلة */
+.out-grp{background:#f8fafc;border:1px solid var(--border);border-radius:11px;padding:8px 11px;margin-bottom:8px}
+.out-t{font-weight:800;font-size:12.5px;margin-bottom:2px;color:var(--teal)}
+.out-grp .chk-row{margin:5px 0;font-size:12.5px}
+
+/* أسطر المتطلبات والممنوعات داخل البطاقات */
+.req{font-size:11.5px;color:var(--teal);margin-top:3px;font-weight:700;line-height:1.5}
+.ban{font-size:11.5px;color:#b45309;margin-top:2px;font-weight:700;line-height:1.5}
+
+/* المكتبة الجاهزة */
+.lib-bar{position:sticky;top:0;z-index:3;background:#fff;padding:2px 0 10px;margin-bottom:6px;border-bottom:1px solid var(--border)}
+.lib-i{display:flex;align-items:flex-start;gap:9px;padding:8px 6px;border-bottom:1px solid #f1f5f9;font-size:13px;cursor:pointer}
+.lib-i:last-child{border-bottom:none}
+.lib-i input{width:19px;height:19px;accent-color:var(--teal);flex-shrink:0;margin-top:1px}
+.lib-i.have{opacity:.45}
+.lib-t{font-weight:800}
+.lib-s{font-size:11.5px;color:var(--mid);font-weight:600}
+
 /* توست */
 .toast{position:fixed;bottom:24px;right:50%;transform:translateX(50%);background:#0f172a;color:#fff;padding:11px 20px;border-radius:12px;font-size:13.5px;font-weight:700;z-index:600;opacity:0;pointer-events:none;transition:opacity .2s;max-width:88%;text-align:center}
 .toast.on{opacity:1}
@@ -143,6 +161,7 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 
 <div class="toast" id="toast"></div>
 
+<script src="library.js"></script>
 <script src="app.js"></script>
 <script>
 if ('serviceWorker' in navigator) {

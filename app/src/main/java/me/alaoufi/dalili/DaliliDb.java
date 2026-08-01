@@ -20,14 +20,16 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     /** حقول العلاج النصية — نفس أسماء الحقول في الواجهة تمامًا. */
     private static final String[] MED_TEXT_COLS = {
-            "trade_name", "scientific_name", "concentration",
+            "trade_name", "scientific_name", "category", "concentration",
             "dosage", "duration", "uses", "cautions", "notes"
     };
-    private static final String[] LAB_TEXT_COLS = { "category", "code", "name" };
+    private static final String[] LAB_TEXT_COLS = {
+            "category", "code", "name", "purpose", "requirements", "prohibitions"
+    };
 
     public DaliliDb(Context context) {
         super(context, DB_NAME, null, DB_VERSION);
@@ -39,6 +41,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "id TEXT PRIMARY KEY,"
                 + "trade_name TEXT NOT NULL,"
                 + "scientific_name TEXT,"
+                + "category TEXT,"
                 + "concentration TEXT,"
                 + "dosage TEXT,"
                 + "duration TEXT,"
@@ -52,6 +55,9 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "category TEXT,"
                 + "code TEXT,"
                 + "name TEXT NOT NULL,"
+                + "purpose TEXT,"
+                + "requirements TEXT,"
+                + "prohibitions TEXT,"
                 + "is_common INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
@@ -62,12 +68,22 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "PRIMARY KEY (kind, item_id))");
         db.execSQL("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)");
         db.execSQL("CREATE INDEX idx_meds_name ON meds(trade_name)");
+        db.execSQL("CREATE INDEX idx_meds_category ON meds(category)");
         db.execSQL("CREATE INDEX idx_labs_category ON labs(category)");
     }
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // لا ترقيات بعد — الإصدار ١ هو الأول. تُضاف هنا لاحقًا بلا حذف بيانات.
+        // الترقيات تراكمية وبلا حذف بيانات: كل خطوة تبني على ما قبلها.
+        if (oldVersion < 2) {
+            // تصنيف للعلاجات (لتجميعها كالتحاليل) + حقول التحليل الجديدة:
+            // الهدف منه، متطلبات التحليل (صيام/نوع العيّنة)، وممنوعاته
+            db.execSQL("ALTER TABLE meds ADD COLUMN category TEXT");
+            db.execSQL("ALTER TABLE labs ADD COLUMN purpose TEXT");
+            db.execSQL("ALTER TABLE labs ADD COLUMN requirements TEXT");
+            db.execSQL("ALTER TABLE labs ADD COLUMN prohibitions TEXT");
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_meds_category ON meds(category)");
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -81,6 +97,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         cart.put("meds", readCart(db, "meds"));
         cart.put("labs", readCart(db, "labs"));
         out.put("cart", cart);
+        out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
         return out;
     }
@@ -150,6 +167,32 @@ public class DaliliDb extends SQLiteOpenHelper {
         upsertRow(db, "labs", t.optString("id"), v);
     }
 
+    /**
+     * إضافة دفعة كاملة داخل معاملة واحدة — تُستخدم عند استيراد عناصر من
+     * المكتبة الجاهزة، فإضافة ٥٠ عنصرًا واحدًا واحدًا بطيئة وغير ذرّية.
+     */
+    public void upsertMany(String kind, JSONArray items) {
+        boolean meds = "meds".equals(kind);
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < items.length(); i++) {
+                JSONObject o = items.optJSONObject(i);
+                if (o == null || o.optString("id").isEmpty()) continue;
+                ContentValues v = new ContentValues();
+                if (meds) {
+                    for (String col : MED_TEXT_COLS) v.put(col, o.optString(col, ""));
+                    v.put("default_include", o.optInt("default_include", 0));
+                } else {
+                    for (String col : LAB_TEXT_COLS) v.put(col, o.optString(col, ""));
+                    v.put("is_common", o.optInt("is_common", 0));
+                }
+                upsertRow(db, kind, o.optString("id"), v);
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
     private void upsertRow(SQLiteDatabase db, String table, String id, ContentValues v) {
         int updated = db.update(table, v, "id=?", new String[]{id});
         if (updated == 0) {
@@ -202,6 +245,17 @@ public class DaliliDb extends SQLiteOpenHelper {
         v.put("key", key);
         v.put("value", value);
         db.insertWithOnConflict("settings", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    /** كل الإعدادات دفعة واحدة (رمز القفل، الحقول المرسلة، …). */
+    private JSONObject readSettings(SQLiteDatabase db) throws Exception {
+        JSONObject o = new JSONObject();
+        Cursor c = db.query("settings", new String[]{"key", "value"},
+                null, null, null, null, null);
+        try {
+            while (c.moveToNext()) o.put(c.getString(0), c.getString(1));
+        } finally { c.close(); }
+        return o;
     }
 
     private String getSetting(SQLiteDatabase db, String key) {
