@@ -9,7 +9,7 @@
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
 var KINDS = ['meds', 'labs', 'recipes'];
 var DB = { pin_hash: null, meds: [], labs: [], recipes: [],
-           cart: { meds: [], labs: [], recipes: [] }, out: null };
+           cart: { meds: [], labs: [], recipes: [] }, groups: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -82,6 +82,7 @@ function applyData(data) {
     // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
     DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k]);
   });
+  DB.groups = Array.isArray(data.groups) ? data.groups : [];
   DB.pin_hash = data.pin_hash || null;
 }
 function blobSave() {
@@ -91,7 +92,7 @@ function blobSave() {
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   return { meds: DB.meds, labs: DB.labs, recipes: DB.recipes,
-           cart: DB.cart, pin_hash: DB.pin_hash, out: DB.out };
+           cart: DB.cart, groups: DB.groups, pin_hash: DB.pin_hash, out: DB.out };
 }
 
 /* ── طبقة التخزين: SQLite داخل التطبيق، أو localStorage في المتصفح ── */
@@ -129,6 +130,14 @@ var Store = {
   addMany: function (kind, items) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.upsertMany(kind, JSON.stringify(items)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  saveGroup: function (g) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.saveGroup(JSON.stringify(g)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  dropGroup: function (id) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.deleteGroup(id) || dbFail(); } catch (e) { return dbFail(); }
   },
   setPin: function (hash) {
     if (!NDB) { blobSave(); return true; }
@@ -183,10 +192,21 @@ window.goPage = function (p) {
   render();
 };
 window.goBack = function () {
+  // مغادرة محرّر المجموعة بتعديلات غير محفوظة تعني رجوعها كما كانت — نسأل أولًا
+  if (GRP && GRP.dirty && curPage().indexOf('grp:') === 0) {
+    confirmBox('لديك تعديلات غير محفوظة على المجموعة. الخروج يعيدها كما كانت.', function () {
+      GRP = null; closeModal(); popPage();
+    });
+    return;
+  }
+  GRP = null;
+  popPage();
+};
+function popPage() {
   if (NAV.length > 1) NAV.pop();
   window.scrollTo(0, 0);
   render();
-};
+}
 window.goHome = function () { NAV = ['home']; window.scrollTo(0, 0); render(); };
 
 /** زر الرجوع في الجهاز: يغلق المودال، ثم يرجع صفحة، وإلا يخرج من التطبيق. */
@@ -206,6 +226,19 @@ var PAGES = {
   'lib:labs': { icon: '📚', title: 'مكتبة التحاليل' },
   'lib:meds': { icon: '📚', title: 'مكتبة العلاجات' }
 };
+/** عنوان صفحات المجموعات يُحسَب لأنه يتضمّن اسم القسم أو اسم المجموعة. */
+function pageMeta(p) {
+  if (PAGES[p]) return PAGES[p];
+  if (p.indexOf('grp:') === 0) {
+    var a = p.split(':');
+    if (a[2]) {
+      var g = DB.groups.find(function (x) { return x.id === a[2]; });
+      return { icon: '📁', title: (GRP && GRP.id === a[2] ? GRP.name : (g ? g.name : 'مجموعة')) || 'مجموعة' };
+    }
+    return { icon: '📁', title: 'مجموعات ' + KIND_LBL[a[1]].title };
+  }
+  return PAGES.home;
+}
 
 async function boot() {
   Store.load();
@@ -484,7 +517,7 @@ function confirmBox(msg, onYes) {
 
 /* ── موزّع الصفحات ── */
 function render() {
-  var p = curPage(), meta = PAGES[p] || PAGES.home;
+  var p = curPage(), meta = pageMeta(p);
   var bk = $('hdr-back'), st = $('hdr-set');
   if (bk) bk.style.display = NAV.length > 1 ? '' : 'none';
   if (st) st.style.display = (p === 'settings') ? 'none' : '';
@@ -497,6 +530,10 @@ function render() {
   else if (p === 'settings') renderSettings();
   else if (p === 'lib:labs') renderLibraryPage('labs');
   else if (p === 'lib:meds') renderLibraryPage('meds');
+  else if (p.indexOf('grp:') === 0) {
+    var a = p.split(':');
+    if (a[2]) renderGroupPage(a[1], a[2]); else renderGroupsPage(a[1]);
+  }
   else renderHome();
 }
 
@@ -566,8 +603,10 @@ function renderMeds() {
   var list = DB.meds.filter(function (m) {
     return !q || (m.trade_name + ' ' + (m.scientific_name || '') + ' ' + (m.category || '')).toLowerCase().indexOf(q) >= 0;
   });
+  var ng = groupsOf('meds').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو التصنيف…" value="' + esc(q) + '" oninput="renderMeds()">'
+    + '<button class="btn" onclick="goPage(\'grp:meds\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="medForm()">+ إضافة</button></div>';
   if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
   if (!list.length) { h('page', html + emptyBox('💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')); return; }
@@ -577,13 +616,17 @@ function renderMeds() {
   } else {
     var fav = list.filter(function (m) { return m.default_include; });
     if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true);
-    var gs = groupBy(list);
+    var gs = groupBy(list), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('💊 ' + g.cat, g.items.map(medRow).join(''), gs.length === 1);
+      html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')', g.items.map(medRow).join(''), op);
     });
   }
   h('page', html);
 }
+/* الطيّ للقوائم الطويلة فقط. قائمة قصيرة كلها مطويّة تعني ألا يرى المستخدم
+   اسم عنصر واحد — وهذا ما كان يحدث في الوصفات (نوعان مطويّان بلا أسماء). */
+function openByDefault(list, groups) { return groups.length === 1 || list.length <= 40; }
+
 /** تجميع العناصر حسب حقل (تصنيف أو نوع) مع الحفاظ على ترتيب الظهور. */
 function groupBy(list, key, fallback) {
   key = key || 'category';
@@ -604,6 +647,7 @@ function cartBar(kind, n) {
     + '<span class="grow"></span>'
     + '<button class="btn white sm" onclick="printCart(\'' + kind + '\')">🖨️ طباعة/PDF</button>'
     + '<button class="btn wa sm" onclick="shareCart(\'' + kind + '\')">📤 إرسال (صورة)</button>'
+    + '<button class="btn white sm" onclick="groupFromCart(\'' + kind + '\')">💾 مجموعة</button>'
     + '<button class="btn ghost sm" onclick="clearCart(\'' + kind + '\')">مسح</button>'
     + '</div>';
 }
@@ -668,8 +712,10 @@ function labRow(t) {
 }
 function renderLabs() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var ng = groupsOf('labs').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالرمز أو الاسم أو التخصص…" value="' + esc(q) + '" oninput="renderLabs()">'
+    + '<button class="btn" onclick="goPage(\'grp:labs\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="labForm()">+ إضافة</button></div>';
   if (DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
 
@@ -683,9 +729,9 @@ function renderLabs() {
   } else {
     var common = list.filter(function (t) { return t.is_common; });
     if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true);
-    var gs = groupBy(list);
+    var gs = groupBy(list), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('🧪 ' + g.cat, g.items.map(labRow).join(''), gs.length === 1);
+      html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')', g.items.map(labRow).join(''), op);
     });
   }
   h('page', html);
@@ -779,8 +825,10 @@ function renderRecipes() {
   var list = DB.recipes.filter(function (r) {
     return !q || [r.name, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
   });
+  var ng = groupsOf('recipes').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المواد…" value="' + esc(q) + '" oninput="renderRecipes()">'
+    + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
   if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
   if (!list.length) { h('page', html + emptyBox('🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')); return; }
@@ -790,9 +838,9 @@ function renderRecipes() {
   } else {
     var fav = list.filter(function (r) { return r.is_favorite; });
     if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true);
-    var gs = groupBy(list, 'type', 'بلا نوع');
+    var gs = groupBy(list, 'type', 'بلا نوع'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('🌿 ' + g.cat, g.items.map(recipeRow).join(''), gs.length === 1);
+      html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')', g.items.map(recipeRow).join(''), op);
     });
   }
   h('page', html);
@@ -844,6 +892,180 @@ window.recipeDel = function (id) {
   });
 };
 
+/* ════════════════════════ 📁 المجموعات المسمّاة ════════════════════════
+   قائمة جاهزة داخل القسم («فحوصات ما قبل الجراحة» مثلًا). تُفتَح في محرّر
+   يعمل على نسخة مؤقتة: تضيف وتحذف منها ثم إمّا تحفظ التعديل، أو تطبع/ترسل
+   وتخرج بلا حفظ فتعود المجموعة كما كانت. */
+var GRP = null;
+
+function groupsOf(kind) {
+  return DB.groups.filter(function (g) { return g.kind === kind; });
+}
+function itemLabel(kind, o) {
+  if (!o) return '(عنصر محذوف)';
+  if (kind === 'meds') return o.trade_name;
+  if (kind === 'labs') return o.code ? o.code + ' — ' + o.name : o.name;
+  return o.name;
+}
+function itemById(kind, id) {
+  return coll(kind).find(function (x) { return x.id === id; });
+}
+
+function renderGroupsPage(kind) {
+  var gs = groupsOf(kind), L = KIND_LBL[kind];
+  var html = '<div class="toolbar">'
+    + '<button class="btn primary grow" onclick="groupNew(\'' + kind + '\')">+ مجموعة جديدة</button></div>';
+  if (DB.cart[kind].length) {
+    html += '<button class="btn full" onclick="groupFromCart(\'' + kind + '\')">💾 حفظ التحديد الحالي كمجموعة ('
+      + DB.cart[kind].length + ')</button>';
+  }
+  if (!gs.length) {
+    h('page', html + emptyBox('📁', 'لا توجد مجموعات', 'اجمع ما تطلبه عادةً في مجموعة واحدة باسم تختاره'));
+    return;
+  }
+  html += gs.map(function (g) {
+    return '<div class="card"><div class="row">'
+      + '<div class="grow" onclick="goPage(\'grp:' + kind + ':' + g.id + '\')">'
+      + '<div class="name">📁 ' + esc(g.name) + '</div>'
+      + '<div class="sub">' + countWord(g.items.length, L.one, L.two, L.few, L.many) + '</div></div>'
+      + '<button class="ic" onclick="groupPrint(\'' + g.id + '\')">🖨️</button>'
+      + '<button class="ic" onclick="groupShare(\'' + g.id + '\')">📤</button>'
+      + '</div></div>';
+  }).join('');
+  h('page', html);
+}
+
+function findGroup(id) { return DB.groups.find(function (g) { return g.id === id; }); }
+
+window.groupPrint = function (id) {
+  var g = findGroup(id); if (!g) return;
+  printList(g.kind, g.items, g.name);
+};
+window.groupShare = function (id) {
+  var g = findGroup(id); if (!g) return;
+  shareList(g.kind, g.items, g.name, '📁 ' + g.name);
+};
+
+window.groupNew = function (kind) { askGroupName(kind, [], ''); };
+window.groupFromCart = function (kind) { askGroupName(kind, DB.cart[kind].slice(), ''); };
+function askGroupName(kind, items, preset) {
+  openModal('📁 اسم المجموعة',
+    '<div class="f"><label>اسم المجموعة *</label>'
+    + '<input id="gn" class="inp" value="' + esc(preset) + '" placeholder="مثال: فحوصات ما قبل الجراحة"></div>'
+    + '<div class="mft"><button class="btn primary" onclick="groupCreate(\'' + kind + '\')">إنشاء</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+  window._grpPending = items;
+}
+window.groupCreate = function (kind) {
+  var name = (($('gn') || {}).value || '').trim();
+  if (!name) return toast('الاسم مطلوب', 'er');
+  var g = { id: uid(), kind: kind, name: name, items: (window._grpPending || []).slice() };
+  DB.groups.push(g);
+  Store.saveGroup(g);
+  closeModal();
+  goPage('grp:' + kind + ':' + g.id);
+};
+
+/** المحرّر يعمل على نسخة: الخروج بلا حفظ يعيد المجموعة كما كانت. */
+function renderGroupPage(kind, id) {
+  var g = findGroup(id);
+  if (!g) { h('page', emptyBox('📁', 'المجموعة غير موجودة', '')); return; }
+  if (!GRP || GRP.id !== id) GRP = { id: id, kind: kind, name: g.name, items: g.items.slice(), dirty: false };
+
+  var html = '<div class="gbar">'
+    + '<button class="btn primary sm" onclick="groupSave()">💾 حفظ' + (GRP.dirty ? ' •' : '') + '</button>'
+    + '<button class="btn white sm" onclick="groupEditPrint()">🖨️ طباعة</button>'
+    + '<button class="btn wa sm" onclick="groupEditShare()">📤 إرسال</button>'
+    + '<span class="grow"></span>'
+    + '<button class="btn sm" onclick="groupRename()">✏️</button>'
+    + '<button class="btn danger sm" onclick="groupDelete()">🗑️</button>'
+    + '</div>'
+    + (GRP.dirty ? '<div class="hint">✎ تعديلات غير محفوظة — «حفظ» يثبّتها، والرجوع يعيد المجموعة كما كانت.</div>' : '')
+    + '<button class="btn full" onclick="groupPick()">➕ إضافة عناصر</button>';
+
+  if (!GRP.items.length) {
+    h('page', html + emptyBox('📁', 'المجموعة فارغة', 'اضغط «إضافة عناصر»'));
+    return;
+  }
+  html += GRP.items.map(function (iid, i) {
+    var o = itemById(kind, iid);
+    return '<div class="card"><div class="row">'
+      + '<span class="idx">' + (i + 1) + '</span>'
+      + '<div class="grow"><div class="name">' + esc(itemLabel(kind, o)) + '</div></div>'
+      + '<button class="ic" onclick="groupRemove(\'' + iid + '\')">✖️</button>'
+      + '</div></div>';
+  }).join('');
+  h('page', html);
+}
+window.groupRemove = function (iid) {
+  GRP.items = GRP.items.filter(function (x) { return x !== iid; });
+  GRP.dirty = true; render();
+};
+window.groupSave = function () {
+  var g = findGroup(GRP.id); if (!g) return;
+  g.name = GRP.name; g.items = GRP.items.slice();
+  Store.saveGroup(g);
+  GRP.dirty = false; render(); toast('✅ حُفظت المجموعة');
+};
+window.groupEditPrint = function () { printList(GRP.kind, GRP.items, GRP.name); };
+window.groupEditShare = function () { shareList(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name); };
+window.groupRename = function () {
+  openModal('✏️ إعادة تسمية',
+    '<div class="f"><label>اسم المجموعة *</label><input id="gn" class="inp" value="' + esc(GRP.name) + '"></div>'
+    + '<div class="mft"><button class="btn primary" onclick="groupRenameSave()">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.groupRenameSave = function () {
+  var name = (($('gn') || {}).value || '').trim();
+  if (!name) return toast('الاسم مطلوب', 'er');
+  GRP.name = name; GRP.dirty = true; closeModal(); render();
+};
+window.groupDelete = function () {
+  confirmBox('حذف هذه المجموعة؟ (لا يُحذف أي تحليل أو علاج)', function () {
+    var id = GRP.id, kind = GRP.kind;
+    DB.groups = DB.groups.filter(function (g) { return g.id !== id; });
+    Store.dropGroup(id);
+    GRP = null; closeModal(); toast('🗑️ حُذفت المجموعة');
+    NAV.pop(); render();
+  });
+};
+
+/* منتقي العناصر: نفس فكرة المكتبة — بحث وقائمة تأشير، والموجود مقفل */
+var GPICK = {};
+window.groupPick = function () {
+  GPICK = {};
+  openModal('➕ إضافة إلى ' + GRP.name,
+    '<div class="lib-bar">'
+    + '<button class="btn primary full" style="margin:0" onclick="groupPickAdd()">➕ إضافة المحدد: <span id="gp-n">0</span></button>'
+    + '<input id="gp-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث…" oninput="groupPickRender()">'
+    + '</div><div id="gp-list"></div>');
+  groupPickRender();
+};
+window.groupPickRender = function () {
+  var kind = GRP.kind, q = norm(($('gp-q') || {}).value);
+  var list = coll(kind).filter(function (o) {
+    return !q || norm(itemLabel(kind, o) + ' ' + (o.category || o.type || '')).indexOf(q) >= 0;
+  });
+  if (!list.length) { h('gp-list', emptyBox('🔎', 'لا نتائج', '')); return; }
+  h('gp-list', list.map(function (o) {
+    var have = GRP.items.indexOf(o.id) >= 0;
+    return '<label class="lib-i' + (have ? ' have' : '') + '">'
+      + '<input type="checkbox"' + (have ? ' disabled' : '') + (GPICK[o.id] ? ' checked' : '')
+      + ' onchange="groupPickToggle(\'' + o.id + '\')">'
+      + '<span class="lib-t">' + esc(itemLabel(kind, o)) + '</span></label>';
+  }).join(''));
+};
+window.groupPickToggle = function (id) {
+  if (GPICK[id]) delete GPICK[id]; else GPICK[id] = 1;
+  var e = $('gp-n'); if (e) e.textContent = Object.keys(GPICK).length;
+};
+window.groupPickAdd = function () {
+  var add = Object.keys(GPICK);
+  if (!add.length) return toast('لم تحدد شيئًا بعد', 'er');
+  GRP.items = GRP.items.concat(add);
+  GRP.dirty = true; GPICK = {}; closeModal(); render();
+};
+
 /* ════════════════════════ طباعة/PDF + مشاركة واتساب ════════════════════════ */
 /* الاسم دائمًا في السطر الأول؛ الرمز (للتحاليل) والاسم العلمي (للعلاجات)
    يُدمجان معه إن اختيرا، وبقية الحقول المختارة تنزل أسطرًا تحته. */
@@ -870,21 +1092,23 @@ function outLines(kind, o) {
   return lines;
 }
 function lineText(x) { return x.l + ': ' + x.v; }
-function cartRows(kind) {
+function rowsFor(kind, ids) {
   var src = coll(kind);
-  return DB.cart[kind].map(function (id, i) {
+  return ids.map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
     return o ? { title: outTitle(kind, o, i), lines: outLines(kind, o) } : null;
   }).filter(Boolean);
 }
-function cartItemsHtml(kind) {
-  return cartRows(kind).map(function (r) {
+function cartRows(kind) { return rowsFor(kind, DB.cart[kind]); }
+function itemsHtml(kind, ids) {
+  return rowsFor(kind, ids).map(function (r) {
     return '<div class="rx-item"><div class="rx-name">' + esc(r.title) + '</div>'
       + r.lines.map(function (x) {
         return '<div class="rx-f"><span class="rx-l">' + esc(x.l) + ':</span> ' + esc(x.v) + '</div>';
       }).join('') + '</div>';
   }).join('');
 }
+function cartItemsHtml(kind) { return itemsHtml(kind, DB.cart[kind]); }
 
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
 function printDoc(title, body) {
@@ -906,10 +1130,10 @@ function printDoc(title, body) {
     + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
     + body + '</body></html>';
 }
-window.printCart = function (kind) {
-  var body = cartItemsHtml(kind);
+window.printCart = function (kind) { printList(kind, DB.cart[kind], cartTitle(kind, false)); };
+window.printList = function (kind, ids, title) {
+  var body = itemsHtml(kind, ids);
   if (!body) return toast('القائمة فارغة', 'er');
-  var title = cartTitle(kind, false);
   var html = printDoc(title, body);
 
   // داخل التطبيق: window.open لا يعمل في WebView إطلاقًا، فنمرّر الصفحة
@@ -944,8 +1168,7 @@ function cartTitle(kind, withIcon) {
   var t = kind === 'meds' ? 'قائمة علاجات' : kind === 'labs' ? 'قائمة تحاليل' : 'قائمة وصفات';
   return withIcon ? KIND_LBL[kind].icon + ' ' + t : t;
 }
-function buildCartCanvas(kind) {
-  var title = cartTitle(kind, true);
+function buildCanvas(kind, ids, title) {
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
   var TITLE_F = 'bold 23px Tahoma, Arial, sans-serif';
   var LINE_F = '16.5px Tahoma, Arial, sans-serif';
@@ -955,7 +1178,7 @@ function buildCartCanvas(kind) {
   var ctx = c.getContext('2d');
 
   // قياس أولًا لمعرفة الارتفاع المطلوب، ثم تحديد أبعاد اللوحة ورسمها
-  var rows = cartRows(kind).map(function (r) {
+  var rows = rowsFor(kind, ids).map(function (r) {
     ctx.font = TITLE_F;
     var titleLines = wrapText(ctx, r.title, MAXW);
     ctx.font = LINE_F;
@@ -998,9 +1221,12 @@ function buildCartCanvas(kind) {
   return c;
 }
 window.shareCart = function (kind) {
-  var ids = DB.cart[kind]; if (!ids.length) return toast('القائمة فارغة', 'er');
-  var canvas = buildCartCanvas(kind);
-  var fname = cartTitle(kind, false).replace(/ /g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
+  shareList(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
+};
+window.shareList = function (kind, ids, title, imgTitle) {
+  if (!ids.length) return toast('القائمة فارغة', 'er');
+  var canvas = buildCanvas(kind, ids, imgTitle || (KIND_LBL[kind].icon + ' ' + title));
+  var fname = title.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
 
   // داخل التطبيق الأصلي (APK): جسر Android يستقبل الصورة ويطلق مشاركة نظامية حقيقية
   // (WebView لا يطبّق Web Share API إطلاقًا، بخلاف المتصفح/PWA)

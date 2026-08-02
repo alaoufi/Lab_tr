@@ -65,6 +65,29 @@ public class DbBridge {
         }
     }
 
+    /** حفظ مجموعة مسمّاة (اسمها ومحتواها) — {id, kind, name, items[]}. */
+    @JavascriptInterface
+    public boolean saveGroup(String json) {
+        try {
+            db.saveGroup(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveGroup failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean deleteGroup(String id) {
+        try {
+            db.deleteGroup(id);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "deleteGroup failed", e);
+            return false;
+        }
+    }
+
     @JavascriptInterface
     public boolean deleteItem(String kind, String id) {
         if (!validKind(kind)) return false;

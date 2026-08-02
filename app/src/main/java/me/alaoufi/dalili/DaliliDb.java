@@ -23,7 +23,7 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 3;
+    private static final int DB_VERSION = 4;
 
     /** الأقسام الثلاثة — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
     public static final String[] KINDS = { "meds", "labs", "recipes" };
@@ -89,6 +89,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "is_common INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
         createRecipes(db);
+        createGroups(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -119,6 +120,25 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_recipes_type ON recipes(type)");
     }
 
+    /**
+     * المجموعات المسمّاة: قوائم جاهزة داخل القسم («فحوصات ما قبل الجراحة»
+     * مثلًا) تُحمَّل للطباعة أو الإرسال بضغطة، وتُعدَّل وتُحفظ باستقلال عن
+     * سلة التحديد المؤقتة.
+     */
+    private void createGroups(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS groups ("
+                + "id TEXT PRIMARY KEY,"
+                + "kind TEXT NOT NULL,"
+                + "name TEXT NOT NULL,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE TABLE IF NOT EXISTS group_items ("
+                + "group_id TEXT NOT NULL,"
+                + "item_id TEXT NOT NULL,"
+                + "position INTEGER NOT NULL,"
+                + "PRIMARY KEY (group_id, item_id))");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_groups_kind ON groups(kind)");
+    }
+
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
         // الترقيات تراكمية وبلا حذف بيانات: كل خطوة تبني على ما قبلها.
@@ -134,6 +154,9 @@ public class DaliliDb extends SQLiteOpenHelper {
         if (oldVersion < 3) {
             createRecipes(db);   // القسم الثالث: الوصفات العلاجية
         }
+        if (oldVersion < 4) {
+            createGroups(db);    // المجموعات المسمّاة
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -147,6 +170,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             cart.put(kind, readCart(db, kind));
         }
         out.put("cart", cart);
+        out.put("groups", readGroups(db));
         out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
         return out;
@@ -176,6 +200,77 @@ public class DaliliDb extends SQLiteOpenHelper {
             while (c.moveToNext()) arr.put(c.getString(0));
         } finally { c.close(); }
         return arr;
+    }
+
+    private JSONArray readGroups(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("groups", null, null, null, null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject g = new JSONObject();
+                String id = c.getString(c.getColumnIndexOrThrow("id"));
+                g.put("id", id);
+                g.put("kind", str(c, "kind"));
+                g.put("name", str(c, "name"));
+                g.put("items", readGroupItems(db, id));
+                arr.put(g);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    private JSONArray readGroupItems(SQLiteDatabase db, String groupId) {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("group_items", new String[]{"item_id"}, "group_id=?",
+                new String[]{groupId}, null, null, "position ASC");
+        try {
+            while (c.moveToNext()) arr.put(c.getString(0));
+        } finally { c.close(); }
+        return arr;
+    }
+
+    /** حفظ مجموعة كاملة (اسمها ومحتواها) في معاملة واحدة. */
+    public void saveGroup(JSONObject g) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            writeGroup(db, g, -1);
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    private void writeGroup(SQLiteDatabase db, JSONObject g, int order) {
+        String id = g.optString("id");
+        if (id.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put("kind", g.optString("kind", "labs"));
+        v.put("name", g.optString("name", ""));
+        if (db.update("groups", v, "id=?", new String[]{id}) == 0) {
+            v.put("id", id);
+            v.put("sort_order", order >= 0 ? order : nextSortOrder(db, "groups"));
+            db.insert("groups", null, v);
+        }
+        db.delete("group_items", "group_id=?", new String[]{id});
+        JSONArray items = g.optJSONArray("items");
+        for (int i = 0; items != null && i < items.length(); i++) {
+            String item = items.optString(i);
+            if (item.isEmpty()) continue;
+            ContentValues iv = new ContentValues();
+            iv.put("group_id", id);
+            iv.put("item_id", item);
+            iv.put("position", i);
+            db.insertWithOnConflict("group_items", null, iv, SQLiteDatabase.CONFLICT_REPLACE);
+        }
+    }
+
+    public void deleteGroup(String id) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete("groups", "id=?", new String[]{id});
+            db.delete("group_items", "group_id=?", new String[]{id});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
     }
 
     private static String str(Cursor c, String col) {
@@ -289,6 +384,8 @@ public class DaliliDb extends SQLiteOpenHelper {
         try {
             for (String kind : KINDS) db.delete(kind, null, null);
             db.delete("cart", null, null);
+            db.delete("groups", null, null);
+            db.delete("group_items", null, null);
 
             for (String kind : KINDS) {
                 JSONArray items = data.optJSONArray(kind);
@@ -305,6 +402,12 @@ public class DaliliDb extends SQLiteOpenHelper {
             JSONObject cart = data.optJSONObject("cart");
             if (cart != null) {
                 for (String kind : KINDS) insertCartRows(db, kind, cart.optJSONArray(kind));
+            }
+
+            JSONArray groups = data.optJSONArray("groups");
+            for (int i = 0; groups != null && i < groups.length(); i++) {
+                JSONObject g = groups.optJSONObject(i);
+                if (g != null) writeGroup(db, g, i + 1);
             }
 
             String pin = data.isNull("pin_hash") ? null : data.optString("pin_hash", null);
