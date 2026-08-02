@@ -865,10 +865,11 @@ function outLines(kind, o) {
   defs.forEach(function (f) {
     if (f[0] === merged || sel.indexOf(f[0]) < 0) return;
     var v = String(o[f[0]] == null ? '' : o[f[0]]).trim();
-    if (v) lines.push(f[1] + ': ' + v);
+    if (v) lines.push({ l: f[1], v: v });
   });
   return lines;
 }
+function lineText(x) { return x.l + ': ' + x.v; }
 function cartRows(kind) {
   var src = coll(kind);
   return DB.cart[kind].map(function (id, i) {
@@ -879,22 +880,48 @@ function cartRows(kind) {
 function cartItemsHtml(kind) {
   return cartRows(kind).map(function (r) {
     return '<div class="rx-item"><div class="rx-name">' + esc(r.title) + '</div>'
-      + r.lines.map(function (l) { return '<div class="rx-f">' + esc(l) + '</div>'; }).join('') + '</div>';
+      + r.lines.map(function (x) {
+        return '<div class="rx-f"><span class="rx-l">' + esc(x.l) + ':</span> ' + esc(x.v) + '</div>';
+      }).join('') + '</div>';
   }).join('');
+}
+
+/** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
+function printDoc(title, body) {
+  return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
+    + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title>'
+    + '<style>'
+    + '@page{size:A4;margin:12mm 10mm}'
+    + '*{box-sizing:border-box;font-family:Tahoma,Arial,sans-serif}'
+    + 'body{margin:0;color:#0f172a;font-size:11pt;line-height:1.35;-webkit-print-color-adjust:exact}'
+    + 'h1{font-size:14pt;color:#0f766e;margin:0}'
+    + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
+    + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:4pt 7pt;margin-bottom:4pt;page-break-inside:avoid}'
+    + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
+    + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35}'
+    + '.rx-l{color:#475569;font-weight:bold}'
+    + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}'
+    + '</style></head><body>'
+    + '<h1>' + esc(title) + '</h1>'
+    + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
+    + body + '</body></html>';
 }
 window.printCart = function (kind) {
   var body = cartItemsHtml(kind);
   if (!body) return toast('القائمة فارغة', 'er');
   var title = cartTitle(kind, false);
+  var html = printDoc(title, body);
+
+  // داخل التطبيق: window.open لا يعمل في WebView إطلاقًا، فنمرّر الصفحة
+  // لخدمة الطباعة في أندرويد (ومنها «حفظ كـPDF»)
+  if (window.AndroidBridge && typeof window.AndroidBridge.printHtml === 'function') {
+    window.AndroidBridge.printHtml(html, title);
+    return;
+  }
   var w = window.open('', '_blank');
-  if (!w) return toast('اسمح بالنوافذ المنبثقة', 'er');
-  w.document.write('<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>' + title + '</title>'
-    + '<style>*{font-family:Tahoma,Arial,sans-serif;box-sizing:border-box}body{padding:26px;color:#0f172a}'
-    + 'h1{font-size:20px;color:#075e54;margin:0 0 4px}.sub{color:#64748b;font-size:12px;margin-bottom:16px;border-bottom:2px solid #0f766e;padding-bottom:10px}'
-    + '.rx-item{border:1px solid #e2e8f0;border-radius:10px;padding:11px 13px;margin-bottom:10px;page-break-inside:avoid}'
-    + '.rx-name{font-weight:800;font-size:15px;color:#0f766e;margin-bottom:4px}.rx-f{font-size:13px;margin:2px 0}</style></head><body>'
-    + '<h1>' + title + '</h1><div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
-    + body + '<script>window.onload=function(){setTimeout(function(){window.focus();window.print();},400);};<' + '/script></body></html>');
+  if (!w) return toast('تعذّر فتح نافذة الطباعة', 'er');
+  w.document.write(html.replace('</body>',
+    '<script>window.onload=function(){setTimeout(function(){window.focus();window.print();},300);};<' + '/script></body>'));
   w.document.close();
 };
 /* بناء صورة أنيقة للقائمة (Canvas) — الرسم النصي في المتصفح يضبط اتجاه
@@ -919,9 +946,10 @@ function cartTitle(kind, withIcon) {
 }
 function buildCartCanvas(kind) {
   var title = cartTitle(kind, true);
-  var W = 900, PAD = 36, headH = 130, MAXW = W - PAD * 2 - 28;
-  var TITLE_F = 'bold 24px Tahoma, Arial, sans-serif';
-  var LINE_F = '17px Tahoma, Arial, sans-serif';
+  var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
+  var TITLE_F = 'bold 23px Tahoma, Arial, sans-serif';
+  var LINE_F = '16.5px Tahoma, Arial, sans-serif';
+  var TITLE_H = 28, LINE_H = 23;
 
   var c = document.createElement('canvas');
   var ctx = c.getContext('2d');
@@ -932,11 +960,14 @@ function buildCartCanvas(kind) {
     var titleLines = wrapText(ctx, r.title, MAXW);
     ctx.font = LINE_F;
     var lines = [];
-    r.lines.forEach(function (l) { lines = lines.concat(wrapText(ctx, l, MAXW)); });
-    return { titleLines: titleLines, lines: lines, h: 26 + titleLines.length * 32 + lines.length * 26 };
+    r.lines.forEach(function (x) { lines = lines.concat(wrapText(ctx, lineText(x), MAXW)); });
+    return {
+      titleLines: titleLines, lines: lines,
+      h: 18 + titleLines.length * TITLE_H + lines.length * LINE_H
+    };
   });
 
-  var H = headH + rows.reduce(function (a, r) { return a + r.h; }, 0) + PAD;
+  var H = headH + rows.reduce(function (a, r) { return a + r.h; }, 0) + PAD / 2;
   c.width = W; c.height = H;
   ctx = c.getContext('2d');
   ctx.fillStyle = '#f0fdfa'; ctx.fillRect(0, 0, W, H);
@@ -945,23 +976,23 @@ function buildCartCanvas(kind) {
   grad.addColorStop(0, '#075e54'); grad.addColorStop(1, '#0f766e');
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, headH);
   ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 34px Tahoma, Arial, sans-serif';
-  ctx.fillText(title, W - PAD, 55);
-  ctx.font = '16px Tahoma, Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
-  ctx.fillText(new Date().toLocaleDateString('ar-SA-u-nu-latn'), W - PAD, 92);
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 31px Tahoma, Arial, sans-serif';
+  ctx.fillText(title, W - PAD, 46);
+  ctx.font = '15px Tahoma, Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.fillText(new Date().toLocaleDateString('ar-SA-u-nu-latn'), W - PAD, 78);
 
   var y = headH;
   rows.forEach(function (r, i) {
     ctx.fillStyle = i % 2 === 0 ? '#ffffff' : '#f8fffe';
-    ctx.fillRect(PAD / 2, y + 6, W - PAD, r.h - 12);
+    ctx.fillRect(PAD / 2, y + 4, W - PAD, r.h - 8);
     ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
-    ctx.strokeRect(PAD / 2, y + 6, W - PAD, r.h - 12);
+    ctx.strokeRect(PAD / 2, y + 4, W - PAD, r.h - 8);
 
-    var ty = y + 30;
+    var ty = y + 24;
     ctx.fillStyle = '#0f172a'; ctx.font = TITLE_F;
-    r.titleLines.forEach(function (t) { ctx.fillText(t, W - PAD - 14, ty); ty += 32; });
+    r.titleLines.forEach(function (t) { ctx.fillText(t, W - PAD - 11, ty); ty += TITLE_H; });
     ctx.fillStyle = '#0f766e'; ctx.font = LINE_F;
-    r.lines.forEach(function (l) { ctx.fillText(l, W - PAD - 14, ty); ty += 26; });
+    r.lines.forEach(function (l) { ctx.fillText(l, W - PAD - 11, ty); ty += LINE_H; });
     y += r.h;
   });
   return c;

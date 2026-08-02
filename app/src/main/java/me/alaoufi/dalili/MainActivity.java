@@ -1,14 +1,18 @@
 package me.alaoufi.dalili;
 
+import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.print.PrintAttributes;
+import android.print.PrintManager;
 import android.util.Base64;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 
 import androidx.activity.ComponentActivity;
 import androidx.activity.OnBackPressedCallback;
@@ -30,6 +34,8 @@ public class MainActivity extends ComponentActivity {
 
     private WebView webView;
     private DaliliDb db;
+    /** يبقى مرجعًا حيًّا لعارض الطباعة حتى ينتهي النظام من توليد الـPDF. */
+    private WebView printView;
     private ValueCallback<Uri[]> filePickerCallback;
     private ActivityResultLauncher<String> filePickerLauncher;
 
@@ -97,8 +103,42 @@ public class MainActivity extends ComponentActivity {
         super.onDestroy();
     }
 
-    /** جسر JS↔Android: يستقبل صورة القائمة (Base64) ويطلق مشاركة نظامية حقيقية. */
+    /** جسر JS↔Android: مشاركة الصورة الناتجة، وطباعة القوائم عبر خدمة النظام. */
     public class AndroidBridge {
+
+        /**
+         * الطباعة داخل WebView: {@code window.open} لا يعمل هنا إطلاقًا (لا نوافذ
+         * منبثقة)، فكان زر الطباعة صامتًا. الحل الصحيح تمرير صفحة HTML جاهزة إلى
+         * PrintManager عبر عارض مؤقت — فيظهر مربع الطباعة القياسي بخيار
+         * «حفظ كـPDF» بلا إنترنت ولا صلاحيات إضافية.
+         */
+        @JavascriptInterface
+        public void printHtml(String html, String jobName) {
+            final String job = (jobName == null || jobName.trim().isEmpty()) ? "دليلي" : jobName.trim();
+            runOnUiThread(() -> {
+                try {
+                    WebView v = new WebView(MainActivity.this);
+                    v.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public void onPageFinished(WebView view, String url) {
+                            PrintManager pm = (PrintManager) getSystemService(Context.PRINT_SERVICE);
+                            if (pm == null) return;
+                            PrintAttributes attrs = new PrintAttributes.Builder()
+                                    .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                                    .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                                    .build();
+                            pm.print(job, view.createPrintDocumentAdapter(job), attrs);
+                        }
+                    });
+                    printView = v;   // بلا هذا المرجع قد يُجمَع العارض قبل انتهاء الطباعة
+                    v.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+                } catch (Exception ignored) {
+                    // فشل صامت — لا داعي لإيقاف التطبيق لأجل طباعة فاشلة
+                }
+            });
+        }
+
+        /** يستقبل صورة القائمة (Base64) ويطلق مشاركة نظامية حقيقية. */
         @JavascriptInterface
         public void shareImageBase64(String base64Png, String filename) {
             runOnUiThread(() -> {
