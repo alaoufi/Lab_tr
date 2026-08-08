@@ -182,9 +182,27 @@ JSON واحد، الاستيراد يتم داخل معاملة واحدة (إم
 Android Studio: **Build ← Generate Signed Bundle / APK** وأنشئ مفتاح
 توقيع خاص بك (خطوات قياسية موثّقة من جوجل).
 
+## 👨‍💻 للمطوّرين
+
+| الملف | المحتوى |
+|---|---|
+| [`docs/DEVELOPER.md`](docs/DEVELOPER.md) | دليل مفصّل: المعمارية، البناء، بنية الكود، الطباعة، إضافة قسم جديد، المزالق |
+| [`docs/DATABASE.md`](docs/DATABASE.md) | قاعدة البيانات: الجداول، الجسر، الترقيات، الترحيل، الفحص على الجهاز |
+| [`docs/schema.sql`](docs/schema.sql) | المخطط الكامل كـSQL + تاريخ الترقيات + استعلامات تشخيص |
+
+```bash
+node tools/test_store.js      # ٣٤ اختبارًا — بلا حزم خارجية
+node tools/ui_smoke.js        # تشغيل الواجهة في Chromium + لقطات (يحتاج playwright)
+```
+
+لتطوير الواجهة بسرعة: افتح `app/src/main/assets/index.html` في متصفح
+مباشرةً — يعمل على `localStorage` تلقائيًا بلا بناء APK.
+
 ## 📂 بنية المشروع
 ```
 DaliliApp/
+├── docs/                ← دليل المطوّر ومخطط قاعدة البيانات
+├── tools/               ← الاختبارات وفحص الواجهة
 ├── dist/dalili-1.6.apk  ← ملف التثبيت الجاهز
 ├── app/src/main/
 │   ├── assets/          ← ملفات التطبيق (index.html + app.js + library.js)
