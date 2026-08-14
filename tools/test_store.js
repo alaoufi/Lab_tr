@@ -10,7 +10,8 @@ const vm = require('vm');
 
 // جسر وهمي يحاكي دلالات DaliliDb (جداول منفصلة + سلة مرتّبة)
 function makeBridge() {
-  const t = { meds: [], labs: [], recipes: [], groups: [], cart: { meds: [], labs: [], recipes: [] }, settings: {} };
+  const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [],
+              cart: { meds: [], labs: [], imaging: [], recipes: [] }, settings: {} };
   const upsert = (table, o) => {
     const i = t[table].findIndex(x => x.id === o.id);
     if (i >= 0) t[table][i] = Object.assign({}, t[table][i], o); else t[table].push(Object.assign({}, o));
@@ -18,12 +19,15 @@ function makeBridge() {
   };
   return {
     _t: t,
-    loadAll: () => JSON.stringify({ meds: t.meds, labs: t.labs, recipes: t.recipes, groups: t.groups, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash }),
+    loadAll: () => JSON.stringify({ meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
+      groups: t.groups, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash }),
     upsertMany: (kind, j) => { JSON.parse(j).forEach(o => upsert(kind, o)); return true; },
     upsertItem: (kind, j) => upsert(kind, JSON.parse(j)),
     deleteItem: (kind, id) => {
       t[kind] = t[kind].filter(x => x.id !== id);
       t.cart[kind] = t.cart[kind].filter(x => x !== id);
+      // كما تفعل DaliliDb.delete: تنظيف المجموعات من الإشارات اليتيمة
+      t.groups.forEach(g => { if (g.kind === kind) g.items = g.items.filter(x => x !== id); });
       return true;
     },
     setCart: (kind, j) => { t.cart[kind] = JSON.parse(j); return true; },
@@ -37,12 +41,13 @@ function makeBridge() {
     setSetting: (k, v) => { if (v === null || v === undefined) delete t.settings[k]; else t.settings[k] = v; return true; },
     replaceAll: j => {
       const d = JSON.parse(j);
-      t.meds = d.meds || []; t.labs = d.labs || []; t.recipes = d.recipes || []; t.groups = d.groups || [];
-      t.cart = d.cart || { meds: [], labs: [], recipes: [] };
+      t.meds = d.meds || []; t.labs = d.labs || []; t.imaging = d.imaging || [];
+      t.recipes = d.recipes || []; t.groups = d.groups || [];
+      t.cart = d.cart || { meds: [], labs: [], imaging: [], recipes: [] };
       if (d.pin_hash) t.settings.pin_hash = d.pin_hash;
       return true;
     },
-    isEmpty: () => t.meds.length + t.labs.length + t.recipes.length === 0
+    isEmpty: () => t.meds.length + t.labs.length + t.imaging.length + t.recipes.length === 0
   };
 }
 
@@ -650,4 +655,186 @@ run('القوائم القصيرة تُعرض مفتوحة فتظهر الأسم
   eq(html.indexOf('منقوع الكمّون') >= 0, true, 'second name visible:');
   eq(html.indexOf('<details class="acc" open>') >= 0, true, 'groups start open:');
   eq(html.indexOf('وقائية (1)') >= 0, true, 'count in the group title:');
+});
+
+// جسر أندرويد وهمي للنسخ الاحتياطي والحافظة والطباعة
+function androidStub() {
+  const files = {};
+  const stub = {
+    _files: files, _clip: null, _jobs: [],
+    printHtml: (html, name) => stub._jobs.push({ html, name }),
+    copyText: t => { stub._clip = t; },
+    writeBackup: (json, stamp) => {
+      const name = 'dalili-' + stamp + '.json';
+      files[name] = json;
+      const names = Object.keys(files).sort().reverse();
+      names.slice(5).forEach(n => delete files[n]);
+      return name;
+    },
+    listBackups: () => JSON.stringify(Object.keys(files).sort().reverse()
+      .map(n => ({ name: n, size: files[n].length, time: 0 }))),
+    readBackup: n => files[n] || '',
+    deleteBackup: n => { delete files[n]; return true; },
+    shareBackup: () => {}
+  };
+  return stub;
+}
+
+run('الأشعة والفحوصات: حفظ الحقول واسترجاعها', () => {
+  const b = makeBridge(); let c = load(b); c.Store.load(); c.showApp();
+  c.goPage('imaging');
+  c._els('if-category').value = 'رنين مغناطيسي';
+  c._els('if-name').value = 'رنين العمود القطني';
+  c._els('if-region').value = 'العمود القطني';
+  c._els('if-purpose').value = 'تقييم الانزلاق الغضروفي';
+  c._els('if-requirements').value = 'خلع كل المعادن';
+  c._els('if-prohibitions').value = 'منظّم ضربات القلب';
+  c._els('if-common').checked = true;
+  c.imgSave('');
+
+  const r = b._t.imaging[0];
+  eq(b._t.imaging.length, 1, 'saved:');
+  eq(r.category, 'رنين مغناطيسي'); eq(r.region, 'العمود القطني');
+  eq(r.prohibitions, 'منظّم ضربات القلب'); eq(r.is_common, 1);
+
+  c = load(b); c.Store.load();
+  eq(c.DB.imaging.length, 1, 'survives restart:');
+});
+
+run('الأشعة: السلة والإخراج والمجموعات', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.goPage('imaging');
+  c._els('if-name').value = 'سونار البطن';
+  c._els('if-region').value = 'البطن';
+  c._els('if-requirements').value = 'صيام ٦ ساعات';
+  c.imgSave('');
+  const id = b._t.imaging[0].id;
+  c.toggleCart('imaging', id);
+
+  const r = c.cartRows('imaging')[0];
+  eq(r.title, '1. سونار البطن', 'title:');
+  eq(r.lines.map(c.lineText), ['المنطقة أو العضو: البطن', 'التحضير المطلوب: صيام ٦ ساعات'], 'defaults:');
+  eq(c.cartTitle('imaging', false), 'طلب أشعة وفحوصات', 'document title:');
+
+  c.goPage('grp:imaging'); c.groupFromCart('imaging');
+  c._els('gn').value = 'فحوصات ما قبل العملية'; c.groupCreate('imaging');
+  eq(b._t.groups[0].kind, 'imaging', 'group on the new section:');
+  eq(b._t.groups[0].items, [id]);
+});
+
+run('حذف عنصر ينظّف المجموعات من الإشارات اليتيمة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'مجموعة'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd(); c.groupSave();
+  eq(b._t.groups[0].items.length, 2, 'two members:');
+
+  c.goPage('labs');
+  c.labDel(ids[0]); c._els('cb-yes').onclick();
+  eq(b._t.groups[0].items, [ids[1]], 'orphan removed from the group:');
+});
+
+run('ترويسة الطباعة اختيارية: لا تظهر وهي فارغة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  eq(c.DB.header, { name: '', title: '', contact: '' }, 'starts empty:');
+  c.printCart('labs');
+  eq(A._jobs[0].html.indexOf('class="lh"') < 0, true, 'no letterhead block:');
+
+  c._els('hd-name').value = 'د. محمد';
+  c._els('hd-title').value = 'استشاري باطنية';
+  c._els('hd-contact').value = '0500000000';
+  c.saveHeader();
+  eq(b._t.settings.hdr_name, 'د. محمد', 'persisted:');
+
+  c.printCart('labs');
+  const html = A._jobs[1].html;
+  eq(html.indexOf('د. محمد') >= 0, true, 'name printed:');
+  eq(html.indexOf('استشاري باطنية') >= 0, true, 'title printed:');
+
+  c.clearHeader();
+  c.printCart('labs');
+  eq(A._jobs[2].html.indexOf('class="lh"') < 0, true, 'cleared again:');
+});
+
+run('نسخ القائمة كنص', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.goPage('labs');
+  c._els('lf-name').value = 'سكر صائم'; c._els('lf-code').value = 'FBS';
+  c._els('lf-requirements').value = 'صيام ٨ ساعات';
+  c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.copyCart('labs');
+  eq(A._clip.indexOf('FBS — سكر صائم') >= 0, true, 'item in text:');
+  eq(A._clip.indexOf('• متطلبات التحليل: صيام ٨ ساعات') >= 0, true, 'field in text:');
+  eq(A._clip.indexOf('<') < 0, true, 'plain text, no markup:');
+
+  c.clearCart('labs');
+  A._clip = null;
+  c.copyCart('labs');
+  eq(A._clip, null, 'empty list is refused:');
+});
+
+run('النسخ الاحتياطي التلقائي: يكتب ويقيّد ويستعيد', () => {
+  const b = makeBridge(); let c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);   // كما لو كان موجودًا عند الإقلاع
+  c.Store.load(); c.showApp();
+
+  eq(c.autoBackup(false), false, 'no backup when there is no data:');
+
+  c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  const name = c.autoBackup(false);
+  eq(!!name, true, 'wrote a backup:');
+  eq(b._t.settings.backup_at > 0, true, 'timestamp persisted:');
+  eq(c.autoBackup(false), false, 'does not repeat within the day:');
+
+  // ٧ كتابات يدوية ⇒ تبقى ٥ فقط
+  for (let i = 0; i < 7; i++) A.writeBackup('{}', '2026-01-0' + (i + 1) + '-1200');
+  eq(Object.keys(A._files).length <= 5, true, 'keeps only the newest five:');
+
+  // استعادة من نسخة تحمل بيانات مختلفة
+  A._files['dalili-2026-02-01-1200.json'] = JSON.stringify({
+    labs: [{ id: 'x1', name: 'مستعاد' }], meds: [], imaging: [], recipes: [],
+    cart: { meds: [], labs: [], imaging: [], recipes: [] }, groups: []
+  });
+  c.backupRestore('dalili-2026-02-01-1200.json');
+  c._els('cb-yes').onclick();
+  eq(c.DB.labs.map(l => l.name), ['مستعاد'], 'restored in memory:');
+  eq(b._t.labs.map(l => l.name), ['مستعاد'], 'restored in db:');
+});
+
+run('كل عناصر مكتبة الأشعة مكتملة وبلا تكرار', () => {
+  const c = load(makeBridge());
+  const seen = {};
+  c.LIBRARY.imaging.forEach(function (o, i) {
+    ['category', 'name', 'region', 'purpose', 'requirements', 'prohibitions'].forEach(function (f) {
+      if (!String(o[f] || '').trim()) throw new Error('imaging#' + i + ' (' + o.name + ') ينقصه ' + f);
+    });
+    const k = o.name + '|' + o.region;
+    if (seen[k]) throw new Error('مكرر: ' + k);
+    seen[k] = 1;
+  });
+  eq(c.LIBRARY.imaging.length > 60, true, 'library size:');
+});
+
+run('المكتبة الجاهزة تضيف للقسم الصحيح لا لغيره', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.openLibrary('imaging');
+  c.libToggle(0); c.libToggle(1);
+  c.libAdd();
+  eq(b._t.imaging.length, 2, 'reached the db:');
+  eq(c.DB.imaging.length, 2, 'reached memory too:');
+  eq(c.DB.labs.length, 0, 'did not leak into labs:');
+  eq(c.DB.meds.length, 0, 'did not leak into meds:');
+  eq(!!b._t.imaging[0].region, true, 'region copied:');
+
+  // والموجود مسبقًا يُقفَل عند إعادة فتح المكتبة
+  c.openLibrary('imaging');
+  eq(Object.keys(c.LIB_MINE).length, 2, 'existing items recognised:');
 });

@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 4   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 5   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -51,7 +51,23 @@ CREATE TABLE labs (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٣) الوصفات العلاجية
+--  ٣) الأشعة والفحوصات — تصوير ومناظير وتخطيط
+--  بنيتها كالتحاليل مع «المنطقة أو العضو» بدل رمز التحليل.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE imaging (
+    id            TEXT PRIMARY KEY,
+    category      TEXT,                          -- نوع الفحص (رنين، منظار…)
+    name          TEXT    NOT NULL,              -- اسم الفحص (مطلوب)
+    region        TEXT,                          -- المنطقة أو العضو
+    purpose       TEXT,                          -- الهدف من الفحص
+    requirements  TEXT,                          -- التحضير المطلوب
+    prohibitions  TEXT,                          -- موانع الإجراء
+    is_common     INTEGER NOT NULL DEFAULT 0,
+    sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ٤) الوصفات العلاجية
 --  ملاحظة: usage ليست كلمة محجوزة في SQLite فلا تحتاج اقتباسًا، لكن بعض
 --  أدوات العرض الخارجية قد تفضّل "usage" — انتبه إن نقلت المخطط لمحرّك آخر.
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -72,8 +88,8 @@ CREATE TABLE recipes (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٤) سلة التحديد — مؤقتة، مشتركة بين الأقسام الثلاثة
---  kind ∈ ('meds','labs','recipes') ويطابق اسم الجدول المصدر.
+--  ٥) سلة التحديد — مؤقتة، مشتركة بين الأقسام
+--  kind ∈ ('meds','labs','imaging','recipes') ويطابق اسم الجدول المصدر.
 --  position يحفظ ترتيب الطباعة/الصورة المُرسَلة.
 --  لا مفتاح أجنبي: الحذف من الجدول المصدر يمرّ عبر DaliliDb.delete() التي
 --  تحذف من السلة في نفس المعاملة.
@@ -86,7 +102,7 @@ CREATE TABLE cart (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٥) المجموعات المسمّاة — قوائم دائمة («فحوصات ما قبل الجراحة»)
+--  ٦) المجموعات المسمّاة — قوائم دائمة («فحوصات ما قبل الجراحة»)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE groups (
     id          TEXT PRIMARY KEY,
@@ -103,12 +119,17 @@ CREATE TABLE group_items (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٦) الإعدادات — مخزن مفتاح/قيمة
+--  ٧) الإعدادات — مخزن مفتاح/قيمة
 --  المفاتيح المستخدمة حاليًا:
 --    pin_hash      بصمة SHA-256 لرمز القفل (لا الرمز نفسه)
 --    out_meds      JSON: أسماء حقول العلاجات الظاهرة في الطباعة/الصورة
 --    out_labs      JSON: نفسه للتحاليل
+--    out_imaging   JSON: نفسه للأشعة والفحوصات
 --    out_recipes   JSON: نفسه للوصفات
+--    hdr_name      ترويسة الطباعة: الاسم        (اختيارية — فارغة افتراضيًا)
+--    hdr_title     ترويسة الطباعة: الصفة        (اختيارية)
+--    hdr_contact   ترويسة الطباعة: التواصل      (اختيارية)
+--    backup_at     وقت آخر نسخة احتياطية تلقائية (ميلي ثانية)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE settings (
     key    TEXT PRIMARY KEY,
@@ -121,6 +142,7 @@ CREATE TABLE settings (
 CREATE INDEX idx_meds_name     ON meds(trade_name);
 CREATE INDEX idx_meds_category ON meds(category);
 CREATE INDEX idx_labs_category ON labs(category);
+CREATE INDEX idx_imaging_category ON imaging(category);
 CREATE INDEX idx_recipes_type  ON recipes(type);
 CREATE INDEX idx_groups_kind   ON groups(kind);
 
@@ -145,6 +167,10 @@ CREATE INDEX idx_groups_kind   ON groups(kind);
 --      CREATE TABLE IF NOT EXISTS groups (…);           -- المجموعات المسمّاة
 --      CREATE TABLE IF NOT EXISTS group_items (…);
 --      CREATE INDEX IF NOT EXISTS idx_groups_kind ON groups(kind);
+--
+--  الإصدار ٤ → ٥
+--      CREATE TABLE IF NOT EXISTS imaging (…);          -- الأشعة والفحوصات
+--      CREATE INDEX IF NOT EXISTS idx_imaging_category ON imaging(category);
 --
 --  عند إضافة ترقية جديدة:
 --    ١) ارفع DB_VERSION

@@ -7,9 +7,9 @@
 'use strict';
 
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
-var KINDS = ['meds', 'labs', 'recipes'];
-var DB = { pin_hash: null, meds: [], labs: [], recipes: [],
-           cart: { meds: [], labs: [], recipes: [] }, groups: [], out: null };
+var KINDS = ['meds', 'labs', 'imaging', 'recipes'];
+var DB = { pin_hash: null, meds: [], labs: [], imaging: [], recipes: [],
+           cart: { meds: [], labs: [], imaging: [], recipes: [] }, groups: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -31,6 +31,13 @@ var OUT_LABS = [
   ['requirements', 'متطلبات التحليل'],
   ['prohibitions', 'ممنوعات التحليل']
 ];
+var OUT_IMAGING = [
+  ['category', 'نوع الفحص'],
+  ['region', 'المنطقة أو العضو'],
+  ['purpose', 'الهدف من الفحص'],
+  ['requirements', 'التحضير المطلوب'],
+  ['prohibitions', 'موانع الإجراء']
+];
 var OUT_RECIPES = [
   ['type', 'نوع الوصفة'],
   ['purpose', 'الهدف'],
@@ -45,21 +52,18 @@ var OUT_RECIPES = [
 var OUT_DEF = {
   meds: ['dosage', 'uses'],
   labs: ['code', 'requirements'],
+  imaging: ['region', 'requirements'],
   recipes: ['ingredients', 'preparation', 'dose']
 };
-function outDefs(kind) {
-  return kind === 'meds' ? OUT_MEDS : kind === 'labs' ? OUT_LABS : OUT_RECIPES;
-}
+var OUT_ALL = { meds: OUT_MEDS, labs: OUT_LABS, imaging: OUT_IMAGING, recipes: OUT_RECIPES };
+function outDefs(kind) { return OUT_ALL[kind]; }
 /** مجموعة القسم في الذاكرة. */
-function coll(kind) {
-  return kind === 'meds' ? DB.meds : kind === 'labs' ? DB.labs : DB.recipes;
-}
-function setColl(kind, arr) {
-  if (kind === 'meds') DB.meds = arr; else if (kind === 'labs') DB.labs = arr; else DB.recipes = arr;
-}
+function coll(kind) { return DB[kind]; }
+function setColl(kind, arr) { DB[kind] = arr; }
 var KIND_LBL = {
   meds: { one: 'علاج واحد', two: 'علاجان', few: 'علاجات', many: 'علاجًا', title: 'العلاجات', icon: '💊' },
   labs: { one: 'تحليل واحد', two: 'تحليلان', few: 'تحاليل', many: 'تحليلًا', title: 'التحاليل', icon: '🧪' },
+  imaging: { one: 'فحص واحد', two: 'فحصان', few: 'فحوصات', many: 'فحصًا', title: 'الأشعة والفحوصات', icon: '📷' },
   recipes: { one: 'وصفة واحدة', two: 'وصفتان', few: 'وصفات', many: 'وصفة', title: 'الوصفات العلاجية', icon: '🌿' }
 };
 var NDB = (typeof window.NativeDb === 'object' && window.NativeDb) ? window.NativeDb : null;
@@ -83,6 +87,15 @@ function applyData(data) {
     DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k]);
   });
   DB.groups = Array.isArray(data.groups) ? data.groups : [];
+  // ترويسة الطباعة اختيارية بالكامل — تبقى فارغة ما لم يملأها المستخدم،
+  // وأي سطر فارغ لا يظهر في الورقة أصلًا.
+  var hd = data.header || {};
+  DB.header = {
+    name: hd.name || st.hdr_name || '',
+    title: hd.title || st.hdr_title || '',
+    contact: hd.contact || st.hdr_contact || ''
+  };
+  DB.backup_at = Number(data.backup_at || st.backup_at || 0) || 0;
   DB.pin_hash = data.pin_hash || null;
 }
 function blobSave() {
@@ -91,8 +104,10 @@ function blobSave() {
 }
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  return { meds: DB.meds, labs: DB.labs, recipes: DB.recipes,
-           cart: DB.cart, groups: DB.groups, pin_hash: DB.pin_hash, out: DB.out };
+  var o = { cart: DB.cart, groups: DB.groups, pin_hash: DB.pin_hash,
+            out: DB.out, header: DB.header };
+  KINDS.forEach(function (k) { o[k] = DB[k]; });
+  return o;
 }
 
 /* ── طبقة التخزين: SQLite داخل التطبيق، أو localStorage في المتصفح ── */
@@ -130,6 +145,18 @@ var Store = {
   addMany: function (kind, items) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.upsertMany(kind, JSON.stringify(items)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setHeader: function () {
+    if (!NDB) { blobSave(); return true; }
+    try {
+      return (NDB.setSetting('hdr_name', DB.header.name)
+        && NDB.setSetting('hdr_title', DB.header.title)
+        && NDB.setSetting('hdr_contact', DB.header.contact)) || dbFail();
+    } catch (e) { return dbFail(); }
+  },
+  setBackupAt: function (t) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('backup_at', String(t)) || dbFail(); } catch (e) { return dbFail(); }
   },
   saveGroup: function (g) {
     if (!NDB) { blobSave(); return true; }
@@ -174,6 +201,68 @@ function toast(msg, type) {
   e.textContent = msg; e.className = 'toast on' + (type === 'er' ? ' er' : '');
   clearTimeout(_tt); _tt = setTimeout(function () { e.className = 'toast'; }, 2600);
 }
+
+/* ── النسخ الاحتياطي التلقائي ──────────────────────────────────────────
+   عند كل إقلاع: إن مرّ يوم على آخر نسخة وفيه بيانات، تُكتب نسخة جديدة في
+   مجلد التطبيق الخاص (بلا أي صلاحية) ويُبقى على أحدث خمس. هذا يحمي من تلف
+   البيانات أو حذفها بالخطأ، ولا يحمي من ضياع الجهاز — لذلك في الإعدادات
+   زرّ «مشاركة» يُخرج الملف إلى درايف أو الحاسوب بضغطة. */
+var AB = (window.AndroidBridge && typeof window.AndroidBridge.writeBackup === 'function')
+  ? window.AndroidBridge : null;
+var BACKUP_EVERY = 24 * 60 * 60 * 1000;
+
+function stampNow() {
+  var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+    + '-' + p(d.getHours()) + p(d.getMinutes());
+}
+function dataCount() {
+  return KINDS.reduce(function (a, k) { return a + DB[k].length; }, 0);
+}
+/** يكتب نسخة الآن. force من زر يدوي، وإلا فبشرط مرور المدة ووجود بيانات. */
+window.autoBackup = function (force) {
+  if (!AB) return false;
+  if (!force) {
+    if (!dataCount()) return false;
+    if (Date.now() - (DB.backup_at || 0) < BACKUP_EVERY) return false;
+  }
+  try {
+    var name = AB.writeBackup(JSON.stringify(snapshot()), stampNow());
+    if (!name) return false;
+    DB.backup_at = Date.now();
+    Store.setBackupAt(DB.backup_at);
+    return name;
+  } catch (e) { return false; }
+};
+function backupList() {
+  if (!AB) return [];
+  try { return JSON.parse(AB.listBackups() || '[]'); } catch (e) { return []; }
+}
+window.backupNow = function () {
+  var name = autoBackup(true);
+  if (name) { render(); toast('✅ حُفظت نسخة: ' + name); }
+  else toast('تعذّر حفظ النسخة', 'er');
+};
+window.backupShare = function (name) { if (AB) AB.shareBackup(name); };
+window.backupDelete = function (name) {
+  confirmBox('حذف هذه النسخة الاحتياطية؟', function () {
+    if (AB) AB.deleteBackup(name);
+    closeModal(); render(); toast('🗑️ حُذفت');
+  });
+};
+window.backupRestore = function (name) {
+  confirmBox('استعادة «' + name + '» ستستبدل كل بياناتك الحالية. متابعة؟', function () {
+    var raw = AB ? AB.readBackup(name) : '';
+    var data;
+    try { data = JSON.parse(raw); } catch (e) { data = null; }
+    if (!data) { closeModal(); return toast('الملف غير صالح', 'er'); }
+    applyData(data);
+    Store.replaceAll();
+    KINDS.forEach(function (k) { Store.setOut(k); });
+    Store.setHeader();
+    closeModal(); goHome(); toast('✅ تمت الاستعادة');
+  });
+};
 
 /* ── قفل PIN محلي (SHA-256 عبر Web Crypto المدمجة — بلا مكتبات) ── */
 async function sha256(text) {
@@ -221,9 +310,11 @@ var PAGES = {
   home:     { icon: '💊🧪', title: 'دليلي الطبي' },
   meds:     { icon: '💊', title: 'العلاجات' },
   labs:     { icon: '🧪', title: 'التحاليل' },
+  imaging:  { icon: '📷', title: 'الأشعة والفحوصات' },
   recipes:  { icon: '🌿', title: 'الوصفات العلاجية' },
   settings: { icon: '⚙️', title: 'الإعدادات' },
   'lib:labs': { icon: '📚', title: 'مكتبة التحاليل' },
+  'lib:imaging': { icon: '📚', title: 'مكتبة الأشعة والفحوصات' },
   'lib:meds': { icon: '📚', title: 'مكتبة العلاجات' }
 };
 /** عنوان صفحات المجموعات يُحسَب لأنه يتضمّن اسم القسم أو اسم المجموعة. */
@@ -242,6 +333,7 @@ function pageMeta(p) {
 
 async function boot() {
   Store.load();
+  autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
 }
@@ -286,18 +378,30 @@ function renderSettings() {
     + '<div class="muted" style="margin-bottom:9px">اسم العلاج واسم التحليل يظهران دائمًا. اختر ما يُضاف معهما.</div>'
     + outBlock('meds', '💊 العلاجات', OUT_MEDS)
     + outBlock('labs', '🧪 التحاليل', OUT_LABS)
+    + outBlock('imaging', '📷 الأشعة والفحوصات', OUT_IMAGING)
     + outBlock('recipes', '🌿 الوصفات', OUT_RECIPES)
     + '</div>'
+    + '<div class="settings-sec">'
+    + '<div class="settings-lbl">ترويسة الطباعة (اختيارية — اتركها فارغة إن لم ترغب)</div>'
+    + '<div class="muted" style="margin-bottom:8px">ما تكتبه هنا يظهر أعلى كل ورقة مطبوعة ومع النص المنسوخ. الأسطر الفارغة لا تظهر إطلاقًا.</div>'
+    + '<div class="f"><label>الاسم</label><input id="hd-name" class="inp" value="' + esc(DB.header.name) + '" placeholder="اتركه فارغًا إن لم ترغب" onchange="saveHeader()"></div>'
+    + '<div class="f"><label>الصفة أو التخصص</label><input id="hd-title" class="inp" value="' + esc(DB.header.title) + '" placeholder="اختياري" onchange="saveHeader()"></div>'
+    + '<div class="f"><label>بيانات التواصل</label><input id="hd-contact" class="inp" value="' + esc(DB.header.contact) + '" placeholder="اختياري" onchange="saveHeader()"></div>'
+    + (headerHtml() ? '<button class="btn full" onclick="clearHeader()">🧹 إفراغ الترويسة</button>' : '')
+    + '</div>'
+    + backupSection()
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">إضافة سريعة</div>'
     + '<button class="btn full" onclick="medForm()">💊 + إضافة علاج</button>'
     + '<button class="btn full" onclick="labForm()">🧪 + إضافة تحليل</button>'
+    + '<button class="btn full" onclick="imgForm()">📷 + إضافة فحص/أشعة</button>'
     + '<button class="btn full" onclick="recipeForm()">🌿 + إضافة وصفة</button>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">المكتبة الجاهزة (مدمجة داخل التطبيق)</div>'
-    + '<button class="btn full" onclick="goPage(\'lib:labs\')">🧪 مكتبة التحاليل (' + lib.labs.length + ')</button>'
-    + '<button class="btn full" onclick="goPage(\'lib:meds\')">💊 مكتبة العلاجات (' + lib.meds.length + ')</button>'
+    + '<button class="btn full" onclick="goPage(\'lib:labs\')">🧪 مكتبة التحاليل (' + (lib.labs || []).length + ')</button>'
+    + '<button class="btn full" onclick="goPage(\'lib:imaging\')">📷 مكتبة الأشعة والفحوصات (' + (lib.imaging || []).length + ')</button>'
+    + '<button class="btn full" onclick="goPage(\'lib:meds\')">💊 مكتبة العلاجات (' + (lib.meds || []).length + ')</button>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">النسخ الاحتياطي (يبقى على جهازك فقط)</div>'
@@ -309,6 +413,43 @@ function renderSettings() {
     + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا. التطبيق لا يملك صلاحية إنترنت أصلًا.</div></div>'
   );
 }
+window.saveHeader = function () {
+  DB.header = {
+    name: (($('hd-name') || {}).value || '').trim(),
+    title: (($('hd-title') || {}).value || '').trim(),
+    contact: (($('hd-contact') || {}).value || '').trim()
+  };
+  Store.setHeader();
+};
+window.clearHeader = function () {
+  DB.header = { name: '', title: '', contact: '' };
+  Store.setHeader(); render(); toast('أُفرغت الترويسة');
+};
+
+function fmtBytes(n) { return n < 1024 ? n + ' ب' : Math.round(n / 1024) + ' ك.ب'; }
+function backupSection() {
+  if (!AB) {
+    return '<div class="settings-sec"><div class="settings-lbl">النسخ الاحتياطي التلقائي</div>'
+      + '<div class="muted">متاح داخل التطبيق فقط (غير متاح في المتصفح).</div></div>';
+  }
+  var list = backupList();
+  var html = '<div class="settings-sec"><div class="settings-lbl">النسخ الاحتياطي التلقائي</div>'
+    + '<div class="muted" style="margin-bottom:8px">نسخة يوميًا عند فتح التطبيق، ويُحتفظ بأحدث خمس. '
+    + 'تحمي من تلف البيانات أو حذفها بالخطأ — ولحمايتها من ضياع الجهاز شارِك الملف إلى درايف أو الحاسوب.</div>'
+    + '<button class="btn full" onclick="backupNow()">💾 احفظ نسخة الآن</button>';
+  if (!list.length) return html + '<div class="muted">لا توجد نسخ بعد.</div></div>';
+  html += list.map(function (b) {
+    return '<div class="card"><div class="row">'
+      + '<div class="grow"><div class="name">🗄️ ' + esc(b.name.replace(/^dalili-|\.json$/g, '')) + '</div>'
+      + '<div class="sub">' + fmtBytes(b.size) + '</div></div>'
+      + '<button class="ic" onclick="backupShare(\'' + esc(b.name) + '\')">📤</button>'
+      + '<button class="ic" onclick="backupRestore(\'' + esc(b.name) + '\')">↩️</button>'
+      + '<button class="ic" onclick="backupDelete(\'' + esc(b.name) + '\')">🗑️</button>'
+      + '</div></div>';
+  }).join('');
+  return html + '</div>';
+}
+
 function outBlock(kind, title, fields) {
   var sel = DB.out[kind];
   return '<div class="out-grp"><div class="out-t">' + title + '</div>'
@@ -331,9 +472,9 @@ var LIB_SEL = {}, LIB_KIND = 'labs', LIB_MINE = {};
 
 function norm(s) { return String(s == null ? '' : s).trim().toLowerCase(); }
 function libKey(kind, o) {
-  return kind === 'meds'
-    ? norm(o.trade_name) + '|' + norm(o.scientific_name)
-    : norm(o.code) + '|' + norm(o.name);
+  if (kind === 'meds') return norm(o.trade_name) + '|' + norm(o.scientific_name);
+  if (kind === 'imaging') return norm(o.name) + '|' + norm(o.region);
+  return norm(o.code) + '|' + norm(o.name);
 }
 function libList() { return (window.LIBRARY || {})[LIB_KIND] || []; }
 function libCats() {
@@ -344,9 +485,11 @@ function libCats() {
 /* البحث يشمل كل نص العنصر — البحث عن «صيام» أو «مضاد حيوي» يجب أن يجد
    ما ورد في المتطلبات والمحاذير لا في الاسم وحده. */
 function libHay(o) {
-  return norm(LIB_KIND === 'meds'
-    ? [o.trade_name, o.scientific_name, o.category, o.uses, o.cautions].join(' ')
-    : [o.code, o.name, o.category, o.purpose, o.requirements, o.prohibitions].join(' '));
+  if (LIB_KIND === 'meds') {
+    return norm([o.trade_name, o.scientific_name, o.category, o.uses, o.cautions].join(' '));
+  }
+  return norm([o.code, o.name, o.region, o.category, o.purpose,
+               o.requirements, o.prohibitions].join(' '));
 }
 function libCount() {
   var e = $('lib-n'); if (e) e.textContent = Object.keys(LIB_SEL).length;
@@ -357,7 +500,7 @@ window.openLibrary = function (kind) { goPage('lib:' + kind); };
 /** يُعيد بناء قائمة «الموجود عندي» — تُستدعى عند فتح الصفحة وبعد كل إضافة. */
 function libSyncMine() {
   LIB_MINE = {};
-  (LIB_KIND === 'meds' ? DB.meds : DB.labs).forEach(function (o) { LIB_MINE[libKey(LIB_KIND, o)] = 1; });
+  coll(LIB_KIND).forEach(function (o) { LIB_MINE[libKey(LIB_KIND, o)] = 1; });
 }
 function renderLibraryPage(kind) {
   LIB_KIND = kind;
@@ -370,7 +513,7 @@ function renderLibraryPage(kind) {
     + '➕ إضافة المحدد: <span id="lib-n">0</span></button>'
     + '<input id="lib-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث في المكتبة…" oninput="libRender()">'
     + '<div class="muted" style="margin-top:7px">'
-    + lib.length + (kind === 'meds' ? ' علاجًا' : ' تحليلًا') + ' في ' + libCats().length + ' تصنيفًا. '
+    + lib.length + ' ' + KIND_LBL[kind].many + ' في ' + libCats().length + ' تصنيفًا. '
     + 'العناصر الباهتة مضافة عندك مسبقًا.'
     + (kind === 'meds' ? ' الجرعات فارغة عمدًا — أضِفها بنفسك بعد الإضافة.' : '')
     + '</div></div><div id="lib-list"></div>');
@@ -380,7 +523,9 @@ function renderLibraryPage(kind) {
 function libItem(i, ci) {
   var o = libList()[i];
   var have = !!LIB_MINE[libKey(LIB_KIND, o)];
-  var nm = LIB_KIND === 'meds' ? o.trade_name : (o.code ? o.code + ' — ' + o.name : o.name);
+  var nm = LIB_KIND === 'meds' ? o.trade_name
+    : LIB_KIND === 'imaging' ? (o.region ? o.name + ' (' + o.region + ')' : o.name)
+    : (o.code ? o.code + ' — ' + o.name : o.name);
   // الاسم ظاهر في السطر الأول — لا نكرّره في السطر الوصفي
   var sub = LIB_KIND === 'meds'
     ? [o.scientific_name, o.uses].filter(Boolean).join(' • ')
@@ -444,14 +589,13 @@ window.libAdd = function () {
     return o;
   }).filter(Boolean);
   if (!items.length) return toast('لم تحدد شيئًا بعد', 'er');
-  if (kind === 'meds') DB.meds = DB.meds.concat(items); else DB.labs = DB.labs.concat(items);
+  setColl(kind, coll(kind).concat(items));
   Store.addMany(kind, items);
   LIB_SEL = {};
   libSyncMine();          // المضاف حديثًا يصير باهتًا فلا يُضاف مرتين
   libCount(); libRender();
-  toast('✅ تمت إضافة ' + (kind === 'meds'
-    ? countWord(items.length, 'علاج واحد', 'علاجين', 'علاجات', 'علاجًا')
-    : countWord(items.length, 'تحليل واحد', 'تحليلين', 'تحاليل', 'تحليلًا')));
+  var L = KIND_LBL[kind];
+  toast('✅ تمت إضافة ' + countWord(items.length, L.one, L.two, L.few, L.many));
 };
 
 window.setupPin = function () {
@@ -526,10 +670,10 @@ function render() {
 
   if (p === 'meds') renderMeds();
   else if (p === 'labs') renderLabs();
+  else if (p === 'imaging') renderImaging();
   else if (p === 'recipes') renderRecipes();
   else if (p === 'settings') renderSettings();
-  else if (p === 'lib:labs') renderLibraryPage('labs');
-  else if (p === 'lib:meds') renderLibraryPage('meds');
+  else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
     if (a[2]) renderGroupPage(a[1], a[2]); else renderGroupsPage(a[1]);
@@ -647,6 +791,7 @@ function cartBar(kind, n) {
     + '<span class="grow"></span>'
     + '<button class="btn white sm" onclick="printCart(\'' + kind + '\')">🖨️ طباعة/PDF</button>'
     + '<button class="btn wa sm" onclick="shareCart(\'' + kind + '\')">📤 إرسال (صورة)</button>'
+    + '<button class="btn white sm" onclick="copyCart(\'' + kind + '\')">📋 نسخ نص</button>'
     + '<button class="btn white sm" onclick="groupFromCart(\'' + kind + '\')">💾 مجموعة</button>'
     + '<button class="btn ghost sm" onclick="clearCart(\'' + kind + '\')">مسح</button>'
     + '</div>';
@@ -789,6 +934,101 @@ window.labDel = function (id) {
   });
 };
 
+/* ════════════════════════ 📷 الأشعة والفحوصات ════════════════════════
+   تصوير ومناظير وتخطيط — بنيتها كالتحاليل مع «المنطقة أو العضو» بدل الرمز. */
+var IMG_TYPES = ['أشعة سينية', 'موجات صوتية', 'أشعة مقطعية', 'رنين مغناطيسي',
+                 'منظار', 'تخطيط', 'قياس هشاشة', 'طب نووي', 'أخرى'];
+
+function imgRow(t) {
+  var on = DB.cart.imaging.indexOf(t.id) >= 0;
+  return '<div class="card' + (on ? ' sel' : '') + '">'
+    + '<div class="row">'
+    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'imaging\',\'' + t.id + '\')">'
+    + '<div class="grow" onclick="imgForm(\'' + t.id + '\')">'
+    + '<div class="name">' + esc(t.name) + (t.is_common ? ' <span class="star">★</span>' : '')
+    + (t.region ? ' <span class="chip">' + esc(t.region) + '</span>' : '') + '</div>'
+    + (t.purpose ? '<div class="sub">' + esc(t.purpose) + '</div>' : '')
+    + (t.requirements ? '<div class="req">📋 ' + esc(t.requirements) + '</div>' : '')
+    + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
+    + '</div>'
+    + '<button class="ic" onclick="imgForm(\'' + t.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="imgDel(\'' + t.id + '\')">🗑️</button>'
+    + '</div></div>';
+}
+function renderImaging() {
+  var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var list = DB.imaging.filter(function (t) {
+    return !q || [t.name, t.category, t.region, t.purpose, t.requirements].join(' ').toLowerCase().indexOf(q) >= 0;
+  });
+  var ng = groupsOf('imaging').length;
+  var html = '<div class="toolbar">'
+    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المنطقة…" value="' + esc(q) + '" oninput="renderImaging()">'
+    + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn primary" onclick="imgForm()">+ إضافة</button></div>';
+  if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
+  if (!list.length) { h('page', html + emptyBox('📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')); return; }
+
+  if (q) {
+    html += list.map(imgRow).join('');
+  } else {
+    var common = list.filter(function (t) { return t.is_common; });
+    if (common.length) html += accBlock('⭐ شائعة', common.map(imgRow).join(''), true);
+    var gs = groupBy(list, 'category', 'غير مصنّف'), op = openByDefault(list, gs);
+    gs.forEach(function (g) {
+      html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')', g.items.map(imgRow).join(''), op);
+    });
+  }
+  h('page', html);
+}
+window.imgForm = function (id) {
+  var t = id ? (DB.imaging.find(function (x) { return x.id === id; }) || {}) : {};
+  var cur = t.category || '';
+  var body = '<div class="f"><label>نوع الفحص</label><div class="segs wrap">'
+    + IMG_TYPES.map(function (v) {
+      return '<button type="button" class="seg' + (cur === v ? ' on' : '') + '" data-t="' + esc(v) + '"'
+        + ' onclick="imgPickType(this)">' + esc(v) + '</button>';
+    }).join('')
+    + '</div><input type="hidden" id="if-category" value="' + esc(cur) + '"></div>'
+    + '<div class="f"><label>اسم الفحص *</label><input id="if-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: رنين مغناطيسي للعمود القطني"></div>'
+    + '<div class="f"><label>المنطقة أو العضو</label><input id="if-region" class="inp" value="' + esc(t.region || '') + '" placeholder="مثال: العمود القطني"></div>'
+    + '<div class="f"><label>الهدف من الفحص</label><textarea id="if-purpose" class="inp ta">' + esc(t.purpose || '') + '</textarea></div>'
+    + '<div class="f"><label>التحضير المطلوب</label><textarea id="if-requirements" class="inp ta" placeholder="مثال: صيام ٦ ساعات، إحضار فحوصات الكلى">' + esc(t.requirements || '') + '</textarea></div>'
+    + '<div class="f"><label>موانع الإجراء</label><textarea id="if-prohibitions" class="inp ta" placeholder="مثال: الحمل، منظّم ضربات القلب">' + esc(t.prohibitions || '') + '</textarea></div>'
+    + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
+    + '<div class="mft"><button class="btn primary" onclick="imgSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+  openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
+};
+window.imgPickType = function (btn) {
+  var kids = btn.parentNode.children;
+  for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
+  btn.className = 'seg on';
+  var hidden = $('if-category'); if (hidden) hidden.value = btn.getAttribute('data-t');
+};
+window.imgSave = function (id) {
+  var body = {
+    category: ($('if-category') || {}).value.trim(),
+    name: ($('if-name') || {}).value.trim(),
+    region: ($('if-region') || {}).value.trim(),
+    purpose: ($('if-purpose') || {}).value.trim(),
+    requirements: ($('if-requirements') || {}).value.trim(),
+    prohibitions: ($('if-prohibitions') || {}).value.trim(),
+    is_common: ($('if-common') || {}).checked ? 1 : 0
+  };
+  if (!body.name) return toast('اسم الفحص مطلوب', 'er');
+  var rec;
+  if (id) { rec = DB.imaging.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
+  else { body.id = uid(); DB.imaging.push(body); rec = body; }
+  Store.upsert('imaging', rec); closeModal(); toast('✅ تم الحفظ');
+  if (curPage() !== 'imaging') goPage('imaging'); else render();
+};
+window.imgDel = function (id) {
+  confirmBox('حذف هذا الفحص؟', function () {
+    DB.imaging = DB.imaging.filter(function (x) { return x.id !== id; });
+    DB.cart.imaging = DB.cart.imaging.filter(function (x) { return x !== id; });
+    Store.remove('imaging', id); closeModal(); toast('🗑️ تم الحذف'); render();
+  });
+};
+
 /* ════════════════════════ 🌿 الوصفات العلاجية ════════════════════════ */
 var RX_TYPES = ['علاجية', 'وقائية', 'غذائية'];
 var RX_FLD = [
@@ -905,6 +1145,7 @@ function itemLabel(kind, o) {
   if (!o) return '(عنصر محذوف)';
   if (kind === 'meds') return o.trade_name;
   if (kind === 'labs') return o.code ? o.code + ' — ' + o.name : o.name;
+  if (kind === 'imaging') return o.region ? o.name + ' (' + o.region + ')' : o.name;
   return o.name;
 }
 function itemById(kind, id) {
@@ -976,6 +1217,7 @@ function renderGroupPage(kind, id) {
     + '<button class="btn primary sm" onclick="groupSave()">💾 حفظ' + (GRP.dirty ? ' •' : '') + '</button>'
     + '<button class="btn white sm" onclick="groupEditPrint()">🖨️ طباعة</button>'
     + '<button class="btn wa sm" onclick="groupEditShare()">📤 إرسال</button>'
+    + '<button class="btn white sm" onclick="groupEditCopy()">📋 نسخ</button>'
     + '<span class="grow"></span>'
     + '<button class="btn sm" onclick="groupRename()">✏️</button>'
     + '<button class="btn danger sm" onclick="groupDelete()">🗑️</button>'
@@ -1009,6 +1251,7 @@ window.groupSave = function () {
 };
 window.groupEditPrint = function () { printList(GRP.kind, GRP.items, GRP.name); };
 window.groupEditShare = function () { shareList(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name); };
+window.groupEditCopy = function () { copyList(GRP.kind, GRP.items, GRP.name); };
 window.groupRename = function () {
   openModal('✏️ إعادة تسمية',
     '<div class="f"><label>اسم المجموعة *</label><input id="gn" class="inp" value="' + esc(GRP.name) + '"></div>'
@@ -1110,6 +1353,16 @@ function itemsHtml(kind, ids) {
 }
 function cartItemsHtml(kind) { return itemsHtml(kind, DB.cart[kind]); }
 
+/** الترويسة اختيارية: لا تظهر إطلاقًا ما لم يملأ المستخدم سطرًا منها. */
+function headerHtml() {
+  var hd = DB.header || {};
+  var parts = '';
+  if (hd.name) parts += '<div class="lh-n">' + esc(hd.name) + '</div>';
+  if (hd.title) parts += '<div class="lh-t">' + esc(hd.title) + '</div>';
+  if (hd.contact) parts += '<div class="lh-c">' + esc(hd.contact) + '</div>';
+  return parts ? '<div class="lh">' + parts + '</div>' : '';
+}
+
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
 function printDoc(title, body) {
   return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
@@ -1124,8 +1377,13 @@ function printDoc(title, body) {
     + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
     + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35}'
     + '.rx-l{color:#475569;font-weight:bold}'
+    + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
+    + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
+    + '.lh-t{font-size:9.5pt;color:#334155;margin-top:1pt}'
+    + '.lh-c{font-size:9pt;color:#64748b;margin-top:1pt;direction:ltr;text-align:right}'
     + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}'
     + '</style></head><body>'
+    + headerHtml()
     + '<h1>' + esc(title) + '</h1>'
     + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
     + body + '</body></html>';
@@ -1164,8 +1422,10 @@ function wrapText(ctx, text, maxW) {
   if (cur) out.push(cur);
   return out;
 }
+var CART_TITLE = { meds: 'قائمة علاجات', labs: 'قائمة تحاليل',
+                   imaging: 'طلب أشعة وفحوصات', recipes: 'قائمة وصفات' };
 function cartTitle(kind, withIcon) {
-  var t = kind === 'meds' ? 'قائمة علاجات' : kind === 'labs' ? 'قائمة تحاليل' : 'قائمة وصفات';
+  var t = CART_TITLE[kind];
   return withIcon ? KIND_LBL[kind].icon + ' ' + t : t;
 }
 function buildCanvas(kind, ids, title) {
@@ -1222,6 +1482,35 @@ function buildCanvas(kind, ids, title) {
 }
 window.shareCart = function (kind) {
   shareList(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
+};
+window.copyCart = function (kind) { copyList(kind, DB.cart[kind], cartTitle(kind, false)); };
+
+/** نصّ عادي للصق في واتساب أو أي مكان — أخفّ من الصورة وقابل للبحث. */
+function listText(kind, ids, title) {
+  var hd = DB.header || {}, lines = [];
+  if (hd.name) lines.push(hd.name);
+  if (hd.title) lines.push(hd.title);
+  if (hd.contact) lines.push(hd.contact);
+  if (lines.length) lines.push('');
+  lines.push(title + ' — ' + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
+  lines.push('');
+  rowsFor(kind, ids).forEach(function (r) {
+    lines.push(r.title);
+    r.lines.forEach(function (x) { lines.push('   • ' + lineText(x)); });
+  });
+  return lines.join('\n');
+}
+window.copyList = function (kind, ids, title) {
+  if (!ids.length) return toast('القائمة فارغة', 'er');
+  var text = listText(kind, ids, title);
+  if (window.AndroidBridge && typeof window.AndroidBridge.copyText === 'function') {
+    window.AndroidBridge.copyText(text);
+    return toast('📋 نُسخ النص — الصقه حيث تشاء');
+  }
+  try {
+    navigator.clipboard.writeText(text).then(function () { toast('📋 نُسخ النص'); },
+      function () { toast('تعذّر النسخ', 'er'); });
+  } catch (e) { toast('تعذّر النسخ', 'er'); }
 };
 window.shareList = function (kind, ids, title, imgTitle) {
   if (!ids.length) return toast('القائمة فارغة', 'er');

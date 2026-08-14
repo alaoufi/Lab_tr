@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- الصور المُنشأة للمشاركة تُكتب هنا مؤقتًا (cache/shared) -->
+<paths>
+    <!-- صور القوائم المشتركة (ذاكرة مؤقتة داخلية) -->
     <cache-path name="shared" path="shared/" />
+    <!-- ملفات النسخ الاحتياطي التلقائي (مجلد التطبيق الخاص، بلا صلاحيات) -->
+    <external-files-path name="backups" path="backups/" />
 </paths>

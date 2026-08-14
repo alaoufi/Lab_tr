@@ -1,5 +1,7 @@
 package me.alaoufi.dalili;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -7,6 +9,7 @@ import android.os.Bundle;
 import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -20,8 +23,15 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
 
+import org.json.JSONArray;
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /**
  * تطبيق «دليلي» — واجهة WebView تُحمِّل الملفات المدمجة داخل الحزمة نفسها
@@ -136,6 +146,122 @@ public class MainActivity extends ComponentActivity {
                     // فشل صامت — لا داعي لإيقاف التطبيق لأجل طباعة فاشلة
                 }
             });
+        }
+
+        /** نسخ نص القائمة للحافظة — أخفّ من الصورة وقابل للصق والبحث. */
+        @JavascriptInterface
+        public void copyText(String text) {
+            runOnUiThread(() -> {
+                try {
+                    ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                    if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("دليلي", text));
+                } catch (Exception ignored) { }
+            });
+        }
+
+        /* ── النسخ الاحتياطي التلقائي ──────────────────────────────────
+           تُكتب الملفات في مجلد التطبيق الخاص على التخزين الخارجي:
+           Android/data/me.alaoufi.dalili/files/backups
+           لا يحتاج أي صلاحية على أي إصدار أندرويد. يحمي من تلف البيانات
+           أو حذفها بالخطأ، لكنه يزول مع إلغاء التثبيت — لذلك يوجد زرّ
+           مشاركة يُخرج الملف إلى درايف أو الحاسوب بضغطة. */
+
+        private File backupDir() {
+            File dir = new File(getExternalFilesDir(null), "backups");
+            if (!dir.exists()) dir.mkdirs();
+            return dir;
+        }
+
+        /** يكتب نسخة جديدة ويبقي أحدث خمس. يعيد اسم الملف أو نصًّا فارغًا. */
+        @JavascriptInterface
+        public String writeBackup(String json, String stamp) {
+            try {
+                File dir = backupDir();
+                File f = new File(dir, "dalili-" + stamp + ".json");
+                try (FileOutputStream out = new FileOutputStream(f)) {
+                    out.write(json.getBytes(StandardCharsets.UTF_8));
+                }
+                File[] all = dir.listFiles((d, n) -> n.endsWith(".json"));
+                if (all != null && all.length > 5) {
+                    Arrays.sort(all, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                    for (int i = 5; i < all.length; i++) all[i].delete();
+                }
+                return f.getName();
+            } catch (Exception e) {
+                Log.e("DaliliBackup", "writeBackup failed", e);
+                return "";
+            }
+        }
+
+        /** قائمة النسخ من الأحدث: [{name, size, time}]. */
+        @JavascriptInterface
+        public String listBackups() {
+            try {
+                File[] all = backupDir().listFiles((d, n) -> n.endsWith(".json"));
+                if (all == null) return "[]";
+                Arrays.sort(all, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+                JSONArray arr = new JSONArray();
+                for (File f : all) {
+                    JSONObject o = new JSONObject();
+                    o.put("name", f.getName());
+                    o.put("size", f.length());
+                    o.put("time", f.lastModified());
+                    arr.put(o);
+                }
+                return arr.toString();
+            } catch (Exception e) {
+                Log.e("DaliliBackup", "listBackups failed", e);
+                return "[]";
+            }
+        }
+
+        @JavascriptInterface
+        public String readBackup(String name) {
+            try {
+                File f = safeBackup(name);
+                if (f == null || !f.exists()) return "";
+                try (FileInputStream in = new FileInputStream(f)) {
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    byte[] buf = new byte[8192];
+                    int n;
+                    while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
+                    return new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                }
+            } catch (Exception e) {
+                Log.e("DaliliBackup", "readBackup failed", e);
+                return "";
+            }
+        }
+
+        @JavascriptInterface
+        public boolean deleteBackup(String name) {
+            File f = safeBackup(name);
+            return f != null && f.delete();
+        }
+
+        /** يخرج الملف من الجهاز (درايف، واتساب، كابل) عبر مشاركة نظامية. */
+        @JavascriptInterface
+        public void shareBackup(String name) {
+            runOnUiThread(() -> {
+                try {
+                    File f = safeBackup(name);
+                    if (f == null || !f.exists()) return;
+                    Uri uri = FileProvider.getUriForFile(
+                            MainActivity.this, "me.alaoufi.dalili.fileprovider", f);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("application/json");
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    startActivity(Intent.createChooser(send, "حفظ النسخة الاحتياطية"));
+                } catch (Exception ignored) { }
+            });
+        }
+
+        /** يمنع الخروج من مجلد النسخ عبر اسم فيه مسار (../). */
+        private File safeBackup(String name) {
+            if (name == null || name.contains("/") || name.contains("..")
+                    || !name.endsWith(".json")) return null;
+            return new File(backupDir(), name);
         }
 
         /** يستقبل صورة القائمة (Base64) ويطلق مشاركة نظامية حقيقية. */

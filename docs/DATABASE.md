@@ -10,7 +10,7 @@
 
 - **الكود:** `app/src/main/java/me/alaoufi/dalili/DaliliDb.java`
 - **المخطط الكامل كـSQL:** [`schema.sql`](schema.sql)
-- **إصدار المخطط الحالي:** `4`
+- **إصدار المخطط الحالي:** `5`
 
 ---
 
@@ -31,7 +31,7 @@
 
 ## ٢. الجداول
 
-### الأقسام الثلاثة: `meds` / `labs` / `recipes`
+### الأقسام: `meds` / `labs` / `imaging` / `recipes`
 
 تتشارك نفس البنية المفاهيمية:
 
@@ -46,6 +46,7 @@ sort_order   INTEGER              ترتيب الإدراج
 |---|---|---|
 | `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes | `default_include` |
 | `labs` | category, code, name\*, purpose, requirements, prohibitions | `is_common` |
+| `imaging` | category, name\*, region, purpose, requirements, prohibitions | `is_common` |
 | `recipes` | name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions | `is_favorite` |
 
 \* الحقل المطلوب (`NOT NULL`) — والواجهة أيضًا تمنع الحفظ بدونه.
@@ -60,7 +61,7 @@ sort_order   INTEGER              ترتيب الإدراج
 kind TEXT, item_id TEXT, position INTEGER, PRIMARY KEY (kind, item_id)
 ```
 
-جدول واحد للأقسام الثلاثة، يميّزها عمود `kind`. `position` مهم لأنه ترتيب
+جدول واحد لكل الأقسام، يميّزها عمود `kind`. `position` مهم لأنه ترتيب
 الطباعة والصورة المُرسَلة.
 
 ### `groups` + `group_items` — المجموعات المسمّاة (دائمة)
@@ -80,7 +81,10 @@ group_items(group_id, item_id, position, PRIMARY KEY (group_id, item_id))
 | `pin_hash` | بصمة SHA-256 لرمز القفل — **لا الرمز نفسه** |
 | `out_meds` | نص JSON: أسماء الحقول الظاهرة في طباعة العلاجات |
 | `out_labs` | نفسه للتحاليل |
+| `out_imaging` | نفسه للأشعة والفحوصات |
 | `out_recipes` | نفسه للوصفات |
+| `hdr_name` / `hdr_title` / `hdr_contact` | ترويسة الطباعة الاختيارية — فارغة افتراضيًا فلا تظهر |
+| `backup_at` | وقت آخر نسخة احتياطية تلقائية |
 
 ---
 
@@ -96,15 +100,16 @@ public void delete(String kind, String id) {
     try {
         db.delete(kind, "id=?", new String[]{id});
         db.delete("cart", "kind=? AND item_id=?", new String[]{kind, id});
+        db.delete("group_items", "item_id=? AND group_id IN "
+                + "(SELECT id FROM groups WHERE kind=?)", new String[]{id, kind});
         db.setTransactionSuccessful();
     } finally { db.endTransaction(); }
 }
 ```
 
-> **نقطة مفتوحة:** حذف عنصر لا يزيله من `group_items`. الواجهة تتحمّل ذلك —
-> تعرض «(عنصر محذوف)» وتتخطّاه في الطباعة عبر `rowsFor()` — لكن الأنظف
-> إضافة `db.delete("group_items", "item_id=?", …)` إلى نفس المعاملة. استعلام
-> كشف اليتامى موجود في آخر `schema.sql`.
+`delete()` تنظّف الآن **الثلاثة** في معاملة واحدة: الجدول المصدر، والسلة،
+و`group_items` لكل مجموعة من نفس القسم — فلا تبقى إشارة يتيمة. استعلام كشف
+اليتامى موجود في آخر `schema.sql` للتحقق.
 
 ---
 
@@ -113,7 +118,7 @@ public void delete(String kind, String id) {
 بدل دالة قراءة/كتابة لكل قسم، هناك جدول أعمدة واحد يفرّق بينها:
 
 ```java
-public static final String[] KINDS = { "meds", "labs", "recipes" };
+public static final String[] KINDS = { "meds", "labs", "imaging", "recipes" };
 
 private static String[] textCols(String kind) { … }   // أي أعمدة نصّية
 private static String flagCol(String kind)   { … }   // ما اسم عمود ⭐
@@ -166,8 +171,9 @@ upsert: function (kind, o) {
 {
   "meds":    [ { "id": "…", "trade_name": "…", …, "default_include": 0 } ],
   "labs":    [ { "id": "…", "code": "CBC", "name": "…", …, "is_common": 1 } ],
+  "imaging": [ { "id": "…", "name": "رنين الدماغ", "region": "الدماغ", …, "is_common": 1 } ],
   "recipes": [ { "id": "…", "name": "…", "type": "وقائية", …, "is_favorite": 0 } ],
-  "cart":    { "meds": ["id1"], "labs": ["id2","id3"], "recipes": [] },
+  "cart":    { "meds": ["id1"], "labs": ["id2","id3"], "imaging": [], "recipes": [] },
   "groups":  [ { "id": "…", "kind": "labs", "name": "…", "items": ["id2","id3"] } ],
   "settings": { "pin_hash": "…", "out_labs": "[\"code\",\"requirements\"]" },
   "pin_hash": "…"
@@ -236,3 +242,28 @@ adb shell run-as me.alaoufi.dalili sqlite3 databases/dalili.db ".tables"
 
 **لا تنسَ:** عمود يُضاف في `onCreate` فقط بلا `onUpgrade` يعمل على التثبيت
 الجديد ويكسر التحديث فوق تثبيت قديم — وهو أكثر خطأ شائع هنا.
+
+
+---
+
+## ١٠. النسخ الاحتياطي التلقائي
+
+ليس في قاعدة البيانات بل ملفات JSON بجانبها:
+
+```
+Android/data/me.alaoufi.dalili/files/backups/dalili-YYYY-MM-DD-HHmm.json
+```
+
+- يُكتب عند فتح التطبيق إن مرّ **يوم** على آخر نسخة وكانت هناك بيانات
+- يُحتفظ بأحدث **خمس** نسخ ويُحذف ما زاد
+- مجلد التطبيق الخاص ⇒ **بلا أي صلاحية** على أي إصدار أندرويد
+- محتواه نفس شكل النسخة الاحتياطية اليدوية (`snapshot()`)
+
+الدوال في `AndroidBridge`: `writeBackup(json, stamp)` · `listBackups()` ·
+`readBackup(name)` · `deleteBackup(name)` · `shareBackup(name)`.
+`safeBackup()` ترفض أي اسم فيه `/` أو `..` أو لا ينتهي بـ`.json` — فلا يمكن
+لخلل في الواجهة أن يخرج من مجلد النسخ.
+
+> **حدّ هذه الحماية:** الملفات تزول مع إلغاء تثبيت التطبيق، ولا تنجو من
+> ضياع الجهاز. زرّ 📤 في الإعدادات يشارك الملف إلى درايف أو الحاسوب — وهو
+> ما يكمل الحماية.

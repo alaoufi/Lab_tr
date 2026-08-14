@@ -23,10 +23,10 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 4;
+    private static final int DB_VERSION = 5;
 
-    /** الأقسام الثلاثة — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
-    public static final String[] KINDS = { "meds", "labs", "recipes" };
+    /** الأقسام — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
+    public static final String[] KINDS = { "meds", "labs", "imaging", "recipes" };
 
     private static final String[] MED_TEXT_COLS = {
             "trade_name", "scientific_name", "category", "concentration",
@@ -34,6 +34,10 @@ public class DaliliDb extends SQLiteOpenHelper {
     };
     private static final String[] LAB_TEXT_COLS = {
             "category", "code", "name", "purpose", "requirements", "prohibitions"
+    };
+    /** الأشعة والفحوصات: تصوير ومناظير وتخطيط — نفس بنية التحاليل مع «المنطقة». */
+    private static final String[] IMAGING_TEXT_COLS = {
+            "category", "name", "region", "purpose", "requirements", "prohibitions"
     };
     /** الوصفات: اسمها ونوعها (علاجية/وقائية/غذائية) وتفاصيل تحضيرها واستخدامها. */
     private static final String[] RECIPE_TEXT_COLS = {
@@ -53,13 +57,14 @@ public class DaliliDb extends SQLiteOpenHelper {
     private static String[] textCols(String kind) {
         if ("meds".equals(kind)) return MED_TEXT_COLS;
         if ("labs".equals(kind)) return LAB_TEXT_COLS;
+        if ("imaging".equals(kind)) return IMAGING_TEXT_COLS;
         return RECIPE_TEXT_COLS;
     }
 
     /** عمود العلامة (⭐) يختلف اسمه بين الأقسام لأسباب تاريخية في الواجهة. */
     private static String flagCol(String kind) {
         if ("meds".equals(kind)) return "default_include";
-        if ("labs".equals(kind)) return "is_common";
+        if ("labs".equals(kind) || "imaging".equals(kind)) return "is_common";
         return "is_favorite";
     }
 
@@ -88,6 +93,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "prohibitions TEXT,"
                 + "is_common INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        createImaging(db);
         createRecipes(db);
         createGroups(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
@@ -100,6 +106,20 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_meds_name ON meds(trade_name)");
         db.execSQL("CREATE INDEX idx_meds_category ON meds(category)");
         db.execSQL("CREATE INDEX idx_labs_category ON labs(category)");
+    }
+
+    private void createImaging(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS imaging ("
+                + "id TEXT PRIMARY KEY,"
+                + "category TEXT,"          // نوع الفحص: أشعة سينية، رنين، منظار…
+                + "name TEXT NOT NULL,"
+                + "region TEXT,"            // المنطقة أو العضو
+                + "purpose TEXT,"
+                + "requirements TEXT,"      // التحضير المطلوب
+                + "prohibitions TEXT,"      // موانع الإجراء
+                + "is_common INTEGER NOT NULL DEFAULT 0,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_imaging_category ON imaging(category)");
     }
 
     private void createRecipes(SQLiteDatabase db) {
@@ -156,6 +176,9 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
         if (oldVersion < 4) {
             createGroups(db);    // المجموعات المسمّاة
+        }
+        if (oldVersion < 5) {
+            createImaging(db);   // القسم الرابع: الأشعة والفحوصات
         }
     }
 
@@ -330,6 +353,9 @@ public class DaliliDb extends SQLiteOpenHelper {
         try {
             db.delete(kind, "id=?", new String[]{id});
             db.delete("cart", "kind=? AND item_id=?", new String[]{kind, id});
+            // وإلا بقيت إشارة يتيمة في كل مجموعة تضمّ العنصر
+            db.delete("group_items", "item_id=? AND group_id IN "
+                    + "(SELECT id FROM groups WHERE kind=?)", new String[]{id, kind});
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
     }
@@ -436,8 +462,8 @@ public class DaliliDb extends SQLiteOpenHelper {
     /** هل القاعدة فارغة تمامًا؟ (تُستخدم لترحيل بيانات localStorage القديمة مرّة واحدة) */
     public boolean isEmpty() {
         SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT (SELECT COUNT(*) FROM meds)"
-                + "+(SELECT COUNT(*) FROM labs)+(SELECT COUNT(*) FROM recipes)", null);
+        Cursor c = db.rawQuery("SELECT (SELECT COUNT(*) FROM meds)+(SELECT COUNT(*) FROM labs)"
+                + "+(SELECT COUNT(*) FROM imaging)+(SELECT COUNT(*) FROM recipes)", null);
         try { return !c.moveToFirst() || c.getInt(0) == 0; } finally { c.close(); }
     }
 }
