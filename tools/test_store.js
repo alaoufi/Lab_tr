@@ -661,7 +661,8 @@ run('القوائم القصيرة تُعرض مفتوحة فتظهر الأسم
 function androidStub() {
   const files = {};
   const stub = {
-    _files: files, _clip: null, _jobs: [],
+    _files: files, _clip: null, _jobs: [], _shared: null, _picked: false,
+    _dir: 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
     printHtml: (html, name) => stub._jobs.push({ html, name }),
     copyText: t => { stub._clip = t; },
     writeBackup: (json, stamp) => {
@@ -675,7 +676,11 @@ function androidStub() {
       .map(n => ({ name: n, size: files[n].length, time: 0 }))),
     readBackup: n => files[n] || '',
     deleteBackup: n => { delete files[n]; return true; },
-    shareBackup: () => {}
+    shareBackup: n => { stub._shared = n; },
+    backupDir: () => stub._dir,
+    backupDirIsCustom: () => stub._dir !== 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
+    pickBackupDir: () => { stub._picked = true; },
+    resetBackupDir: () => { stub._dir = 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)'; }
   };
   return stub;
 }
@@ -837,4 +842,37 @@ run('المكتبة الجاهزة تضيف للقسم الصحيح لا لغي�
   // والموجود مسبقًا يُقفَل عند إعادة فتح المكتبة
   c.openLibrary('imaging');
   eq(Object.keys(c.LIB_MINE).length, 2, 'existing items recognised:');
+});
+
+run('مكان النسخ الاحتياطية: عرض وتغيير وعودة ومشاركة', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.Store.load(); c.showApp();
+  c.goPage('settings');
+
+  let html = c._els('page').innerHTML;
+  eq(html.indexOf('مكان الحفظ') >= 0, true, 'location shown:');
+  eq(html.indexOf('يُحذف مع إلغاء تثبيت') >= 0, true, 'warns about the default folder:');
+  eq(html.indexOf('العودة لمجلد التطبيق') < 0, true, 'no reset button while default:');
+
+  c.backupPickDir();
+  eq(A._picked, true, 'opened the system picker:');
+
+  // كما لو اختار المستخدم مجلدًا ثم أعلمت أندرويد الواجهة
+  A._dir = 'Documents/دليلي';
+  c.onBackupDirPicked();
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('Documents/دليلي') >= 0, true, 'new location shown:');
+  eq(html.indexOf('يُحذف مع إلغاء تثبيت') < 0, true, 'warning gone:');
+  eq(html.indexOf('العودة لمجلد التطبيق') >= 0, true, 'reset offered:');
+
+  // مشاركة نسخة
+  c.autoBackup(true);
+  const name = JSON.parse(A.listBackups())[0].name;
+  c.backupShare(name);
+  eq(A._shared, name, 'shared the right file:');
+
+  c.backupResetDir(); c._els('cb-yes').onclick();
+  eq(A._dir.indexOf('مجلد التطبيق') >= 0, true, 'back to the default folder:');
 });

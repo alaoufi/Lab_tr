@@ -248,22 +248,38 @@ adb shell run-as me.alaoufi.dalili sqlite3 databases/dalili.db ".tables"
 
 ## ١٠. النسخ الاحتياطي التلقائي
 
-ليس في قاعدة البيانات بل ملفات JSON بجانبها:
-
-```
-Android/data/me.alaoufi.dalili/files/backups/dalili-YYYY-MM-DD-HHmm.json
-```
+ليس في قاعدة البيانات بل ملفات JSON بجانبها، باسم
+`dalili-YYYY-MM-DD-HHmm.json`. الكود في `BackupStore.java`.
 
 - يُكتب عند فتح التطبيق إن مرّ **يوم** على آخر نسخة وكانت هناك بيانات
-- يُحتفظ بأحدث **خمس** نسخ ويُحذف ما زاد
-- مجلد التطبيق الخاص ⇒ **بلا أي صلاحية** على أي إصدار أندرويد
+- يُحتفظ بأحدث **خمس** ويُحذف ما زاد — والحذف يمسّ ملفات `dalili-*.json`
+  وحدها، فلا يُلمس شيء آخر في مجلد المستخدم
 - محتواه نفس شكل النسخة الاحتياطية اليدوية (`snapshot()`)
 
-الدوال في `AndroidBridge`: `writeBackup(json, stamp)` · `listBackups()` ·
-`readBackup(name)` · `deleteBackup(name)` · `shareBackup(name)`.
-`safeBackup()` ترفض أي اسم فيه `/` أو `..` أو لا ينتهي بـ`.json` — فلا يمكن
-لخلل في الواجهة أن يخرج من مجلد النسخ.
+### موضعان للحفظ
 
-> **حدّ هذه الحماية:** الملفات تزول مع إلغاء تثبيت التطبيق، ولا تنجو من
-> ضياع الجهاز. زرّ 📤 في الإعدادات يشارك الملف إلى درايف أو الحاسوب — وهو
-> ما يكمل الحماية.
+| الموضع | المسار | يبقى بعد إلغاء التثبيت؟ | صلاحية |
+|---|---|---|---|
+| الافتراضي | `Android/data/me.alaoufi.dalili/files/backups/` | ✗ | لا شيء |
+| يختاره المستخدم | أي مجلد عبر منتقي النظام | ✓ | لا شيء — الإذن للمجلد وحده |
+
+الموضع المختار يُحفظ في `SharedPreferences` (`backup_dir`) كرابط شجرة، مع
+`takePersistableUriPermission` فيبقى بعد إعادة التشغيل. وإن سُحب الإذن
+(مسح بيانات، إزالة بطاقة) يرجع `BackupStore` للمجلد الافتراضي بهدوء بدل أن
+يفشل — يفحص `getPersistedUriPermissions()` في كل مرة.
+
+القراءة والكتابة في المجلد المختار تمرّ بـ`DocumentsContract` مباشرةً
+(`createDocument` · `buildChildDocumentsUriUsingTree` · `deleteDocument`)
+بلا تبعية `documentfile`.
+
+### دوال الجسر
+
+`writeBackup(json, stamp)` · `listBackups()` · `readBackup(name)` ·
+`deleteBackup(name)` · `shareBackup(name)` · `backupDir()` ·
+`backupDirIsCustom()` · `pickBackupDir()` · `resetBackupDir()`.
+
+المنتقي غير متزامن، فبعد اختيار المجلد تنادي جافا
+`window.onBackupDirPicked()` لتُحدِّث الواجهة.
+
+`validName()` ترفض أي اسم لا يبدأ بـ`dalili-` أو لا ينتهي بـ`.json` أو فيه
+`/` أو `..` — فلا يمكن لخلل في الواجهة أن يخرج من مجلد النسخ.

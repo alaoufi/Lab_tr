@@ -43,15 +43,16 @@ DaliliApp/
 │       │   └── library.js               ٢٣٢ تحليلًا + ٧٢ فحصًا + ٢٧٠ علاجًا
 │       ├── java/me/alaoufi/dalili/
 │       │   ├── MainActivity.java (166 س) WebView + الجسور + زر الرجوع
-│       │   ├── DaliliDb.java     (443 س) SQLite: مخطط + ترقيات + CRUD
-│       │   └── DbBridge.java     (149 س) واجهة NativeDb المعروضة لـJS
+│       │   ├── DaliliDb.java             SQLite: مخطط + ترقيات + CRUD
+│       │   ├── DbBridge.java              واجهة NativeDb المعروضة لـJS
+│       │   └── BackupStore.java           النسخ الاحتياطي ومكان حفظه
 │       └── res/                          الأيقونات والألوان والتخطيط
 ├── docs/
 │   ├── DEVELOPER.md                     هذا الملف
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٤٢ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٤٣ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -111,8 +112,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 في `app/build.gradle`. ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 8        // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "1.7"    // ما يراه المستخدم
+versionCode 9        // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "1.8"    // ما يراه المستخدم
 ```
 
 ---
@@ -247,7 +248,9 @@ printList(kind, ids, title)
 ### النسخ الاحتياطي التلقائي
 
 `autoBackup(force)` تُستدعى عند كل إقلاع: تكتب نسخة إن مرّ يوم على آخر واحدة
-وكانت هناك بيانات. التفاصيل ومسار الملفات في
+وكانت هناك بيانات. `BackupStore.java` يتولّى الموضع: مجلد التطبيق الخاص
+افتراضيًا، أو مجلدًا يختاره المستخدم عبر `ACTION_OPEN_DOCUMENT_TREE` مع
+`takePersistableUriPermission` فيبقى بعد إعادة التشغيل. التفاصيل في
 [`DATABASE.md §١٠`](DATABASE.md).
 
 ### الحقول المرسلة
@@ -324,7 +327,7 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٤٢ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٤٣ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 

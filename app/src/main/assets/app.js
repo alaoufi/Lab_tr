@@ -244,6 +244,26 @@ window.backupNow = function () {
   else toast('تعذّر حفظ النسخة', 'er');
 };
 window.backupShare = function (name) { if (AB) AB.shareBackup(name); };
+/* اختيار مكان الحفظ: الافتراضي مجلد التطبيق (يزول مع إلغاء التثبيت)،
+   ويمكن اختيار مجلد دائم من منتقي النظام فيبقى ويظهر في مدير الملفات. */
+window.backupPickDir = function () { if (AB && AB.pickBackupDir) AB.pickBackupDir(); };
+window.backupResetDir = function () {
+  confirmBox('العودة لمجلد التطبيق الخاص؟ النسخ الموجودة في المجلد الذي اخترته تبقى مكانها.', function () {
+    if (AB && AB.resetBackupDir) AB.resetBackupDir();
+    closeModal();
+  });
+};
+/** ينادِيها أندرويد بعد اختيار المجلد أو إعادته للافتراضي. */
+window.onBackupDirPicked = function () {
+  render();
+  toast('📂 مكان الحفظ: ' + backupDirLabel());
+};
+function backupDirLabel() {
+  try { return (AB && AB.backupDir) ? AB.backupDir() : ''; } catch (e) { return ''; }
+}
+function backupDirIsCustom() {
+  try { return !!(AB && AB.backupDirIsCustom && AB.backupDirIsCustom()); } catch (e) { return false; }
+}
 window.backupDelete = function (name) {
   confirmBox('حذف هذه النسخة الاحتياطية؟', function () {
     if (AB) AB.deleteBackup(name);
@@ -432,10 +452,15 @@ function backupSection() {
     return '<div class="settings-sec"><div class="settings-lbl">النسخ الاحتياطي التلقائي</div>'
       + '<div class="muted">متاح داخل التطبيق فقط (غير متاح في المتصفح).</div></div>';
   }
-  var list = backupList();
+  var list = backupList(), custom = backupDirIsCustom();
   var html = '<div class="settings-sec"><div class="settings-lbl">النسخ الاحتياطي التلقائي</div>'
-    + '<div class="muted" style="margin-bottom:8px">نسخة يوميًا عند فتح التطبيق، ويُحتفظ بأحدث خمس. '
-    + 'تحمي من تلف البيانات أو حذفها بالخطأ — ولحمايتها من ضياع الجهاز شارِك الملف إلى درايف أو الحاسوب.</div>'
+    + '<div class="muted" style="margin-bottom:8px">نسخة يوميًا عند فتح التطبيق، ويُحتفظ بأحدث خمس.</div>'
+    + '<div class="loc"><div class="loc-l">📂 مكان الحفظ</div>'
+    + '<div class="loc-v">' + esc(backupDirLabel()) + '</div>'
+    + (custom ? '' : '<div class="loc-w">⚠️ هذا المجلد يُحذف مع إلغاء تثبيت التطبيق. اختر مجلدًا دائمًا لتبقى النسخ.</div>')
+    + '</div>'
+    + '<button class="btn full" onclick="backupPickDir()">📂 تغيير مكان الحفظ…</button>'
+    + (custom ? '<button class="btn full" onclick="backupResetDir()">↩️ العودة لمجلد التطبيق</button>' : '')
     + '<button class="btn full" onclick="backupNow()">💾 احفظ نسخة الآن</button>';
   if (!list.length) return html + '<div class="muted">لا توجد نسخ بعد.</div></div>';
   html += list.map(function (b) {

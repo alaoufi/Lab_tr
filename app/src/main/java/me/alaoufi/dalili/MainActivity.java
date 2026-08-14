@@ -23,16 +23,9 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
 
-import org.json.JSONArray;
-import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FileInputStream;
-import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
-
 /**
  * تطبيق «دليلي» — واجهة WebView تُحمِّل الملفات المدمجة داخل الحزمة نفسها
  * (assets/) حصرًا، بلا أي اتصال شبكي إطلاقًا. جسر AndroidBridge يوفّر
@@ -46,8 +39,10 @@ public class MainActivity extends ComponentActivity {
     private DaliliDb db;
     /** يبقى مرجعًا حيًّا لعارض الطباعة حتى ينتهي النظام من توليد الـPDF. */
     private WebView printView;
+    private BackupStore backups;
     private ValueCallback<Uri[]> filePickerCallback;
     private ActivityResultLauncher<String> filePickerLauncher;
+    private ActivityResultLauncher<Uri> dirPickerLauncher;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,6 +63,23 @@ public class MainActivity extends ComponentActivity {
         s.setDomStorageEnabled(true);          // مطلوب لعمل localStorage
         s.setAllowFileAccess(true);
         s.setCacheMode(WebSettings.LOAD_NO_CACHE);
+
+        backups = new BackupStore(this);
+        // منتقي مجلد النسخ الاحتياطي: نثبّت الإذن ليبقى بعد إعادة التشغيل
+        dirPickerLauncher = registerForActivityResult(
+                new ActivityResultContracts.OpenDocumentTree(),
+                (Uri uri) -> {
+                    if (uri == null) return;
+                    try {
+                        getContentResolver().takePersistableUriPermission(uri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                        | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+                        backups.setDir(uri);
+                    } catch (Exception e) {
+                        Log.e("DaliliBackup", "takePersistableUriPermission failed", e);
+                    }
+                    notifyDirChanged();
+                });
 
         db = new DaliliDb(this);
         webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
@@ -104,6 +116,16 @@ public class MainActivity extends ComponentActivity {
                             }
                         });
             }
+        });
+    }
+
+    /** يُعلم الواجهة أن موضع النسخ تغيّر لتُحدِّث صفحة الإعدادات. */
+    private void notifyDirChanged() {
+        runOnUiThread(() -> {
+            try {
+                webView.evaluateJavascript(
+                        "window.onBackupDirPicked && window.onBackupDirPicked()", null);
+            } catch (Exception ignored) { }
         });
     }
 
@@ -159,84 +181,46 @@ public class MainActivity extends ComponentActivity {
             });
         }
 
-        /* ── النسخ الاحتياطي التلقائي ──────────────────────────────────
-           تُكتب الملفات في مجلد التطبيق الخاص على التخزين الخارجي:
-           Android/data/me.alaoufi.dalili/files/backups
-           لا يحتاج أي صلاحية على أي إصدار أندرويد. يحمي من تلف البيانات
-           أو حذفها بالخطأ، لكنه يزول مع إلغاء التثبيت — لذلك يوجد زرّ
-           مشاركة يُخرج الملف إلى درايف أو الحاسوب بضغطة. */
+        /* ── النسخ الاحتياطي ────────────────────────────────────────
+           الموضع الافتراضي مجلد التطبيق الخاص (بلا صلاحية، لكنه يزول مع
+           إلغاء التثبيت). ويستطيع المستخدم اختيار مجلد دائم عبر منتقي
+           النظام فيبقى بعد إلغاء التثبيت ويظهر في مدير الملفات. التفاصيل
+           في BackupStore. */
 
-        private File backupDir() {
-            File dir = new File(getExternalFilesDir(null), "backups");
-            if (!dir.exists()) dir.mkdirs();
-            return dir;
-        }
-
-        /** يكتب نسخة جديدة ويبقي أحدث خمس. يعيد اسم الملف أو نصًّا فارغًا. */
         @JavascriptInterface
         public String writeBackup(String json, String stamp) {
-            try {
-                File dir = backupDir();
-                File f = new File(dir, "dalili-" + stamp + ".json");
-                try (FileOutputStream out = new FileOutputStream(f)) {
-                    out.write(json.getBytes(StandardCharsets.UTF_8));
-                }
-                File[] all = dir.listFiles((d, n) -> n.endsWith(".json"));
-                if (all != null && all.length > 5) {
-                    Arrays.sort(all, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-                    for (int i = 5; i < all.length; i++) all[i].delete();
-                }
-                return f.getName();
-            } catch (Exception e) {
-                Log.e("DaliliBackup", "writeBackup failed", e);
-                return "";
-            }
-        }
-
-        /** قائمة النسخ من الأحدث: [{name, size, time}]. */
-        @JavascriptInterface
-        public String listBackups() {
-            try {
-                File[] all = backupDir().listFiles((d, n) -> n.endsWith(".json"));
-                if (all == null) return "[]";
-                Arrays.sort(all, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
-                JSONArray arr = new JSONArray();
-                for (File f : all) {
-                    JSONObject o = new JSONObject();
-                    o.put("name", f.getName());
-                    o.put("size", f.length());
-                    o.put("time", f.lastModified());
-                    arr.put(o);
-                }
-                return arr.toString();
-            } catch (Exception e) {
-                Log.e("DaliliBackup", "listBackups failed", e);
-                return "[]";
-            }
+            return backups.write(json, stamp);
         }
 
         @JavascriptInterface
-        public String readBackup(String name) {
-            try {
-                File f = safeBackup(name);
-                if (f == null || !f.exists()) return "";
-                try (FileInputStream in = new FileInputStream(f)) {
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    byte[] buf = new byte[8192];
-                    int n;
-                    while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-                    return new String(bos.toByteArray(), StandardCharsets.UTF_8);
-                }
-            } catch (Exception e) {
-                Log.e("DaliliBackup", "readBackup failed", e);
-                return "";
-            }
+        public String listBackups() { return backups.listJson(); }
+
+        @JavascriptInterface
+        public String readBackup(String name) { return backups.read(name); }
+
+        @JavascriptInterface
+        public boolean deleteBackup(String name) { return backups.delete(name); }
+
+        /** وصف الموضع الحالي كما يُعرَض في الإعدادات. */
+        @JavascriptInterface
+        public String backupDir() { return backups.label(); }
+
+        @JavascriptInterface
+        public boolean backupDirIsCustom() { return backups.isCustom(); }
+
+        /** يفتح منتقي المجلدات؛ النتيجة تصل للواجهة عبر onBackupDirPicked. */
+        @JavascriptInterface
+        public void pickBackupDir() {
+            runOnUiThread(() -> {
+                try { dirPickerLauncher.launch(null); }
+                catch (Exception e) { Log.e("DaliliBackup", "picker failed", e); }
+            });
         }
 
         @JavascriptInterface
-        public boolean deleteBackup(String name) {
-            File f = safeBackup(name);
-            return f != null && f.delete();
+        public void resetBackupDir() {
+            backups.clearDir();
+            notifyDirChanged();
         }
 
         /** يخرج الملف من الجهاز (درايف، واتساب، كابل) عبر مشاركة نظامية. */
@@ -244,10 +228,8 @@ public class MainActivity extends ComponentActivity {
         public void shareBackup(String name) {
             runOnUiThread(() -> {
                 try {
-                    File f = safeBackup(name);
-                    if (f == null || !f.exists()) return;
-                    Uri uri = FileProvider.getUriForFile(
-                            MainActivity.this, "me.alaoufi.dalili.fileprovider", f);
+                    Uri uri = backups.shareUri(name);
+                    if (uri == null) return;
                     Intent send = new Intent(Intent.ACTION_SEND);
                     send.setType("application/json");
                     send.putExtra(Intent.EXTRA_STREAM, uri);
@@ -255,13 +237,6 @@ public class MainActivity extends ComponentActivity {
                     startActivity(Intent.createChooser(send, "حفظ النسخة الاحتياطية"));
                 } catch (Exception ignored) { }
             });
-        }
-
-        /** يمنع الخروج من مجلد النسخ عبر اسم فيه مسار (../). */
-        private File safeBackup(String name) {
-            if (name == null || name.contains("/") || name.contains("..")
-                    || !name.endsWith(".json")) return null;
-            return new File(backupDir(), name);
         }
 
         /** يستقبل صورة القائمة (Base64) ويطلق مشاركة نظامية حقيقية. */
