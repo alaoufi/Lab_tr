@@ -53,7 +53,10 @@ function makeBridge() {
 
 function makeCtx(bridge, legacyRaw) {
   const els = {};
-  const el = id => els[id] || (els[id] = { id, value: '', checked: false, className: '', innerHTML: '', textContent: '', style: {} });
+  const el = id => els[id] || (els[id] = {
+    id, value: '', checked: false, className: '', innerHTML: '', textContent: '',
+    style: {}, scrollHeight: 0, focus() {}
+  });
   const store = legacyRaw ? { clinic_tool_v1: legacyRaw } : {};
   const win = {
     NativeDb: bridge,
@@ -661,9 +664,10 @@ run('القوائم القصيرة تُعرض مفتوحة فتظهر الأسم
 function androidStub() {
   const files = {};
   const stub = {
-    _files: files, _clip: null, _jobs: [], _shared: null, _picked: false,
+    _files: files, _clip: null, _jobs: [], _pdfs: [], _shared: null, _picked: false,
     _dir: 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
     printHtml: (html, name) => stub._jobs.push({ html, name }),
+    sharePdf: (html, name) => stub._pdfs.push({ html, name }),
     copyText: t => { stub._clip = t; },
     writeBackup: (json, stamp) => {
       const name = 'dalili-' + stamp + '.json';
@@ -875,4 +879,99 @@ run('مكان النسخ الاحتياطية: عرض وتغيير وعودة و
 
   c.backupResetDir(); c._els('cb-yes').onclick();
   eq(A._dir.indexOf('مجلد التطبيق') >= 0, true, 'back to the default folder:');
+});
+
+run('حقول النص: إدراج نقطة وترقيم وسطر جديد', () => {
+  const c = load(makeBridge()); c.Store.load();
+  const el = c._els('rf-preparation');
+  el.value = ''; el.selectionStart = el.selectionEnd = 0;
+
+  c.taBullet('rf-preparation');
+  eq(el.value, '• ', 'bullet inserted:');
+
+  el.value = '• اغسل الزنجبيل'; el.selectionStart = el.selectionEnd = el.value.length;
+  c.taNewline('rf-preparation');
+  eq(el.value, '• اغسل الزنجبيل\n', 'newline inserted:');
+
+  el.value = '1. أولًا'; el.selectionStart = el.selectionEnd = el.value.length;
+  c.taNumber('rf-preparation');
+  eq(el.value, '1. أولًا\n2. ', 'numbering continues:');
+});
+
+run('حقول النص: Enter يُكمل القائمة ويُنهيها', () => {
+  const c = load(makeBridge()); c.Store.load();
+  const el = c._els('rf-ingredients');
+  const ev = { key: 'Enter', preventDefault() {} };
+
+  el.value = '• زنجبيل'; el.selectionStart = el.selectionEnd = el.value.length;
+  eq(c.taKey(ev, el), false, 'handled:');
+  eq(el.value, '• زنجبيل\n• ', 'continues the bullet list:');
+
+  // Enter على علامة فارغة يُنهي القائمة
+  eq(c.taKey(ev, el), false);
+  eq(el.value, '• زنجبيل\n', 'ends the list:');
+
+  // سطر عادي يترك Enter لسلوكه الطبيعي
+  el.value = 'نص عادي'; el.selectionStart = el.selectionEnd = el.value.length;
+  eq(c.taKey(ev, el), true, 'plain line untouched:');
+
+  el.value = '3) ثالثًا'; el.selectionStart = el.selectionEnd = el.value.length;
+  c.taKey(ev, el);
+  eq(el.value, '3) ثالثًا\n4. ', 'numeric list continues:');
+});
+
+run('الأسطر الجديدة تصل للطباعة والنص المنسوخ', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.goPage('recipes');
+  c._els('rf-name').value = 'خلطة';
+  c._els('rf-preparation').value = '1. اغلِ الماء\n2. أضف العسل\n3. صفِّ الخليط';
+  c.recipeSave('');
+  c.toggleCart('recipes', b._t.recipes[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.printCart('recipes');
+  eq(A._jobs[0].html.indexOf('white-space:pre-wrap') >= 0, true, 'print keeps line breaks:');
+  eq(A._jobs[0].html.indexOf('2. أضف العسل') >= 0, true, 'all steps printed:');
+
+  c.copyCart('recipes');
+  const lines = A._clip.split('\n');
+  eq(lines.some(l => l.indexOf('• طريقة الإعداد: 1. اغلِ الماء') >= 0), true, 'first step on the label line:');
+  eq(lines.some(l => l === '     2. أضف العسل'), true, 'later steps indented on their own lines:');
+});
+
+run('إرسال PDF مباشرة بلا مربع الطباعة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.pdfCart('labs');
+  eq(A._pdfs.length, 1, 'went to the pdf bridge:');
+  eq(A._jobs.length, 0, 'did not open the print dialog:');
+  eq(A._pdfs[0].name, 'قائمة تحاليل', 'file name:');
+  eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'content included:');
+
+  c.clearCart('labs');
+  c.pdfCart('labs');
+  eq(A._pdfs.length, 1, 'empty list refused:');
+});
+
+run('مجموعاتي: صفحة جامعة لكل الأقسام مع PDF', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'دورية'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd(); c.groupSave();
+
+  c.goHome();
+  eq(c._els('page').innerHTML.indexOf('مجموعاتي المحفوظة (1)') >= 0, true, 'shortcut on home:');
+
+  c.goPage('grp:all');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('دورية') >= 0, true, 'group listed:');
+  eq(html.indexOf('+ مجموعة جديدة') < 0, true, 'no per-section create here:');
+  eq(c._els('hdr-title').innerHTML, 'مجموعاتي المحفوظة', 'page title:');
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.groupPdf(b._t.groups[0].id);
+  eq(A._pdfs[0].name, 'دورية', 'group pdf uses its own name:');
 });

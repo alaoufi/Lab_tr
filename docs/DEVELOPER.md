@@ -41,6 +41,7 @@ DaliliApp/
 │       │   ├── index.html      (195 س)  الهيكل + كل الـCSS
 │       │   ├── app.js          (1253 س) كل المنطق — انظر §٤
 │       │   └── library.js               ٢٣٢ تحليلًا + ٧٢ فحصًا + ٢٧٠ علاجًا
+│       ├── java/android/print/PdfPrint.java   توليد PDF بلا مربع طباعة
 │       ├── java/me/alaoufi/dalili/
 │       │   ├── MainActivity.java (166 س) WebView + الجسور + زر الرجوع
 │       │   ├── DaliliDb.java             SQLite: مخطط + ترقيات + CRUD
@@ -52,7 +53,7 @@ DaliliApp/
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٤٣ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٤٨ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -112,8 +113,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 في `app/build.gradle`. ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 9        // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "1.8"    // ما يراه المستخدم
+versionCode 10       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "1.9"    // ما يراه المستخدم
 ```
 
 ---
@@ -206,11 +207,14 @@ webView.evaluateJavascript("… window.onAndroidBack() …", handled -> {
 ### الطباعة
 
 ```
-printList(kind, ids, title)
-   └─ printDoc(title, itemsHtml(kind, ids))     ← يبني صفحة HTML كاملة
-        ├─ AndroidBridge.printHtml(html, title) ← داخل التطبيق: PrintManager
-        └─ window.open(...)                     ← في المتصفح فقط
+printDoc(title, itemsHtml(kind, ids))          ← صفحة HTML واحدة يتشاركها الاثنان
+   ├─ printList → AndroidBridge.printHtml      ← مربع الطباعة (PrintManager)
+   └─ pdfList   → AndroidBridge.sharePdf       ← ملف PDF ثم قائمة الإرسال
 ```
+
+**إرسال PDF مباشرةً** (`sharePdf`) يستخدم نفس محرّك الطباعة لكن بدل تسليمه
+لـ`PrintManager` يستدعي `onLayout` ثم `onWrite` بنفسه ويكتب الناتج ملفًّا،
+فيخرج PDF جاهزًا للإرسال بلا أي واجهة نظام وسيطة.
 
 `AndroidBridge.printHtml` ينشئ WebView مؤقتًا، ينتظر `onPageFinished`، ثم
 يمرّر `createPrintDocumentAdapter` إلى `PrintManager`. **يجب** الاحتفاظ
@@ -238,6 +242,17 @@ printList(kind, ids, title)
 `copyList(kind, ids, title)` يبني نصًّا عاديًا (ترويسة اختيارية + عنوان
 وتاريخ + عناصر بنقاط) ويمرّره إلى `AndroidBridge.copyText` الذي يضعه في
 حافظة النظام. في المتصفح يستخدم `navigator.clipboard`.
+
+### حقول النص الطويل
+
+`taField(id, label, value, placeholder)` تبني الحقل كاملًا: تسمية + شريط
+إدراج (نقطة / ترقيم / سطر جديد) + `<textarea>` يتمدّد مع المحتوى عبر
+`grow()`. و`taKey()` تجعل Enter يُكمل القائمة تلقائيًا، وعلى علامة فارغة
+يُنهيها. `growAll()` تُستدعى بعد `openModal` ليظهر النص المحفوظ كاملًا.
+
+الأسطر الجديدة تصل إلى المخرجات الثلاثة: `white-space: pre-wrap` في ورقة
+الطباعة وبطاقات القوائم، و`wrapBlock()` في الصورة، وإزاحة أسطر التكملة في
+النص المنسوخ.
 
 ### ترويسة الطباعة
 
@@ -327,7 +342,7 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٤٣ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٤٨ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 
@@ -364,6 +379,9 @@ run('وصف بالعربية', () => {
 | إعادة رسم القائمة عند كل حرف بحث | فقدان تركيز الحقل | في المكتبة: تحديث `#lib-list` فقط لا الشريط |
 | عمود في `onCreate` بلا `onUpgrade` | يعمل على تثبيت جديد ويكسر التحديث | راجع قائمة §٩ في `DATABASE.md` |
 | فرع `if (kind === 'meds') … else …` بقي من زمن القسمين | عناصر مكتبة الأشعة ذهبت إلى قائمة التحاليل | استخدم `coll(kind)` / `setColl(kind, …)` دائمًا — لا تفرّع على القسم يدويًا |
+| اشتقاق `PrintDocumentAdapter.LayoutResultCallback` من حزمة التطبيق | التصريف يفشل: «is not public … outside package» | المساعد `PdfPrint` موضوع في حزمة `android.print` — لا تنقله |
+| `<textarea>` بارتفاع ثابت | لا يظهر إلا سطران مهما طال النص، وسحب الحجم لا يعمل باللمس | `taField()` + `grow()` — يتمدّد مع المحتوى |
+| `esc()` وحدها لا تحفظ الأسطر الجديدة في HTML | نص متعدد الأسطر يُطبع كتلة واحدة | `white-space: pre-wrap` في الطباعة والبطاقات، و`wrapBlock()` في الصورة |
 
 ---
 

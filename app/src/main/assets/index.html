@@ -81,7 +81,7 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .row{display:flex;align-items:center;gap:10px}
 .row input[type=checkbox]{width:20px;height:20px;accent-color:var(--teal);flex-shrink:0;cursor:pointer}
 .name{font-weight:800;font-size:14px}
-.sub{font-size:12px;color:var(--mid);margin-top:2px}
+.sub{font-size:12px;color:var(--mid);margin-top:2px;white-space:pre-wrap}
 .star{color:#f59e0b}
 .ic{background:none;border:none;font-size:16px;padding:5px;cursor:pointer}
 
@@ -105,7 +105,12 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .f label{display:block;font-size:12.5px;font-weight:800;color:var(--mid);margin-bottom:5px}
 .inp{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-family:inherit;font-size:14px;outline:none;background:#fff}
 .inp:focus{border-color:var(--teal)}
-.ta{min-height:60px;resize:vertical}
+.ta{min-height:78px;resize:none;overflow:hidden;line-height:1.75}
+/* شريط أدوات الحقل: إدراج نقاط وترقيم وسطر جديد */
+.fbar{display:flex;gap:6px;margin-bottom:5px;flex-wrap:wrap}
+.fb{background:#f0fdfa;border:1px solid var(--border);color:var(--teal2);border-radius:8px;padding:5px 10px;font-family:inherit;font-size:11.5px;font-weight:800;cursor:pointer}
+.fb:active{background:var(--teal);color:#fff}
+.fhint{font-size:11px;color:var(--light);margin-top:4px;line-height:1.6}
 .chk-row{display:flex;align-items:center;gap:8px;margin:8px 0;font-weight:700;font-size:13px;cursor:pointer}
 .chk-row input{width:19px;height:19px;accent-color:var(--teal)}
 .mft{display:flex;gap:8px;margin-top:6px}
@@ -151,8 +156,8 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .out-grp .chk-row{margin:5px 0;font-size:12.5px}
 
 /* أسطر المتطلبات والممنوعات داخل البطاقات */
-.req{font-size:11.5px;color:var(--teal);margin-top:3px;font-weight:700;line-height:1.5}
-.ban{font-size:11.5px;color:#b45309;margin-top:2px;font-weight:700;line-height:1.5}
+.req{font-size:11.5px;color:var(--teal);margin-top:3px;font-weight:700;line-height:1.5;white-space:pre-wrap}
+.ban{font-size:11.5px;color:#b45309;margin-top:2px;font-weight:700;line-height:1.5;white-space:pre-wrap}
 
 /* المكتبة الجاهزة */
 .lib-bar{position:sticky;top:64px;z-index:3;background:#f0fdfa;padding:8px 2px 10px;margin-bottom:6px;border-bottom:1px solid var(--border)}

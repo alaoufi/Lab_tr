@@ -6,6 +6,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.print.PdfPrint;
 import android.print.PrintAttributes;
 import android.print.PrintManager;
 import android.util.Base64;
@@ -23,9 +24,9 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
 
-
 import java.io.File;
 import java.io.FileOutputStream;
+
 /**
  * تطبيق «دليلي» — واجهة WebView تُحمِّل الملفات المدمجة داخل الحزمة نفسها
  * (assets/) حصرًا، بلا أي اتصال شبكي إطلاقًا. جسر AndroidBridge يوفّر
@@ -168,6 +169,92 @@ public class MainActivity extends ComponentActivity {
                     // فشل صامت — لا داعي لإيقاف التطبيق لأجل طباعة فاشلة
                 }
             });
+        }
+
+        /**
+         * تصدير القائمة ملفَّ PDF ومشاركته مباشرةً — بلا مربع الطباعة.
+         *
+         * <p>نفس محرّك الطباعة (PrintDocumentAdapter من WebView) لكن بدل
+         * تسليمه لـPrintManager نستدعي onLayout ثم onWrite بأنفسنا ونكتب
+         * الناتج في ملف، فيخرج PDF جاهزًا للإرسال في واتساب أو غيره.
+         */
+        @JavascriptInterface
+        public void sharePdf(String html, String jobName) {
+            final String job = (jobName == null || jobName.trim().isEmpty()) ? "دليلي" : jobName.trim();
+            runOnUiThread(() -> {
+                try {
+                    WebView v = new WebView(MainActivity.this);
+                    v.setWebViewClient(new WebViewClient() {
+                        @Override
+                        public void onPageFinished(WebView view, String url) {
+                            writePdf(view, job);
+                        }
+                    });
+                    printView = v;   // يبقى حيًّا حتى ينتهي التوليد
+                    v.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null);
+                } catch (Exception e) {
+                    Log.e("DaliliPdf", "sharePdf failed", e);
+                }
+            });
+        }
+
+        private void writePdf(WebView view, String job) {
+            try {
+                File dir = new File(getCacheDir(), "shared");
+                if (!dir.exists()) dir.mkdirs();
+                final File out = new File(dir, safeFileName(job) + ".pdf");
+
+                PrintAttributes attrs = new PrintAttributes.Builder()
+                        .setMediaSize(PrintAttributes.MediaSize.ISO_A4)
+                        .setResolution(new PrintAttributes.Resolution("pdf", "pdf", 600, 600))
+                        .setMinMargins(PrintAttributes.Margins.NO_MARGINS)
+                        .build();
+
+                new PdfPrint(attrs).print(view.createPrintDocumentAdapter(job), out,
+                        new PdfPrint.Result() {
+                            @Override
+                            public void onDone(File file) { sendPdf(file); }
+
+                            @Override
+                            public void onFail(String error) {
+                                Log.e("DaliliPdf", "pdf failed: " + error);
+                                toastJs("تعذّر تجهيز ملف PDF");
+                            }
+                        });
+            } catch (Exception e) {
+                Log.e("DaliliPdf", "writePdf failed", e);
+            }
+        }
+
+        /** يعرض رسالة في الواجهة (توست الويب) من جهة جافا. */
+        private void toastJs(String msg) {
+            runOnUiThread(() -> {
+                try {
+                    webView.evaluateJavascript(
+                            "window.toast && window.toast(" + org.json.JSONObject.quote(msg) + ",'er')", null);
+                } catch (Exception ignored) { }
+            });
+        }
+
+        private void sendPdf(File file) {
+            try {
+                Uri uri = FileProvider.getUriForFile(
+                        MainActivity.this, "me.alaoufi.dalili.fileprovider", file);
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("application/pdf");
+                send.putExtra(Intent.EXTRA_STREAM, uri);
+                send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                startActivity(Intent.createChooser(send, "إرسال PDF"));
+            } catch (Exception e) {
+                Log.e("DaliliPdf", "sendPdf failed", e);
+            }
+        }
+
+        /** اسم ملف آمن: بلا فواصل مسار ولا محارف تكسر أنظمة الملفات. */
+        private String safeFileName(String s) {
+            String out = s.replaceAll("[\\\\/:*?\"<>|\\r\\n]", "_").trim();
+            if (out.length() > 60) out = out.substring(0, 60);
+            return out.isEmpty() ? "دليلي" : out;
         }
 
         /** نسخ نص القائمة للحافظة — أخفّ من الصورة وقابل للصق والبحث. */

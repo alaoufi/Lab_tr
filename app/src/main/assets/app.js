@@ -196,6 +196,7 @@ function $(id) { return document.getElementById(id); }
 function h(id, html) { var e = $(id); if (e) e.innerHTML = html; }
 
 var _tt;
+window.toast = toast;   // جافا تنادِيها عند فشل تجهيز PDF
 function toast(msg, type) {
   var e = $('toast'); if (!e) return;
   e.textContent = msg; e.className = 'toast on' + (type === 'er' ? ' er' : '');
@@ -346,7 +347,7 @@ function pageMeta(p) {
       var g = DB.groups.find(function (x) { return x.id === a[2]; });
       return { icon: '📁', title: (GRP && GRP.id === a[2] ? GRP.name : (g ? g.name : 'مجموعة')) || 'مجموعة' };
     }
-    return { icon: '📁', title: 'مجموعات ' + KIND_LBL[a[1]].title };
+    return { icon: '📁', title: a[1] === 'all' ? 'مجموعاتي المحفوظة' : 'مجموعات ' + KIND_LBL[a[1]].title };
   }
   return PAGES.home;
 }
@@ -672,10 +673,98 @@ window.importBackup = function (input) {
   reader.readAsText(file);
 };
 
+/* ── حقول النص الطويل ──────────────────────────────────────────────
+   المشكلة التي كانت: الصندوق ثابت الارتفاع فلا يظهر منه إلا سطران مهما
+   طال النص، وسحب الحجم لا يعمل باللمس. الحل: يتمدّد مع المحتوى، ومعه
+   شريط إدراج للنقاط والترقيم وسطر جديد، وEnter يُكمل القائمة تلقائيًا. */
+
+/** يضبط ارتفاع الحقل ليطابق محتواه بالضبط. */
+window.grow = function (el) {
+  if (!el || !el.style) return;
+  el.style.height = 'auto';
+  el.style.height = (el.scrollHeight + 2) + 'px';
+};
+function growAll() {
+  try {
+    var all = document.querySelectorAll('#modal-body .ta');
+    for (var i = 0; i < all.length; i++) grow(all[i]);
+  } catch (e) { /* بيئة بلا DOM كامل */ }
+}
+
+/** حقل نص طويل كامل: تسمية + شريط أدوات + صندوق متمدّد. */
+function taField(id, label, value, placeholder) {
+  return '<div class="f"><label>' + esc(label) + '</label>'
+    + '<div class="fbar">'
+    + '<button type="button" class="fb" onclick="taBullet(\'' + id + '\')">• نقطة</button>'
+    + '<button type="button" class="fb" onclick="taNumber(\'' + id + '\')">١. ترقيم</button>'
+    + '<button type="button" class="fb" onclick="taNewline(\'' + id + '\')">↵ سطر جديد</button>'
+    + '</div>'
+    + '<textarea id="' + id + '" class="inp ta" placeholder="' + esc(placeholder || '') + '"'
+    + ' oninput="grow(this)" onkeydown="return taKey(event,this)">' + esc(value || '') + '</textarea>'
+    + '</div>';
+}
+
+function taInsert(el, text) {
+  var v = el.value, a = el.selectionStart, b = el.selectionEnd;
+  if (typeof a !== 'number') { el.value = v + text; grow(el); return; }
+  el.value = v.slice(0, a) + text + v.slice(b);
+  var pos = a + text.length;
+  el.selectionStart = el.selectionEnd = pos;
+  el.focus();
+  grow(el);
+}
+/** بداية السطر الذي فيه المؤشر. */
+function lineStart(v, pos) { return v.lastIndexOf('\n', pos - 1) + 1; }
+
+window.taNewline = function (id) { var el = $(id); if (el) taInsert(el, '\n'); };
+window.taBullet = function (id) {
+  var el = $(id); if (!el) return;
+  var p = el.selectionStart || el.value.length;
+  var head = lineStart(el.value, p) === p ? '' : '\n';
+  taInsert(el, head + '• ');
+};
+window.taNumber = function (id) {
+  var el = $(id); if (!el) return;
+  var p = el.selectionStart || el.value.length;
+  // يتابع آخر رقم قبل المؤشر بدل أن يبدأ من واحد في كل مرة
+  var before = el.value.slice(0, p).split('\n').reverse();
+  var n = 1;
+  for (var i = 0; i < before.length; i++) {
+    var m = before[i].match(/^\s*(\d+)[.)]\s/);
+    if (m) { n = parseInt(m[1], 10) + 1; break; }
+  }
+  var head = lineStart(el.value, p) === p ? '' : '\n';
+  taInsert(el, head + n + '. ');
+};
+/** Enter داخل قائمة يبدأ العنصر التالي؛ وعلى عنصر فارغ يُنهي القائمة. */
+window.taKey = function (e, el) {
+  var key = e.key || '';
+  if (key !== 'Enter' && e.keyCode !== 13) return true;
+  if (e.shiftKey || e.ctrlKey) return true;
+  var v = el.value, p = el.selectionStart;
+  if (typeof p !== 'number') return true;
+  var ls = lineStart(v, p);
+  var line = v.slice(ls, p);
+  var m = line.match(/^(\s*)(•\s|(\d+)[.)]\s)/);
+  if (!m) return true;                       // سطر عادي — Enter يعمل كالمعتاد
+  if (line.length === m[0].length) {         // علامة بلا نص ⇒ أنهِ القائمة
+    el.value = v.slice(0, ls) + v.slice(p);
+    el.selectionStart = el.selectionEnd = ls;
+    grow(el);
+    if (e.preventDefault) e.preventDefault();
+    return false;
+  }
+  var next = m[3] ? m[1] + (parseInt(m[3], 10) + 1) + '. ' : m[1] + '• ';
+  taInsert(el, '\n' + next);
+  if (e.preventDefault) e.preventDefault();
+  return false;
+};
+
 /* ── مودال + تأكيد بسيطان ── */
 function openModal(title, body) {
   h('modal-title', esc(title)); h('modal-body', body);
   $('modal-bg').className = 'modal-bg on';
+  growAll();   // النص المحفوظ سابقًا يظهر كاملًا لا في سطرين
 }
 window.closeModal = function () { $('modal-bg').className = 'modal-bg'; };
 function confirmBox(msg, onYes) {
@@ -729,6 +818,10 @@ function renderHome() {
       }).join('') + '</div>';
   }
 
+  if (DB.groups.length) {
+    html += '<button class="btn full" style="margin-bottom:12px" onclick="goPage(\'grp:all\')">'
+      + '📁 مجموعاتي المحفوظة (' + DB.groups.length + ')</button>';
+  }
   html += '<div class="hgrid">'
     + KINDS.map(function (k, i) {
       var n = coll(k).length, L = KIND_LBL[k];
@@ -814,8 +907,9 @@ function cartBar(kind, n) {
   return '<div class="cartbar">'
     + '<span>📝 المحدد: ' + n + '</span>'
     + '<span class="grow"></span>'
-    + '<button class="btn white sm" onclick="printCart(\'' + kind + '\')">🖨️ طباعة/PDF</button>'
-    + '<button class="btn wa sm" onclick="shareCart(\'' + kind + '\')">📤 إرسال (صورة)</button>'
+    + '<button class="btn wa sm" onclick="pdfCart(\'' + kind + '\')">📄 إرسال PDF</button>'
+    + '<button class="btn white sm" onclick="printCart(\'' + kind + '\')">🖨️ طباعة</button>'
+    + '<button class="btn wa sm" onclick="shareCart(\'' + kind + '\')">🖼️ إرسال صورة</button>'
     + '<button class="btn white sm" onclick="copyCart(\'' + kind + '\')">📋 نسخ نص</button>'
     + '<button class="btn white sm" onclick="groupFromCart(\'' + kind + '\')">💾 مجموعة</button>'
     + '<button class="btn ghost sm" onclick="clearCart(\'' + kind + '\')">مسح</button>'
@@ -837,9 +931,9 @@ window.medForm = function (id) {
       return '<div class="f"><label>' + lbl + '</label><input id="mf-category" class="inp" list="mcat-list" value="' + v + '" placeholder="مثال: مضادات حيوية"></div>'
         + catDatalist('mcat-list', DB.meds);
     }
+    if (area) return taField('mf-' + key, lbl, m[key] || '');
     return '<div class="f"><label>' + lbl + (key === 'trade_name' ? ' *' : '') + '</label>'
-      + (area ? '<textarea id="mf-' + key + '" class="inp ta">' + v + '</textarea>'
-        : '<input id="mf-' + key + '" class="inp" value="' + v + '">') + '</div>';
+      + '<input id="mf-' + key + '" class="inp" value="' + v + '"></div>';
   }).join('');
   body += '<label class="chk-row"><input type="checkbox" id="mf-default" ' + (m.default_include ? 'checked' : '') + '> ⭐ محدَّد افتراضيًا</label>';
   body += '<div class="mft"><button class="btn primary" onclick="medSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
@@ -917,9 +1011,9 @@ window.labForm = function (id) {
     + catDatalist('cat-list', DB.labs)
     + '<div class="f"><label>اسم التحليل *</label><input id="lf-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: صورة دم كاملة"></div>'
     + '<div class="f"><label>رمز التحليل (المصطلح)</label><input id="lf-code" class="inp" dir="ltr" value="' + esc(t.code || '') + '" placeholder="مثال: CBC"></div>'
-    + '<div class="f"><label>الهدف من التحليل</label><textarea id="lf-purpose" class="inp ta" placeholder="مثال: تقييم فقر الدم والالتهابات">' + esc(t.purpose || '') + '</textarea></div>'
-    + '<div class="f"><label>متطلبات التحليل</label><textarea id="lf-requirements" class="inp ta" placeholder="مثال: صيام ٨–١٢ ساعة">' + esc(t.requirements || '') + '</textarea></div>'
-    + '<div class="f"><label>ممنوعات التحليل</label><textarea id="lf-prohibitions" class="inp ta" placeholder="مثال: لا يُجرى بعد بدء المضاد الحيوي">' + esc(t.prohibitions || '') + '</textarea></div>'
+    + taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
+    + taField('lf-requirements', 'متطلبات التحليل', t.requirements, 'مثال: صيام ٨–١٢ ساعة')
+    + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي')
     + '<label class="chk-row"><input type="checkbox" id="lf-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ تحليل شائع</label>'
     + '<div class="mft"><button class="btn primary" onclick="labSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل تحليل' : '+ إضافة تحليل', body);
@@ -1016,9 +1110,9 @@ window.imgForm = function (id) {
     + '</div><input type="hidden" id="if-category" value="' + esc(cur) + '"></div>'
     + '<div class="f"><label>اسم الفحص *</label><input id="if-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: رنين مغناطيسي للعمود القطني"></div>'
     + '<div class="f"><label>المنطقة أو العضو</label><input id="if-region" class="inp" value="' + esc(t.region || '') + '" placeholder="مثال: العمود القطني"></div>'
-    + '<div class="f"><label>الهدف من الفحص</label><textarea id="if-purpose" class="inp ta">' + esc(t.purpose || '') + '</textarea></div>'
-    + '<div class="f"><label>التحضير المطلوب</label><textarea id="if-requirements" class="inp ta" placeholder="مثال: صيام ٦ ساعات، إحضار فحوصات الكلى">' + esc(t.requirements || '') + '</textarea></div>'
-    + '<div class="f"><label>موانع الإجراء</label><textarea id="if-prohibitions" class="inp ta" placeholder="مثال: الحمل، منظّم ضربات القلب">' + esc(t.prohibitions || '') + '</textarea></div>'
+    + taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
+    + taField('if-requirements', 'التحضير المطلوب', t.requirements, 'مثال: صيام ٦ ساعات، إحضار فحوصات الكلى')
+    + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب')
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
     + '<div class="mft"><button class="btn primary" onclick="imgSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
@@ -1123,9 +1217,9 @@ window.recipeForm = function (id) {
         }).join('')
         + '</div><input type="hidden" id="rf-type" value="' + esc(r.type || RX_TYPES[0]) + '"></div>';
     }
+    if (kind === 'area') return taField('rf-' + key, lbl, r[key] || '');
     return '<div class="f"><label>' + lbl + (key === 'name' ? ' *' : '') + '</label>'
-      + (kind === 'area' ? '<textarea id="rf-' + key + '" class="inp ta">' + v + '</textarea>'
-        : '<input id="rf-' + key + '" class="inp" value="' + v + '">') + '</div>';
+      + '<input id="rf-' + key + '" class="inp" value="' + v + '"></div>';
   }).join('');
   body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
   body += '<div class="mft"><button class="btn primary" onclick="recipeSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
@@ -1164,6 +1258,7 @@ window.recipeDel = function (id) {
 var GRP = null;
 
 function groupsOf(kind) {
+  if (kind === 'all') return DB.groups.slice();
   return DB.groups.filter(function (g) { return g.kind === kind; });
 }
 function itemLabel(kind, o) {
@@ -1178,24 +1273,31 @@ function itemById(kind, id) {
 }
 
 function renderGroupsPage(kind) {
-  var gs = groupsOf(kind), L = KIND_LBL[kind];
-  var html = '<div class="toolbar">'
-    + '<button class="btn primary grow" onclick="groupNew(\'' + kind + '\')">+ مجموعة جديدة</button></div>';
-  if (DB.cart[kind].length) {
-    html += '<button class="btn full" onclick="groupFromCart(\'' + kind + '\')">💾 حفظ التحديد الحالي كمجموعة ('
-      + DB.cart[kind].length + ')</button>';
+  var all = kind === 'all';
+  var gs = groupsOf(kind);
+  var html = '';
+  if (!all) {
+    html += '<div class="toolbar">'
+      + '<button class="btn primary grow" onclick="groupNew(\'' + kind + '\')">+ مجموعة جديدة</button></div>';
+    if (DB.cart[kind].length) {
+      html += '<button class="btn full" onclick="groupFromCart(\'' + kind + '\')">💾 حفظ التحديد الحالي كمجموعة ('
+        + DB.cart[kind].length + ')</button>';
+    }
   }
   if (!gs.length) {
-    h('page', html + emptyBox('📁', 'لا توجد مجموعات', 'اجمع ما تطلبه عادةً في مجموعة واحدة باسم تختاره'));
+    h('page', html + emptyBox('📁', 'لا توجد مجموعات',
+      'اختر ما تطلبه عادةً ثم احفظه مجموعة باسم تختاره — تُعيد إرسالها لاحقًا بضغطة'));
     return;
   }
   html += gs.map(function (g) {
+    var L = KIND_LBL[g.kind];
     return '<div class="card"><div class="row">'
-      + '<div class="grow" onclick="goPage(\'grp:' + kind + ':' + g.id + '\')">'
+      + '<div class="grow" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + countWord(g.items.length, L.one, L.two, L.few, L.many) + '</div></div>'
+      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many) + '</div></div>'
+      + '<button class="ic" onclick="groupPdf(\'' + g.id + '\')">📄</button>'
+      + '<button class="ic" onclick="groupShare(\'' + g.id + '\')">🖼️</button>'
       + '<button class="ic" onclick="groupPrint(\'' + g.id + '\')">🖨️</button>'
-      + '<button class="ic" onclick="groupShare(\'' + g.id + '\')">📤</button>'
       + '</div></div>';
   }).join('');
   h('page', html);
@@ -1210,6 +1312,10 @@ window.groupPrint = function (id) {
 window.groupShare = function (id) {
   var g = findGroup(id); if (!g) return;
   shareList(g.kind, g.items, g.name, '📁 ' + g.name);
+};
+window.groupPdf = function (id) {
+  var g = findGroup(id); if (!g) return;
+  pdfList(g.kind, g.items, g.name);
 };
 
 window.groupNew = function (kind) { askGroupName(kind, [], ''); };
@@ -1241,7 +1347,8 @@ function renderGroupPage(kind, id) {
   var html = '<div class="gbar">'
     + '<button class="btn primary sm" onclick="groupSave()">💾 حفظ' + (GRP.dirty ? ' •' : '') + '</button>'
     + '<button class="btn white sm" onclick="groupEditPrint()">🖨️ طباعة</button>'
-    + '<button class="btn wa sm" onclick="groupEditShare()">📤 إرسال</button>'
+    + '<button class="btn wa sm" onclick="groupEditPdf()">📄 PDF</button>'
+    + '<button class="btn wa sm" onclick="groupEditShare()">🖼️ صورة</button>'
     + '<button class="btn white sm" onclick="groupEditCopy()">📋 نسخ</button>'
     + '<span class="grow"></span>'
     + '<button class="btn sm" onclick="groupRename()">✏️</button>'
@@ -1277,6 +1384,7 @@ window.groupSave = function () {
 window.groupEditPrint = function () { printList(GRP.kind, GRP.items, GRP.name); };
 window.groupEditShare = function () { shareList(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name); };
 window.groupEditCopy = function () { copyList(GRP.kind, GRP.items, GRP.name); };
+window.groupEditPdf = function () { pdfList(GRP.kind, GRP.items, GRP.name); };
 window.groupRename = function () {
   openModal('✏️ إعادة تسمية',
     '<div class="f"><label>اسم المجموعة *</label><input id="gn" class="inp" value="' + esc(GRP.name) + '"></div>'
@@ -1400,7 +1508,7 @@ function printDoc(title, body) {
     + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
     + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:4pt 7pt;margin-bottom:4pt;page-break-inside:avoid}'
     + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
-    + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35}'
+    + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35;white-space:pre-wrap}'
     + '.rx-l{color:#475569;font-weight:bold}'
     + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
     + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
@@ -1438,13 +1546,21 @@ window.printList = function (kind, ids, title) {
    الاتصال مباشرة، تمامًا كإرسال ملف. */
 /** لفّ النص على أكثر من سطر حتى لا يخرج خارج حدود الصورة. */
 function wrapText(ctx, text, maxW) {
-  var words = String(text).split(/\s+/), out = [], cur = '';
+  var words = String(text).split(/[ \t]+/), out = [], cur = '';
   words.forEach(function (w) {
     var t = cur ? cur + ' ' + w : w;
     if (!cur || ctx.measureText(t).width <= maxW) cur = t;
     else { out.push(cur); cur = w; }
   });
   if (cur) out.push(cur);
+  return out.length ? out : [''];
+}
+/** يحترم أسطر المستخدم أولًا ثم يلفّ كل سطر على حدة. */
+function wrapBlock(ctx, text, maxW) {
+  var out = [];
+  String(text).split('\n').forEach(function (seg) {
+    out = out.concat(wrapText(ctx, seg, maxW));
+  });
   return out;
 }
 var CART_TITLE = { meds: 'قائمة علاجات', labs: 'قائمة تحاليل',
@@ -1468,7 +1584,7 @@ function buildCanvas(kind, ids, title) {
     var titleLines = wrapText(ctx, r.title, MAXW);
     ctx.font = LINE_F;
     var lines = [];
-    r.lines.forEach(function (x) { lines = lines.concat(wrapText(ctx, lineText(x), MAXW)); });
+    r.lines.forEach(function (x) { lines = lines.concat(wrapBlock(ctx, lineText(x), MAXW)); });
     return {
       titleLines: titleLines, lines: lines,
       h: 18 + titleLines.length * TITLE_H + lines.length * LINE_H
@@ -1509,6 +1625,18 @@ window.shareCart = function (kind) {
   shareList(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
 };
 window.copyCart = function (kind) { copyList(kind, DB.cart[kind], cartTitle(kind, false)); };
+window.pdfCart = function (kind) { pdfList(kind, DB.cart[kind], cartTitle(kind, false)); };
+
+/** يبني نفس ورقة الطباعة لكن يُخرجها ملف PDF ويفتح قائمة الإرسال مباشرةً. */
+window.pdfList = function (kind, ids, title) {
+  var body = itemsHtml(kind, ids);
+  if (!body) return toast('القائمة فارغة', 'er');
+  if (!(window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function')) {
+    return toast('إرسال PDF متاح داخل التطبيق', 'er');
+  }
+  window.AndroidBridge.sharePdf(printDoc(title, body), title);
+  toast('📄 يجري تجهيز ملف PDF…');
+};
 
 /** نصّ عادي للصق في واتساب أو أي مكان — أخفّ من الصورة وقابل للبحث. */
 function listText(kind, ids, title) {
@@ -1521,7 +1649,11 @@ function listText(kind, ids, title) {
   lines.push('');
   rowsFor(kind, ids).forEach(function (r) {
     lines.push(r.title);
-    r.lines.forEach(function (x) { lines.push('   • ' + lineText(x)); });
+    r.lines.forEach(function (x) {
+      var segs = String(x.v).split('\n');
+      lines.push('   • ' + x.l + ': ' + segs[0]);
+      for (var i = 1; i < segs.length; i++) lines.push('     ' + segs[i]);
+    });
   });
   return lines.join('\n');
 }
