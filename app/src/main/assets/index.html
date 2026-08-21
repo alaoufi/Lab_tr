@@ -5,11 +5,9 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
 <meta name="description" content="كتالوج علاجات وتحاليل شخصي — يعمل بلا إنترنت، بياناتك على جهازك فقط">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icon.svg">
+<!-- لا روابط لملفات خارجية: أيقونة التطبيق تأتي من موارد أندرويد، وأي مرجع
+     مفقود هنا يُنتج طلبًا فاشلًا في WebView بلا فائدة. -->
 <meta name="theme-color" content="#0f766e">
-<meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="دليلي">
 <title>دليلي الطبي</title>
@@ -129,6 +127,18 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .settings-sec{margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid #f1f5f9}
 .settings-lbl{font-size:12px;font-weight:800;color:var(--mid);margin-bottom:8px}
 .muted{font-size:12.5px;color:var(--light);line-height:1.7}
+
+/* المعاينة قبل الإرسال */
+.pvtabs{display:flex;gap:6px;margin-bottom:8px}
+.pvt{flex:1;padding:10px 8px;border:1.5px solid var(--border);background:#fff;border-radius:11px;font-family:inherit;font-weight:800;font-size:13px;color:var(--mid);cursor:pointer}
+.pvt.on{background:linear-gradient(135deg,var(--teal),var(--teal2));border-color:var(--teal);color:#fff}
+.paper{background:#fff;border:1px solid var(--border);border-radius:10px;padding:16px 14px;box-shadow:0 3px 12px rgba(15,23,42,.07);margin-bottom:86px}
+.pvimg{background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px;margin-bottom:86px;box-shadow:0 3px 12px rgba(15,23,42,.07)}
+.pvimg img{width:100%;display:block;border-radius:6px}
+.pvbar{position:fixed;right:0;left:0;bottom:0;z-index:60;display:flex;gap:7px;padding:10px 12px;background:#fff;border-top:1.5px solid var(--border);box-shadow:0 -4px 14px rgba(15,23,42,.08)}
+.pvbar .btn{flex:1;justify-content:center;padding:11px 6px}
+.pvbar .btn.white{border:1.5px solid var(--border)}
+@media print{.pvtabs,.pvbar{display:none!important}}
 
 /* مكان حفظ النسخ الاحتياطية */
 .loc{background:#f8fafc;border:1px solid var(--border);border-radius:11px;padding:9px 11px;margin-bottom:9px}

@@ -302,14 +302,16 @@ window.goPage = function (p) {
   render();
 };
 window.goBack = function () {
-  // مغادرة محرّر المجموعة بتعديلات غير محفوظة تعني رجوعها كما كانت — نسأل أولًا
-  if (GRP && GRP.dirty && curPage().indexOf('grp:') === 0) {
+  // مسوّدة المجموعة تُسقَط فقط عند مغادرة صفحات المجموعات نفسها؛ الرجوع من
+  // المعاينة إلى المحرّر يجب أن يبقي التعديلات المؤقّتة كما هي.
+  var leaving = curPage().indexOf('grp:') === 0;
+  if (GRP && GRP.dirty && leaving) {
     confirmBox('لديك تعديلات غير محفوظة على المجموعة. الخروج يعيدها كما كانت.', function () {
       GRP = null; closeModal(); popPage();
     });
     return;
   }
-  GRP = null;
+  if (leaving) GRP = null;
   popPage();
 };
 function popPage() {
@@ -334,6 +336,7 @@ var PAGES = {
   imaging:  { icon: '📷', title: 'الأشعة والفحوصات' },
   recipes:  { icon: '🌿', title: 'الوصفات العلاجية' },
   settings: { icon: '⚙️', title: 'الإعدادات' },
+  pv:       { icon: '👁️', title: 'معاينة قبل الإرسال' },
   'lib:labs': { icon: '📚', title: 'مكتبة التحاليل' },
   'lib:imaging': { icon: '📚', title: 'مكتبة الأشعة والفحوصات' },
   'lib:meds': { icon: '📚', title: 'مكتبة العلاجات' }
@@ -787,6 +790,7 @@ function render() {
   else if (p === 'imaging') renderImaging();
   else if (p === 'recipes') renderRecipes();
   else if (p === 'settings') renderSettings();
+  else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
@@ -907,10 +911,9 @@ function cartBar(kind, n) {
   return '<div class="cartbar">'
     + '<span>📝 المحدد: ' + n + '</span>'
     + '<span class="grow"></span>'
-    + '<button class="btn wa sm" onclick="pdfCart(\'' + kind + '\')">📄 إرسال PDF</button>'
-    + '<button class="btn white sm" onclick="printCart(\'' + kind + '\')">🖨️ طباعة</button>'
-    + '<button class="btn wa sm" onclick="shareCart(\'' + kind + '\')">🖼️ إرسال صورة</button>'
-    + '<button class="btn white sm" onclick="copyCart(\'' + kind + '\')">📋 نسخ نص</button>'
+    // مخرج واحد: المعاينة — منها يختار المستخدم PDF أو صورة أو طباعة أو نسخًا
+    // بعد أن يرى ما سيُرسَل. هذا يبقي الشريط مقروءًا ويمنع الإرسال بالخطأ.
+    + '<button class="btn primary sm" onclick="previewCart(\'' + kind + '\')">👁️ عرض وإرسال</button>'
     + '<button class="btn white sm" onclick="groupFromCart(\'' + kind + '\')">💾 مجموعة</button>'
     + '<button class="btn ghost sm" onclick="clearCart(\'' + kind + '\')">مسح</button>'
     + '</div>';
@@ -1295,28 +1298,13 @@ function renderGroupsPage(kind) {
       + '<div class="grow" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
       + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many) + '</div></div>'
-      + '<button class="ic" onclick="groupPdf(\'' + g.id + '\')">📄</button>'
-      + '<button class="ic" onclick="groupShare(\'' + g.id + '\')">🖼️</button>'
-      + '<button class="ic" onclick="groupPrint(\'' + g.id + '\')">🖨️</button>'
+      + '<button class="ic" onclick="groupPreview(\'' + g.id + '\')">👁️</button>'
       + '</div></div>';
   }).join('');
   h('page', html);
 }
 
 function findGroup(id) { return DB.groups.find(function (g) { return g.id === id; }); }
-
-window.groupPrint = function (id) {
-  var g = findGroup(id); if (!g) return;
-  printList(g.kind, g.items, g.name);
-};
-window.groupShare = function (id) {
-  var g = findGroup(id); if (!g) return;
-  shareList(g.kind, g.items, g.name, '📁 ' + g.name);
-};
-window.groupPdf = function (id) {
-  var g = findGroup(id); if (!g) return;
-  pdfList(g.kind, g.items, g.name);
-};
 
 window.groupNew = function (kind) { askGroupName(kind, [], ''); };
 window.groupFromCart = function (kind) { askGroupName(kind, DB.cart[kind].slice(), ''); };
@@ -1346,10 +1334,7 @@ function renderGroupPage(kind, id) {
 
   var html = '<div class="gbar">'
     + '<button class="btn primary sm" onclick="groupSave()">💾 حفظ' + (GRP.dirty ? ' •' : '') + '</button>'
-    + '<button class="btn white sm" onclick="groupEditPrint()">🖨️ طباعة</button>'
-    + '<button class="btn wa sm" onclick="groupEditPdf()">📄 PDF</button>'
-    + '<button class="btn wa sm" onclick="groupEditShare()">🖼️ صورة</button>'
-    + '<button class="btn white sm" onclick="groupEditCopy()">📋 نسخ</button>'
+    + '<button class="btn wa sm" onclick="groupEditPreview()">👁️ عرض وإرسال</button>'
     + '<span class="grow"></span>'
     + '<button class="btn sm" onclick="groupRename()">✏️</button>'
     + '<button class="btn danger sm" onclick="groupDelete()">🗑️</button>'
@@ -1381,10 +1366,6 @@ window.groupSave = function () {
   Store.saveGroup(g);
   GRP.dirty = false; render(); toast('✅ حُفظت المجموعة');
 };
-window.groupEditPrint = function () { printList(GRP.kind, GRP.items, GRP.name); };
-window.groupEditShare = function () { shareList(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name); };
-window.groupEditCopy = function () { copyList(GRP.kind, GRP.items, GRP.name); };
-window.groupEditPdf = function () { pdfList(GRP.kind, GRP.items, GRP.name); };
 window.groupRename = function () {
   openModal('✏️ إعادة تسمية',
     '<div class="f"><label>اسم المجموعة *</label><input id="gn" class="inp" value="' + esc(GRP.name) + '"></div>'
@@ -1496,32 +1477,43 @@ function headerHtml() {
   return parts ? '<div class="lh">' + parts + '</div>' : '';
 }
 
+/** تنسيق ورقة الطباعة — مصدر واحد تستعمله الطباعة والمعاينة معًا حتى لا
+    تختلف المعاينة عمّا يُطبَع فعلًا. عند تمرير `scope` تُسبَق كل قاعدة به
+    فتُحصَر داخل بطاقة المعاينة ولا تسرّب إلى واجهة التطبيق. */
+function printCss(scope) {
+  var s = scope ? scope + ' ' : '';
+  var body = scope ? scope : 'body';
+  return (scope ? '' : '@page{size:A4;margin:12mm 10mm}')
+    + s + '*{box-sizing:border-box;font-family:Tahoma,Arial,sans-serif}'
+    // في المعاينة لا نضبط الهوامش: بطاقة `.paper` تحتفظ بهوامشها في الواجهة.
+    + body + '{' + (scope ? '' : 'margin:0;')
+    + 'color:#0f172a;font-size:11pt;line-height:1.35;-webkit-print-color-adjust:exact}'
+    + s + 'h1{font-size:14pt;color:#0f766e;margin:0}'
+    + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
+    + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:4pt 7pt;margin-bottom:4pt;page-break-inside:avoid}'
+    + s + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
+    + s + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35;white-space:pre-wrap}'
+    + s + '.rx-l{color:#475569;font-weight:bold}'
+    + s + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
+    + s + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
+    + s + '.lh-t{font-size:9.5pt;color:#334155;margin-top:1pt}'
+    + s + '.lh-c{font-size:9pt;color:#64748b;margin-top:1pt;direction:ltr;text-align:right}'
+    + s + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}';
+}
+/** جسم الورقة (ترويسة + عنوان + تاريخ + المحتوى) — مشترك بين الطباعة والمعاينة. */
+function docBody(title, body) {
+  return headerHtml()
+    + '<h1>' + esc(title) + '</h1>'
+    + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
+    + body;
+}
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
 function printDoc(title, body) {
   return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title>'
-    + '<style>'
-    + '@page{size:A4;margin:12mm 10mm}'
-    + '*{box-sizing:border-box;font-family:Tahoma,Arial,sans-serif}'
-    + 'body{margin:0;color:#0f172a;font-size:11pt;line-height:1.35;-webkit-print-color-adjust:exact}'
-    + 'h1{font-size:14pt;color:#0f766e;margin:0}'
-    + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
-    + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:4pt 7pt;margin-bottom:4pt;page-break-inside:avoid}'
-    + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
-    + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35;white-space:pre-wrap}'
-    + '.rx-l{color:#475569;font-weight:bold}'
-    + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
-    + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
-    + '.lh-t{font-size:9.5pt;color:#334155;margin-top:1pt}'
-    + '.lh-c{font-size:9pt;color:#64748b;margin-top:1pt;direction:ltr;text-align:right}'
-    + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}'
-    + '</style></head><body>'
-    + headerHtml()
-    + '<h1>' + esc(title) + '</h1>'
-    + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
-    + body + '</body></html>';
+    + '<style>' + printCss('') + '</style></head><body>'
+    + docBody(title, body) + '</body></html>';
 }
-window.printCart = function (kind) { printList(kind, DB.cart[kind], cartTitle(kind, false)); };
 window.printList = function (kind, ids, title) {
   var body = itemsHtml(kind, ids);
   if (!body) return toast('القائمة فارغة', 'er');
@@ -1621,12 +1613,6 @@ function buildCanvas(kind, ids, title) {
   });
   return c;
 }
-window.shareCart = function (kind) {
-  shareList(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
-};
-window.copyCart = function (kind) { copyList(kind, DB.cart[kind], cartTitle(kind, false)); };
-window.pdfCart = function (kind) { pdfList(kind, DB.cart[kind], cartTitle(kind, false)); };
-
 /** يبني نفس ورقة الطباعة لكن يُخرجها ملف PDF ويفتح قائمة الإرسال مباشرةً. */
 window.pdfList = function (kind, ids, title) {
   var body = itemsHtml(kind, ids);
@@ -1694,6 +1680,88 @@ window.shareList = function (kind, ids, title, imgTitle) {
     document.body.appendChild(a); a.click(); a.remove();
     toast('نزّلت الصورة — أرفقها يدويًا في واتساب');
   }, 'image/png');
+};
+
+/* ── المعاينة قبل الإرسال ──
+   صفحة واحدة تجمع كل مخارج القائمة: تعرض ما سيُرسَل فعلًا — الورقة (نفس
+   تنسيق PDF والطباعة حرفيًا) أو الصورة (نفس لوحة الرسم المُرسَلة) — ثم
+   شريط إرسال ثابت أسفلها. لا شيء يُرسَل قبل أن يراه المستخدم. */
+var PV = null, PV_TAB = 'paper';
+
+/** يفتح المعاينة لقائمة معيّنة (سلة أو مجموعة). */
+window.openPreview = function (kind, ids, title, imgTitle) {
+  if (!ids || !ids.length) { PV = null; return toast('القائمة فارغة', 'er'); }
+  PV = { kind: kind, ids: ids.slice(), title: title,
+         imgTitle: imgTitle || (KIND_LBL[kind].icon + ' ' + title) };
+  PV_TAB = 'paper';
+  goPage('pv');
+};
+window.pvTab = function (t) { PV_TAB = t; render(); };
+
+/** تنسيق الورقة يُحقن مرّة واحدة، محصورًا داخل `.paper`. */
+var PV_CSS = false;
+function ensurePreviewCss() {
+  if (PV_CSS) return;
+  try {
+    var st = document.createElement('style');
+    st.id = 'pv-css';
+    st.textContent = printCss('.paper');
+    (document.head || document.body).appendChild(st);
+    PV_CSS = true;
+  } catch (e) { /* بيئة بلا DOM كامل — الورقة تظهر بتنسيق الواجهة */ }
+}
+
+/** صورة المعاينة = نفس اللوحة المُرسَلة، مصغَّرة داخل الصفحة. */
+function pvImgHtml() {
+  try {
+    var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle);
+    return '<div class="pvimg"><img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '"></div>';
+  } catch (e) {
+    return emptyBox('🖼️', 'تعذّر توليد الصورة', 'جرّب الورقة أو الإرسال مباشرة');
+  }
+}
+
+function renderPreview() {
+  if (!PV) { h('page', emptyBox('👁️', 'لا يوجد ما يُعرَض', 'اختر عناصر ثم اضغط «عرض وإرسال»')); return; }
+  ensurePreviewCss();
+  var n = PV.ids.length, L = KIND_LBL[PV.kind];
+  var html = '<div class="pvtabs">'
+    + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
+    + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button>'
+    + '</div>'
+    + '<div class="hint">' + L.icon + ' ' + esc(PV.title) + ' — '
+    + countWord(n, L.one, L.two, L.few, L.many) + '</div>';
+
+  if (PV_TAB === 'img') html += pvImgHtml();
+  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, PV.ids)) + '</div>';
+
+  html += '<div class="pvbar">'
+    + '<button class="btn wa sm" onclick="pvSend(\'pdf\')">📄 PDF</button>'
+    + '<button class="btn wa sm" onclick="pvSend(\'img\')">🖼️ صورة</button>'
+    + '<button class="btn white sm" onclick="pvSend(\'print\')">🖨️ طباعة</button>'
+    + '<button class="btn white sm" onclick="pvSend(\'copy\')">📋 نسخ</button>'
+    + '</div>';
+  h('page', html);
+}
+
+window.pvSend = function (how) {
+  if (!PV) return;
+  if (how === 'pdf') pdfList(PV.kind, PV.ids, PV.title);
+  else if (how === 'img') shareList(PV.kind, PV.ids, PV.title, PV.imgTitle);
+  else if (how === 'print') printList(PV.kind, PV.ids, PV.title);
+  else copyList(PV.kind, PV.ids, PV.title);
+};
+
+/** مداخل المعاينة: السلة، ومحرّر المجموعة، ومجموعة محفوظة من القائمة. */
+window.previewCart = function (kind) {
+  openPreview(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
+};
+window.groupEditPreview = function () {
+  openPreview(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name);
+};
+window.groupPreview = function (id) {
+  var g = findGroup(id); if (!g) return;
+  openPreview(g.kind, g.items, g.name, '📁 ' + g.name);
 };
 
 document.addEventListener('DOMContentLoaded', boot);

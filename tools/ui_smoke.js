@@ -38,9 +38,18 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.waitForTimeout(350);
   await p.screenshot({ path: 'n3-recipes.png' });
 
-  // حدّد الوصفة وارجع للرئيسية
+  // حدّد الوصفة ثم عاينها بتبويبيها قبل الرجوع
   await p.check('.card input[type=checkbox]');
   await p.waitForTimeout(250);
+  await p.click('text=عرض وإرسال');
+  await p.waitForTimeout(400);
+  await p.screenshot({ path: 'n3b-preview-paper.png', fullPage: true });
+  await p.click('.pvt:has-text("الصورة")');
+  await p.waitForTimeout(600);
+  await p.screenshot({ path: 'n3c-preview-image.png', fullPage: true });
+  await p.click('#hdr-back');
+  await p.waitForTimeout(300);
+
   await p.click('#hdr-back');
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n4-home-cart.png' });

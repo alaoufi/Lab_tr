@@ -38,12 +38,12 @@ DaliliApp/
 │   └── src/main/
 │       ├── AndroidManifest.xml          بلا صلاحيات — FileProvider للمشاركة
 │       ├── assets/
-│       │   ├── index.html      (195 س)  الهيكل + كل الـCSS
-│       │   ├── app.js          (1253 س) كل المنطق — انظر §٤
+│       │   ├── index.html      (218 س)  الهيكل + كل الـCSS
+│       │   ├── app.js          (1767 س) كل المنطق — انظر §٤
 │       │   └── library.js               ٢٣٢ تحليلًا + ٧٢ فحصًا + ٢٧٠ علاجًا
 │       ├── java/android/print/PdfPrint.java   توليد PDF بلا مربع طباعة
 │       ├── java/me/alaoufi/dalili/
-│       │   ├── MainActivity.java (166 س) WebView + الجسور + زر الرجوع
+│       │   ├── MainActivity.java (354 س) WebView + الجسور + زر الرجوع
 │       │   ├── DaliliDb.java             SQLite: مخطط + ترقيات + CRUD
 │       │   ├── DbBridge.java              واجهة NativeDb المعروضة لـJS
 │       │   └── BackupStore.java           النسخ الاحتياطي ومكان حفظه
@@ -53,7 +53,7 @@ DaliliApp/
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٤٨ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٥١ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -113,8 +113,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 في `app/build.gradle`. ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 10       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "1.9"    // ما يراه المستخدم
+versionCode 11       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "2.0"    // ما يراه المستخدم
 ```
 
 ---
@@ -137,7 +137,8 @@ versionName "1.9"    // ما يراه المستخدم
 | … | 📷 الأشعة والفحوصات | نفس النمط |
 | … | 🌿 الوصفات | نفس النمط |
 | 895–1067 | 📁 المجموعات | القائمة + المحرّر + المنتقي |
-| 1069–نهاية | الطباعة والمشاركة | `printDoc`، `buildCanvas`، الجسور |
+| 1069–… | الطباعة والمشاركة | `printCss`، `docBody`، `printDoc`، `buildCanvas`، الجسور |
+| …–نهاية | 👁️ المعاينة | `openPreview`، `renderPreview`، `pvSend` |
 
 ### قواعد الأسلوب
 
@@ -207,9 +208,11 @@ webView.evaluateJavascript("… window.onAndroidBack() …", handled -> {
 ### الطباعة
 
 ```
-printDoc(title, itemsHtml(kind, ids))          ← صفحة HTML واحدة يتشاركها الاثنان
-   ├─ printList → AndroidBridge.printHtml      ← مربع الطباعة (PrintManager)
-   └─ pdfList   → AndroidBridge.sharePdf       ← ملف PDF ثم قائمة الإرسال
+printCss(scope) + docBody(title, body)         ← مصدر واحد للتنسيق والمحتوى
+   ├─ printDoc(title, body)                    ← صفحة HTML كاملة
+   │    ├─ printList → AndroidBridge.printHtml ← مربع الطباعة (PrintManager)
+   │    └─ pdfList   → AndroidBridge.sharePdf  ← ملف PDF ثم قائمة الإرسال
+   └─ renderPreview() → <div class="paper">    ← المعاينة داخل التطبيق
 ```
 
 **إرسال PDF مباشرةً** (`sharePdf`) يستخدم نفس محرّك الطباعة لكن بدل تسليمه
@@ -220,8 +223,31 @@ printDoc(title, itemsHtml(kind, ids))          ← صفحة HTML واحدة يت
 يمرّر `createPrintDocumentAdapter` إلى `PrintManager`. **يجب** الاحتفاظ
 بمرجع للعارض (`printView`) وإلا جُمِع قبل انتهاء توليد الـPDF.
 
-ورقة الطباعة في `printDoc()`: مقاسات بالنقاط، `@page { size: A4 }`، وأسطر
+ورقة الطباعة في `printCss('')`: مقاسات بالنقاط، `@page { size: A4 }`، وأسطر
 متقاربة، و`page-break-inside: avoid` لكل عنصر.
+
+### المعاينة قبل الإرسال
+
+`printCss(scope)` هي السبب في أن المعاينة **هي** المستند لا نسخة منه: عند
+تمرير `'.paper'` تُسبَق كل قاعدة بالمُحدِّد فتُحصَر داخل بطاقة المعاينة ولا
+تسرّب إلى واجهة التطبيق، ويُحذف `@page` لأنه بلا معنى داخل الصفحة. الحقن
+مرّة واحدة عبر `ensurePreviewCss()` (يحرسه `PV_CSS`).
+
+```
+openPreview(kind, ids, title, imgTitle)   ← يملأ PV ثم goPage('pv')
+   renderPreview()
+      ├─ PV_TAB 'paper' → docBody(...)    ← نفس جسم المستند المُرسَل
+      └─ PV_TAB 'img'   → buildCanvas(...).toDataURL()
+   pvSend('pdf'|'img'|'print'|'copy')     ← pdfList / shareList / printList / copyList
+```
+
+مداخلها ثلاثة: `previewCart(kind)` من شريط السلة، و`groupEditPreview()` من
+محرّر المجموعة، و`groupPreview(id)` من قائمة المجموعات. أي قائمة فارغة
+تُصفّر `PV` حتى لا يُرسَل تحديد قديم بالخطأ.
+
+> **مزلق:** `goBack()` كان يصفّر `GRP` دائمًا. بعد إضافة المعاينة صار
+> الرجوع منها إلى المحرّر يمرّ بنفس الدالة، فكان يُسقط مسوّدة المجموعة
+> بصمت. الآن تُصفَّر فقط عند مغادرة صفحة `grp:` نفسها.
 
 ### المشاركة كصورة
 
@@ -342,14 +368,15 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٤٨ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٥١ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 
 يغطّي: CRUD للأقسام الثلاثة، البقاء بعد إعادة التشغيل، الترحيل من
 `localStorage` (ولا يتكرر ولا يطمس)، رمز القفل، النسخ الاحتياطي، الحقول
 المرسلة ومخرجات الطباعة، المكتبة وبحثها وسلامة بياناتها، التنقّل وزر
-الرجوع، والمجموعات (تعديل/حفظ/رجوع بلا حفظ).
+الرجوع، والمجموعات (تعديل/حفظ/رجوع بلا حفظ)، والمعاينة (التبويبان،
+تطابق المعروض مع المُرسَل، ورفض القائمة الفارغة).
 
 **ما لا يغطّيه:** كود جافا. لا `DaliliDb` ولا `PrintManager` ولا
 `evaluateJavascript` يُختبر آليًا هنا — يُبنى ويُترجم فقط. أي تعديل في جافا
@@ -382,6 +409,8 @@ run('وصف بالعربية', () => {
 | اشتقاق `PrintDocumentAdapter.LayoutResultCallback` من حزمة التطبيق | التصريف يفشل: «is not public … outside package» | المساعد `PdfPrint` موضوع في حزمة `android.print` — لا تنقله |
 | `<textarea>` بارتفاع ثابت | لا يظهر إلا سطران مهما طال النص، وسحب الحجم لا يعمل باللمس | `taField()` + `grow()` — يتمدّد مع المحتوى |
 | `esc()` وحدها لا تحفظ الأسطر الجديدة في HTML | نص متعدد الأسطر يُطبع كتلة واحدة | `white-space: pre-wrap` في الطباعة والبطاقات، و`wrapBlock()` في الصورة |
+| `goBack()` كانت تصفّر `GRP` دائمًا | الرجوع من المعاينة يُسقط مسوّدة المجموعة بصمت | تُصفَّر فقط عند مغادرة صفحة `grp:` (§٦) |
+| تنسيق الطباعة بلا `scope` داخل الصفحة | `body{margin:0}` و`@page` تسرّب لواجهة التطبيق | `printCss('.paper')` يحصر كل قاعدة داخل بطاقة المعاينة |
 
 ---
 

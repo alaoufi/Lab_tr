@@ -70,7 +70,18 @@ function makeCtx(bridge, legacyRaw) {
       getElementById: el,
       querySelectorAll: () => [],
       addEventListener: () => {},
-      createElement: () => ({ style: {}, click: () => {}, remove: () => {}, getContext: () => null }),
+      // لوحة رسم مصغّرة تكفي buildCanvas: القياس ثم الرسم ثم إخراج الصورة
+      createElement: tag => tag === 'canvas'
+        ? { width: 0, height: 0, style: {},
+            getContext: () => ({
+              font: '', fillStyle: '', strokeStyle: '', lineWidth: 1,
+              direction: '', textAlign: '', textBaseline: '',
+              measureText: t => ({ width: String(t).length * 8 }),
+              fillText() {}, fillRect() {}, strokeRect() {},
+              createLinearGradient: () => ({ addColorStop() {} })
+            }),
+            toDataURL: () => 'data:image/png;base64,STUB' }
+        : { style: {}, click: () => {}, remove: () => {}, getContext: () => null },
       body: { appendChild: () => {} }
     },
     setTimeout: () => 0, clearTimeout: () => {}, scrollTo: () => {},
@@ -521,7 +532,7 @@ run('الطباعة تمر بجسر أندرويد لا بنافذة منبثق�
   let opened = false;
   c.window.open = () => { opened = true; return null; };
 
-  c.printCart('recipes');
+  c.previewCart('recipes'); c.pvSend('print');
   eq(jobs.length, 1, 'went through the bridge:');
   eq(opened, false, 'no popup attempted:');
   eq(jobs[0].name, 'قائمة وصفات', 'job name:');
@@ -534,7 +545,7 @@ run('الطباعة ترفض القائمة الفارغة', () => {
   const c = load(makeBridge()); c.Store.load();
   const jobs = [];
   c.window.AndroidBridge = { printHtml: h => jobs.push(h) };
-  c.printCart('recipes');
+  c.previewCart('recipes'); c.pvSend('print');
   eq(jobs.length, 0, 'nothing printed:');
   eq(c._els('toast').textContent, 'القائمة فارغة');
 });
@@ -567,7 +578,7 @@ run('المجموعات: إنشاء من التحديد ثم طباعة وإرس
 
   const jobs = [];
   c.window.AndroidBridge = { printHtml: (html, name) => jobs.push(name) };
-  c.groupPrint(b._t.groups[0].id);
+  c.groupPreview(b._t.groups[0].id); c.pvSend('print');
   eq(jobs, ['فحوصات ما قبل الجراحة'], 'printed under its own name:');
 });
 
@@ -608,8 +619,12 @@ run('المجموعات: الخروج بلا حفظ يعيدها كما كانت
 
   const jobs = [];
   c.window.AndroidBridge = { printHtml: (html, name) => jobs.push({ name, html }) };
-  c.groupEditPrint();
+  c.groupEditPreview(); c.pvSend('print');
   eq(jobs[0].html.split('class="rx-item"').length - 1, 3, 'printed the edited list:');
+
+  c.goBack();                          // من المعاينة إلى المحرّر — بلا سؤال
+  eq(c.curPage().indexOf('grp:labs:') === 0, true, 'preview returns to the editor:');
+  eq(c.GRP.items.length, 3, 'draft survived the preview:');
 
   c.goBack();                          // يسأل عن التعديلات
   c._els('cb-yes').onclick();          // «تجاهل»
@@ -664,10 +679,11 @@ run('القوائم القصيرة تُعرض مفتوحة فتظهر الأسم
 function androidStub() {
   const files = {};
   const stub = {
-    _files: files, _clip: null, _jobs: [], _pdfs: [], _shared: null, _picked: false,
+    _files: files, _clip: null, _jobs: [], _pdfs: [], _imgs: [], _shared: null, _picked: false,
     _dir: 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
     printHtml: (html, name) => stub._jobs.push({ html, name }),
     sharePdf: (html, name) => stub._pdfs.push({ html, name }),
+    shareImageBase64: (b64, name) => stub._imgs.push({ b64, name }),
     copyText: t => { stub._clip = t; },
     writeBackup: (json, stamp) => {
       const name = 'dalili-' + stamp + '.json';
@@ -750,7 +766,7 @@ run('ترويسة الطباعة اختيارية: لا تظهر وهي فارغ
   const A = androidStub(); c.window.AndroidBridge = A;
 
   eq(c.DB.header, { name: '', title: '', contact: '' }, 'starts empty:');
-  c.printCart('labs');
+  c.previewCart('labs'); c.pvSend('print');
   eq(A._jobs[0].html.indexOf('class="lh"') < 0, true, 'no letterhead block:');
 
   c._els('hd-name').value = 'د. محمد';
@@ -759,13 +775,13 @@ run('ترويسة الطباعة اختيارية: لا تظهر وهي فارغ
   c.saveHeader();
   eq(b._t.settings.hdr_name, 'د. محمد', 'persisted:');
 
-  c.printCart('labs');
+  c.previewCart('labs'); c.pvSend('print');
   const html = A._jobs[1].html;
   eq(html.indexOf('د. محمد') >= 0, true, 'name printed:');
   eq(html.indexOf('استشاري باطنية') >= 0, true, 'title printed:');
 
   c.clearHeader();
-  c.printCart('labs');
+  c.previewCart('labs'); c.pvSend('print');
   eq(A._jobs[2].html.indexOf('class="lh"') < 0, true, 'cleared again:');
 });
 
@@ -777,14 +793,14 @@ run('نسخ القائمة كنص', () => {
   c.toggleCart('labs', b._t.labs[0].id);
   const A = androidStub(); c.window.AndroidBridge = A;
 
-  c.copyCart('labs');
+  c.previewCart('labs'); c.pvSend('copy');
   eq(A._clip.indexOf('FBS — سكر صائم') >= 0, true, 'item in text:');
   eq(A._clip.indexOf('• متطلبات التحليل: صيام ٨ ساعات') >= 0, true, 'field in text:');
   eq(A._clip.indexOf('<') < 0, true, 'plain text, no markup:');
 
   c.clearCart('labs');
   A._clip = null;
-  c.copyCart('labs');
+  c.previewCart('labs'); c.pvSend('copy');
   eq(A._clip, null, 'empty list is refused:');
 });
 
@@ -928,11 +944,11 @@ run('الأسطر الجديدة تصل للطباعة والنص المنسوخ
   c.toggleCart('recipes', b._t.recipes[0].id);
   const A = androidStub(); c.window.AndroidBridge = A;
 
-  c.printCart('recipes');
+  c.previewCart('recipes'); c.pvSend('print');
   eq(A._jobs[0].html.indexOf('white-space:pre-wrap') >= 0, true, 'print keeps line breaks:');
   eq(A._jobs[0].html.indexOf('2. أضف العسل') >= 0, true, 'all steps printed:');
 
-  c.copyCart('recipes');
+  c.previewCart('recipes'); c.pvSend('copy');
   const lines = A._clip.split('\n');
   eq(lines.some(l => l.indexOf('• طريقة الإعداد: 1. اغلِ الماء') >= 0), true, 'first step on the label line:');
   eq(lines.some(l => l === '     2. أضف العسل'), true, 'later steps indented on their own lines:');
@@ -944,14 +960,14 @@ run('إرسال PDF مباشرة بلا مربع الطباعة', () => {
   c.toggleCart('labs', b._t.labs[0].id);
   const A = androidStub(); c.window.AndroidBridge = A;
 
-  c.pdfCart('labs');
+  c.previewCart('labs'); c.pvSend('pdf');
   eq(A._pdfs.length, 1, 'went to the pdf bridge:');
   eq(A._jobs.length, 0, 'did not open the print dialog:');
   eq(A._pdfs[0].name, 'قائمة تحاليل', 'file name:');
   eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'content included:');
 
   c.clearCart('labs');
-  c.pdfCart('labs');
+  c.previewCart('labs'); c.pvSend('pdf');
   eq(A._pdfs.length, 1, 'empty list refused:');
 });
 
@@ -972,6 +988,71 @@ run('مجموعاتي: صفحة جامعة لكل الأقسام مع PDF', () =
   eq(c._els('hdr-title').innerHTML, 'مجموعاتي المحفوظة', 'page title:');
 
   const A = androidStub(); c.window.AndroidBridge = A;
-  c.groupPdf(b._t.groups[0].id);
+  c.groupPreview(b._t.groups[0].id); c.pvSend('pdf');
   eq(A._pdfs[0].name, 'دورية', 'group pdf uses its own name:');
+});
+
+run('المعاينة: تعرض الورقة نفسها التي ستُرسَل', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS', 'TSH']);
+  ids.forEach(i => c.toggleCart('labs', i));
+
+  c.previewCart('labs');
+  eq(c.curPage(), 'pv', 'opened the preview page:');
+  eq(c._els('hdr-title').innerHTML, 'معاينة قبل الإرسال', 'page title:');
+  eq(c.PV_CSS, true, 'paper stylesheet injected once:');
+
+  const html = c._els('page').innerHTML;
+  eq(html.split('class="rx-item"').length - 1, 3, 'every selected item shown:');
+  eq(html.indexOf('class="paper"') >= 0, true, 'rendered as a paper sheet:');
+  eq(html.indexOf('CBC') >= 0, true, 'item names visible:');
+  eq(html.indexOf('pvbar') >= 0, true, 'send bar present:');
+
+  // المعروض = المُرسَل حرفيًا: نفس بناء الورقة يذهب للطباعة وPDF
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.pvSend('pdf');
+  const sent = A._pdfs[0].html;
+  eq(sent.split('class="rx-item"').length - 1, 3, 'sent list matches the preview:');
+  eq(sent.indexOf('@page{size:A4') >= 0, true, 'print stylesheet only in the sent document:');
+  eq(html.indexOf('@page') < 0, true, 'preview does not leak @page into the app:');
+});
+
+run('المعاينة: تبويب الصورة ثم الإرسال بأي صيغة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  ids.forEach(i => c.toggleCart('labs', i));
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.previewCart('labs');
+  c.pvTab('img');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('class="pvimg"') >= 0, true, 'image tab rendered:');
+  eq(html.indexOf('data:image/png;base64,') >= 0, true, 'the canvas itself is shown:');
+  eq(html.indexOf('class="paper"') < 0, true, 'paper hidden on the image tab:');
+
+  c.pvSend('img');
+  eq(A._imgs.length, 1, 'image sent:');
+  c.pvSend('print');
+  eq(A._jobs.length, 1, 'print job sent:');
+  c.pvSend('copy');
+  eq(A._clip.indexOf('CBC') >= 0, true, 'text copied:');
+  c.pvSend('pdf');
+  eq(A._pdfs.length, 1, 'pdf sent:');
+});
+
+run('المعاينة: ترفض القائمة الفارغة ولا تحتفظ بقائمة قديمة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC']);
+  c.toggleCart('labs', ids[0]);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.previewCart('labs');
+  eq(c.PV.ids.length, 1, 'preview loaded:');
+
+  c.clearCart('labs');
+  c.previewCart('labs');
+  eq(c._els('toast').textContent, 'القائمة فارغة', 'refused:');
+  eq(c.PV, null, 'stale list dropped:');
+  c.pvSend('pdf');
+  eq(A._pdfs.length, 0, 'nothing sent after a refusal:');
 });
