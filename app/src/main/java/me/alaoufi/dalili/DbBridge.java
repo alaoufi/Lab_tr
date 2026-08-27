@@ -65,6 +65,54 @@ public class DbBridge {
         }
     }
 
+    /** حفظ تصنيف (إنشاء أو إعادة تسمية) — {id, kind, name}. */
+    @JavascriptInterface
+    public boolean saveCat(String json) {
+        try {
+            db.saveCat(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveCat failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean deleteCat(String id) {
+        try {
+            db.deleteCat(id);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "deleteCat failed", e);
+            return false;
+        }
+    }
+
+    /** نقل عناصر تصنيف إلى آخر: إعادة تسمية، أو إفراغ عند الحذف. */
+    @JavascriptInterface
+    public boolean moveCatItems(String kind, String from, String to) {
+        if (!validKind(kind)) return false;
+        try {
+            db.moveCatItems(kind, from, to);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "moveCatItems failed", e);
+            return false;
+        }
+    }
+
+    /** ترتيب التصنيفات كما رتّبها المستخدم — مصفوفة معرّفات. */
+    @JavascriptInterface
+    public boolean setCatOrder(String jsonIds) {
+        try {
+            db.setCatOrder(new JSONArray(jsonIds));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "setCatOrder failed", e);
+            return false;
+        }
+    }
+
     /** حفظ مجموعة مسمّاة (اسمها ومحتواها) — {id, kind, name, items[]}. */
     @JavascriptInterface
     public boolean saveGroup(String json) {

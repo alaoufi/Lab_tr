@@ -58,6 +58,16 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n5-settings.png', fullPage: true });
 
+  // التصنيفات: صفحة الإدارة ثم الشرائح داخل نموذج العنصر
+  await p.evaluate(() => goPage('cat:labs'));
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n6-categories.png', fullPage: true });
+  await p.evaluate(() => { goPage('labs'); labForm(); });
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n7-category-picker.png', fullPage: true });
+  await p.evaluate(() => closeModal());
+  await p.waitForTimeout(200);
+
   console.log(errs.length ? errs.join('\n') : 'لا أخطاء في الكونسول ✅');
   await b.close();
 })();

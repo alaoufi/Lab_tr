@@ -23,7 +23,7 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 5;
+    private static final int DB_VERSION = 6;
 
     /** الأقسام — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
     public static final String[] KINDS = { "meds", "labs", "imaging", "recipes" };
@@ -41,7 +41,7 @@ public class DaliliDb extends SQLiteOpenHelper {
     };
     /** الوصفات: اسمها ونوعها (علاجية/وقائية/غذائية) وتفاصيل تحضيرها واستخدامها. */
     private static final String[] RECIPE_TEXT_COLS = {
-            "name", "type", "purpose", "ingredients", "preparation",
+            "category", "name", "type", "purpose", "ingredients", "preparation",
             "usage", "dose", "duration", "effects", "precautions"
     };
 
@@ -96,6 +96,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         createImaging(db);
         createRecipes(db);
         createGroups(db);
+        createCats(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -125,6 +126,7 @@ public class DaliliDb extends SQLiteOpenHelper {
     private void createRecipes(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS recipes ("
                 + "id TEXT PRIMARY KEY,"
+                + "category TEXT,"          // تصنيف يختاره المستخدم بنفسه
                 + "name TEXT NOT NULL,"
                 + "type TEXT,"
                 + "purpose TEXT,"
@@ -138,6 +140,52 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "is_favorite INTEGER NOT NULL DEFAULT 0,"
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_recipes_type ON recipes(type)");
+    }
+
+    /**
+     * التصنيفات: كيان مستقل لكل قسم («العيون» و«الأذن» في العلاجات، «كيمياء
+     * الدم» و«المناعة» في التحاليل…). كانت مجرّد نصّ داخل العنصر، فلم يكن
+     * ممكنًا إنشاء تصنيف قبل عناصره ولا إعادة تسميته دفعةً واحدة. الآن هي
+     * صفوف حقيقية، وعمود {@code category} في جداول الأقسام يشير لاسمها.
+     *
+     * <p>الربط بالاسم لا بالمعرّف عمدًا: يبقى العنصر مقروءًا في النسخة
+     * الاحتياطية وفي التصدير بلا الحاجة لجدول التصنيفات، وإعادة التسمية
+     * تُنفَّذ بتحديث واحد عبر {@link #moveCatItems}.
+     */
+    private void createCats(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS cats ("
+                + "id TEXT PRIMARY KEY,"
+                + "kind TEXT NOT NULL,"
+                + "name TEXT NOT NULL,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_cats_kind ON cats(kind)");
+    }
+
+    /** أول ترقية: تُبنى التصنيفات ممّا هو مكتوب فعلًا في العناصر فلا يضيع شيء. */
+    private void seedCatsFromItems(SQLiteDatabase db) {
+        int order = 1;
+        for (String kind : KINDS) {
+            Cursor c = db.rawQuery("SELECT DISTINCT category FROM " + kind
+                    + " WHERE category IS NOT NULL AND category<>'' ORDER BY category", null);
+            try {
+                while (c.moveToNext()) {
+                    ContentValues v = new ContentValues();
+                    v.put("id", "cat_" + kind + "_" + order);
+                    v.put("kind", kind);
+                    v.put("name", c.getString(0));
+                    v.put("sort_order", order++);
+                    db.insertWithOnConflict("cats", null, v, SQLiteDatabase.CONFLICT_IGNORE);
+                }
+            } finally { c.close(); }
+        }
+    }
+
+    private static boolean hasColumn(SQLiteDatabase db, String table, String col) {
+        Cursor c = db.rawQuery("PRAGMA table_info(" + table + ")", null);
+        try {
+            while (c.moveToNext()) if (col.equals(c.getString(1))) return true;
+        } finally { c.close(); }
+        return false;
     }
 
     /**
@@ -180,6 +228,16 @@ public class DaliliDb extends SQLiteOpenHelper {
         if (oldVersion < 5) {
             createImaging(db);   // القسم الرابع: الأشعة والفحوصات
         }
+        if (oldVersion < 6) {
+            // التصنيفات كيانًا مستقلًّا + تصنيف للوصفات.
+            // الفحص قبل ALTER لأن createRecipes صار يُنشئ العمود، فقاعدة
+            // مرقّاة من ٢ تملكه أصلًا بينما القادمة من ٣–٥ لا تملكه.
+            if (!hasColumn(db, "recipes", "category")) {
+                db.execSQL("ALTER TABLE recipes ADD COLUMN category TEXT");
+            }
+            createCats(db);
+            seedCatsFromItems(db);
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -193,6 +251,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             cart.put(kind, readCart(db, kind));
         }
         out.put("cart", cart);
+        out.put("cats", readCats(db));
         out.put("groups", readGroups(db));
         out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
@@ -223,6 +282,69 @@ public class DaliliDb extends SQLiteOpenHelper {
             while (c.moveToNext()) arr.put(c.getString(0));
         } finally { c.close(); }
         return arr;
+    }
+
+    private JSONArray readCats(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("cats", null, null, null, null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("kind", str(c, "kind"));
+                o.put("name", str(c, "name"));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    /** إضافة تصنيف أو إعادة تسميته. {@code order} سالبًا يعني «أبقِ ترتيبه». */
+    public void saveCat(JSONObject o) {
+        writeCat(getWritableDatabase(), o, -1);
+    }
+
+    private void writeCat(SQLiteDatabase db, JSONObject o, int order) {
+        String id = o.optString("id");
+        if (id.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put("kind", o.optString("kind", "labs"));
+        v.put("name", o.optString("name", ""));
+        if (order >= 0) v.put("sort_order", order);
+        if (db.update("cats", v, "id=?", new String[]{id}) == 0) {
+            v.put("id", id);
+            if (order < 0) v.put("sort_order", nextSortOrder(db, "cats"));
+            db.insert("cats", null, v);
+        }
+    }
+
+    public void deleteCat(String id) {
+        getWritableDatabase().delete("cats", "id=?", new String[]{id});
+    }
+
+    /**
+     * نقل كل عناصر تصنيف إلى تصنيف آخر — تحديث واحد يخدم إعادة التسمية
+     * (القديم ← الجديد) والحذف (القديم ← فارغ = «غير مصنّف»).
+     */
+    public void moveCatItems(String kind, String from, String to) {
+        if (!isKind(kind)) return;
+        ContentValues v = new ContentValues();
+        v.put("category", to == null ? "" : to);
+        getWritableDatabase().update(kind, v, "category=?", new String[]{from});
+    }
+
+    /** ترتيب التصنيفات كما رتّبها المستخدم — قائمة معرّفات بالترتيب. */
+    public void setCatOrder(JSONArray ids) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < ids.length(); i++) {
+                ContentValues v = new ContentValues();
+                v.put("sort_order", i + 1);
+                db.update("cats", v, "id=?", new String[]{ids.optString(i)});
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
     }
 
     private JSONArray readGroups(SQLiteDatabase db) throws Exception {
@@ -410,6 +532,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         try {
             for (String kind : KINDS) db.delete(kind, null, null);
             db.delete("cart", null, null);
+            db.delete("cats", null, null);
             db.delete("groups", null, null);
             db.delete("group_items", null, null);
 
@@ -428,6 +551,12 @@ public class DaliliDb extends SQLiteOpenHelper {
             JSONObject cart = data.optJSONObject("cart");
             if (cart != null) {
                 for (String kind : KINDS) insertCartRows(db, kind, cart.optJSONArray(kind));
+            }
+
+            JSONArray cats = data.optJSONArray("cats");
+            for (int i = 0; cats != null && i < cats.length(); i++) {
+                JSONObject o = cats.optJSONObject(i);
+                if (o != null) writeCat(db, o, i + 1);
             }
 
             JSONArray groups = data.optJSONArray("groups");

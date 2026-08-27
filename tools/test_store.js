@@ -10,7 +10,7 @@ const vm = require('vm');
 
 // جسر وهمي يحاكي دلالات DaliliDb (جداول منفصلة + سلة مرتّبة)
 function makeBridge() {
-  const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [],
+  const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [], cats: [],
               cart: { meds: [], labs: [], imaging: [], recipes: [] }, settings: {} };
   const upsert = (table, o) => {
     const i = t[table].findIndex(x => x.id === o.id);
@@ -20,7 +20,7 @@ function makeBridge() {
   return {
     _t: t,
     loadAll: () => JSON.stringify({ meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
-      groups: t.groups, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash }),
+      groups: t.groups, cats: t.cats, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash }),
     upsertMany: (kind, j) => { JSON.parse(j).forEach(o => upsert(kind, o)); return true; },
     upsertItem: (kind, j) => upsert(kind, JSON.parse(j)),
     deleteItem: (kind, id) => {
@@ -38,11 +38,28 @@ function makeBridge() {
       return true;
     },
     deleteGroup: id => { t.groups = t.groups.filter(g => g.id !== id); return true; },
+    // التصنيفات — بنفس دلالات DaliliDb: الربط بالاسم، والنقل تحديث واحد
+    saveCat: j => {
+      const c = JSON.parse(j);
+      const i = t.cats.findIndex(x => x.id === c.id);
+      if (i >= 0) t.cats[i] = Object.assign({}, t.cats[i], c); else t.cats.push(Object.assign({}, c));
+      return true;
+    },
+    deleteCat: id => { t.cats = t.cats.filter(c => c.id !== id); return true; },
+    moveCatItems: (kind, from, to) => {
+      t[kind].forEach(o => { if ((o.category || '') === from) o.category = to || ''; });
+      return true;
+    },
+    setCatOrder: j => {
+      const ids = JSON.parse(j);
+      t.cats.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      return true;
+    },
     setSetting: (k, v) => { if (v === null || v === undefined) delete t.settings[k]; else t.settings[k] = v; return true; },
     replaceAll: j => {
       const d = JSON.parse(j);
       t.meds = d.meds || []; t.labs = d.labs || []; t.imaging = d.imaging || [];
-      t.recipes = d.recipes || []; t.groups = d.groups || [];
+      t.recipes = d.recipes || []; t.groups = d.groups || []; t.cats = d.cats || [];
       t.cart = d.cart || { meds: [], labs: [], imaging: [], recipes: [] };
       if (d.pin_hash) t.settings.pin_hash = d.pin_hash;
       return true;
@@ -666,13 +683,14 @@ run('القوائم القصيرة تُعرض مفتوحة فتظهر الأسم
   ['شراب الزنجبيل', 'منقوع الكمّون'].forEach((n, i) => {
     c._els('rf-name').value = n;
     c._els('rf-type').value = i ? 'علاجية' : 'وقائية';
+    c._els('rf-category').value = i ? 'تغذية علاجية' : 'أعشاب ومشروبات';
     c.recipeSave('');
   });
   const html = c._els('page').innerHTML;
   eq(html.indexOf('شراب الزنجبيل') >= 0, true, 'first name visible:');
   eq(html.indexOf('منقوع الكمّون') >= 0, true, 'second name visible:');
   eq(html.indexOf('<details class="acc" open>') >= 0, true, 'groups start open:');
-  eq(html.indexOf('وقائية (1)') >= 0, true, 'count in the group title:');
+  eq(html.indexOf('أعشاب ومشروبات (1)') >= 0, true, 'count in the group title:');
 });
 
 // جسر أندرويد وهمي للنسخ الاحتياطي والحافظة والطباعة
@@ -1055,4 +1073,122 @@ run('المعاينة: ترفض القائمة الفارغة ولا تحتفظ 
   eq(c.PV, null, 'stale list dropped:');
   c.pvSend('pdf');
   eq(A._pdfs.length, 0, 'nothing sent after a refusal:');
+});
+
+run('التصنيفات: إنشاء وإسناد ثم ظهورها مجموعةً في القسم', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+
+  c.goPage('cat:meds');
+  eq(c._els('hdr-title').innerHTML, 'تصنيفات العلاجات', 'page title:');
+  c.catNew('meds'); c._els('cn').value = 'العيون'; c.catCreate('meds');
+  c.catNew('meds'); c._els('cn').value = 'الأذن'; c.catCreate('meds');
+  eq(b._t.cats.length, 2, 'persisted to the db:');
+  eq(b._t.cats.map(x => x.name), ['العيون', 'الأذن'], 'in creation order:');
+  eq(c._els('page').innerHTML.indexOf('فارغ') >= 0, true, 'empty category is listed:');
+
+  // تصنيف فارغ لا يظهر في القسم — يظهر حين يسكنه عنصر
+  c.goPage('meds');
+  eq(c._els('page').innerHTML.indexOf('العيون') < 0, true, 'empty category not in the section:');
+
+  c._els('mf-trade_name').value = 'قطرة توبرين';
+  c._els('mf-category').value = 'العيون';
+  c.medSave('');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('💊 العيون (1)') >= 0, true, 'grouped under its category:');
+  eq(b._t.meds[0].category, 'العيون', 'stored on the item:');
+  eq(b._t.cats.length, 2, 'no duplicate category created:');
+});
+
+run('التصنيفات: تصنيف جديد من داخل نموذج العنصر', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  c._els('lf-name').value = 'صورة دم كاملة';
+  c._els('lf-category').value = 'كيمياء الدم';   // لم يُسجَّل من قبل
+  c.labSave('');
+  eq(b._t.cats.map(x => x.name), ['كيمياء الدم'], 'category registered on save:');
+  eq(b._t.cats[0].kind, 'labs', 'under the right section:');
+
+  c.goPage('cat:labs');
+  eq(c._els('page').innerHTML.indexOf('تحليل واحد') >= 0, true, 'counted in the manager:');
+});
+
+run('التصنيفات: إعادة التسمية تنقل كل العناصر', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  ['CBC', 'ESR'].forEach(n => {
+    c._els('lf-name').value = n; c._els('lf-category').value = 'المناعة'; c.labSave('');
+  });
+  const id = b._t.cats[0].id;
+  c.goPage('cat:labs');
+  c.catRename('labs', id);
+  c._els('cn').value = 'المناعة والأمصال';
+  c.catRenameSave('labs', id);
+
+  eq(b._t.cats[0].name, 'المناعة والأمصال', 'category renamed:');
+  eq(b._t.labs.map(l => l.category), ['المناعة والأمصال', 'المناعة والأمصال'], 'items moved with it:');
+  c.goPage('labs');
+  eq(c._els('page').innerHTML.indexOf('🧪 المناعة والأمصال (2)') >= 0, true, 'section shows the new name:');
+});
+
+run('التصنيفات: الحذف يبقي العناصر ويعيدها غير مصنّفة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('imaging');
+  c._els('if-name').value = 'رنين للركبة';
+  c._els('if-category').value = 'رنين مغناطيسي';
+  c.imgSave('');
+  const id = b._t.cats[0].id;
+
+  c.goPage('cat:imaging');
+  c.catDel('imaging', id); c._els('cb-yes').onclick();
+  eq(b._t.cats.length, 0, 'category gone:');
+  eq(b._t.imaging.length, 1, 'the exam itself survives:');
+  eq(b._t.imaging[0].category, '', 'and became uncategorised:');
+
+  c.goPage('imaging');
+  eq(c._els('page').innerHTML.indexOf('غير مصنّف') >= 0, true, 'shown under «غير مصنّف»:');
+});
+
+run('التصنيفات: الترتيب يتحكّم بترتيب المجموعات في القسم', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('meds');
+  [['العيون', 'قطرة'], ['الأذن', 'نقط أذن']].forEach(([cat, name]) => {
+    c._els('mf-trade_name').value = name; c._els('mf-category').value = cat; c.medSave('');
+  });
+  const before = c._els('page').innerHTML;
+  eq(before.indexOf('العيون') < before.indexOf('الأذن'), true, 'creation order first:');
+
+  c.goPage('cat:meds');
+  c.catMove('meds', b._t.cats[1].id, -1);       // «الأذن» تصعد
+  eq(b._t.cats.map(x => x.name), ['الأذن', 'العيون'], 'order persisted:');
+
+  c.goPage('meds');
+  const after = c._els('page').innerHTML;
+  eq(after.indexOf('الأذن') < after.indexOf('العيون'), true, 'section follows the new order:');
+});
+
+run('التصنيفات: الزرع مرّة واحدة، والقاعدة العامرة لا تُزرع فوقها', () => {
+  const b = makeBridge(); let c = load(b); c.Store.load();
+  c.seedCats();
+  const n = b._t.cats.length;
+  eq(n > 0, true, 'seeded on a fresh db:');
+  eq(b._t.settings.cats_seeded, '1', 'flag stored:');
+  eq(b._t.cats.some(x => x.kind === 'imaging' && x.name === 'رنين مغناطيسي'), true, 'imaging seeds:');
+
+  // حذف تصنيف مزروع ثم إعادة التشغيل: لا يعود
+  c.catDel('meds', b._t.cats[0].id); c._els('cb-yes').onclick();
+  c = load(b); c.Store.load(); c.seedCats();
+  eq(b._t.cats.length, n - 1, 'deleted seed stays deleted:');
+});
+
+run('التصنيفات تدخل النسخة الاحتياطية وتعود منها', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('meds');
+  c._els('mf-trade_name').value = 'قطرة'; c._els('mf-category').value = 'العيون'; c.medSave('');
+  const backup = JSON.parse(JSON.stringify(c.DB));
+  eq(backup.cats.length, 1, 'in the backup blob:');
+
+  const b2 = makeBridge(); const c2 = load(b2); c2.Store.load();
+  c2.applyData(backup); c2.Store.replaceAll();
+  eq(b2._t.cats.map(x => x.name), ['العيون'], 'restored into the db:');
+  eq(c2.catNames('meds'), ['العيون'], 'and visible to the ui:');
 });

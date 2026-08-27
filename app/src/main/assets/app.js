@@ -9,7 +9,8 @@
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
 var KINDS = ['meds', 'labs', 'imaging', 'recipes'];
 var DB = { pin_hash: null, meds: [], labs: [], imaging: [], recipes: [],
-           cart: { meds: [], labs: [], imaging: [], recipes: [] }, groups: [], out: null };
+           cart: { meds: [], labs: [], imaging: [], recipes: [] },
+           cats: [], groups: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -39,6 +40,7 @@ var OUT_IMAGING = [
   ['prohibitions', 'موانع الإجراء']
 ];
 var OUT_RECIPES = [
+  ['category', 'التصنيف'],
   ['type', 'نوع الوصفة'],
   ['purpose', 'الهدف'],
   ['ingredients', 'المواد المستخدمة'],
@@ -86,6 +88,8 @@ function applyData(data) {
     // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
     DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k]);
   });
+  DB.cats = Array.isArray(data.cats) ? data.cats : [];
+  DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
   DB.groups = Array.isArray(data.groups) ? data.groups : [];
   // ترويسة الطباعة اختيارية بالكامل — تبقى فارغة ما لم يملأها المستخدم،
   // وأي سطر فارغ لا يظهر في الورقة أصلًا.
@@ -104,7 +108,7 @@ function blobSave() {
 }
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  var o = { cart: DB.cart, groups: DB.groups, pin_hash: DB.pin_hash,
+  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
             out: DB.out, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
   return o;
@@ -157,6 +161,27 @@ var Store = {
   setBackupAt: function (t) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('backup_at', String(t)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  saveCat: function (c) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.saveCat(JSON.stringify(c)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  dropCat: function (id) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.deleteCat(id) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  /** نقل عناصر تصنيف إلى آخر (إعادة تسمية) أو إلى «غير مصنّف» (حذف). */
+  moveCatItems: function (kind, from, to) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.moveCatItems(kind, from, to) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setSeeded: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('cats_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setCatOrder: function (ids) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setCatOrder(JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
   },
   saveGroup: function (g) {
     if (!NDB) { blobSave(); return true; }
@@ -344,6 +369,9 @@ var PAGES = {
 /** عنوان صفحات المجموعات يُحسَب لأنه يتضمّن اسم القسم أو اسم المجموعة. */
 function pageMeta(p) {
   if (PAGES[p]) return PAGES[p];
+  if (p.indexOf('cat:') === 0) {
+    return { icon: '🏷️', title: 'تصنيفات ' + KIND_LBL[p.slice(4)].title };
+  }
   if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
     if (a[2]) {
@@ -357,6 +385,7 @@ function pageMeta(p) {
 
 async function boot() {
   Store.load();
+  seedCats();
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
@@ -620,6 +649,8 @@ window.libAdd = function () {
   if (!items.length) return toast('لم تحدد شيئًا بعد', 'er');
   setColl(kind, coll(kind).concat(items));
   Store.addMany(kind, items);
+  // تصنيفات المكتبة تُسجَّل تلقائيًا فتُدار كغيرها بدل أن تبقى أسماء يتيمة
+  items.forEach(function (o) { catEnsure(kind, o.category); });
   LIB_SEL = {};
   libSyncMine();          // المضاف حديثًا يصير باهتًا فلا يُضاف مرتين
   libCount(); libRender();
@@ -792,6 +823,7 @@ function render() {
   else if (p === 'settings') renderSettings();
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
+  else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
   else if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
     if (a[2]) renderGroupPage(a[1], a[2]); else renderGroupsPage(a[1]);
@@ -837,6 +869,207 @@ function renderHome() {
   h('page', html);
 }
 
+/* ════════════════════════ 🏷️ التصنيفات ════════════════════════
+   التصنيف كيان مستقل لا نصّ داخل العنصر: يُنشأ ويُسمّى ويُرتَّب ويُحذف قبل
+   وجود أي عنصر فيه، والعناصر تسكنه. العنصر يشير للتصنيف بالاسم (لا
+   بالمعرّف) فتبقى النسخة الاحتياطية مقروءة بذاتها، وإعادة التسمية تُنفَّذ
+   بتحديث واحد على كل عناصر القسم. */
+
+/* تصنيفات الوصفات وحدها مكتوبة هنا — لا مكتبة جاهزة لها. */
+var RX_CAT_SEED = ['أعشاب ومشروبات', 'تغذية علاجية', 'عناية موضعية', 'مكمّلات طبيعية'];
+
+/** التصنيفات المبدئية تُؤخذ من المكتبة الجاهزة نفسها لا من قائمة موازية:
+    لو كتبناها يدويًا لاختلفت بحرف («مسكّنات» و«مسكنات») فظهر تصنيفان
+    متطابقان معنى أول مرة يستورد فيها المستخدم من المكتبة. */
+function seedList(kind) {
+  if (kind === 'recipes') return RX_CAT_SEED;
+  var out = [];
+  ((window.LIBRARY || {})[kind] || []).forEach(function (o) {
+    var c = (o.category || '').trim();
+    if (c && out.indexOf(c) < 0) out.push(c);
+  });
+  return out;
+}
+
+function catsRaw(kind) {
+  return DB.cats.filter(function (c) { return c.kind === kind; });
+}
+/** أسماء تصنيفات القسم بالترتيب، مع أي اسم موجود في العناصر ولم يُسجَّل بعد. */
+function catNames(kind) {
+  var out = catsRaw(kind).map(function (c) { return c.name; });
+  coll(kind).forEach(function (o) {
+    var c = (o.category || '').trim();
+    if (c && out.indexOf(c) < 0) out.push(c);
+  });
+  return out;
+}
+function catByName(kind, name) {
+  return catsRaw(kind).find(function (c) { return c.name === name; });
+}
+function catCount(kind, name) {
+  return coll(kind).filter(function (o) { return (o.category || '').trim() === name; }).length;
+}
+/** يضمن وجود التصنيف قبل الحفظ — يُنادى عند حفظ عنصر أو استيراد من المكتبة. */
+function catEnsure(kind, name) {
+  name = (name || '').trim();
+  if (!name || catByName(kind, name)) return;
+  var c = { id: uid(), kind: kind, name: name };
+  DB.cats.push(c); Store.saveCat(c);
+}
+/** الزرع مرّة واحدة فقط: حذف المستخدم لتصنيف مزروع لا يعيده الإقلاع التالي.
+    القاعدة المرقّاة تصل ومعها تصنيفات مبنيّة من عناصرها، فلا تُزرَع فوقها. */
+function seedCats() {
+  if (DB.cats_seeded || DB.cats.length) return;
+  KINDS.forEach(function (k) {
+    seedList(k).forEach(function (n) {
+      var c = { id: uid(), kind: k, name: n };
+      DB.cats.push(c); Store.saveCat(c);
+    });
+  });
+  DB.cats_seeded = 1; Store.setSeeded();
+}
+
+/** حقل اختيار التصنيف داخل نموذج العنصر — شرائح + إنشاء فوري بلا مغادرة. */
+function catField(pfx, kind, cur) {
+  cur = (cur || '').trim();
+  var names = catNames(kind);
+  return '<div class="f"><label>التصنيف</label><div class="segs wrap">'
+    + names.map(function (n) {
+      return '<button type="button" class="seg' + (cur === n ? ' on' : '') + '"'
+        + ' data-t="' + esc(n) + '" onclick="catPick(this,\'' + pfx + '\')">' + esc(n) + '</button>';
+    }).join('')
+    + '<button type="button" class="seg new" onclick="catNewToggle(\'' + pfx + '\')">➕ تصنيف جديد</button>'
+    + '</div>'
+    + '<input id="' + pfx + '-catnew" class="inp" style="display:none;margin-top:7px"'
+    + ' placeholder="اسم التصنيف الجديد" oninput="catNewInput(\'' + pfx + '\')">'
+    + '<input type="hidden" id="' + pfx + '-category" value="' + esc(cur) + '"></div>';
+}
+window.catPick = function (btn, pfx) {
+  var kids = btn.parentNode.children;
+  for (var i = 0; i < kids.length; i++) {
+    kids[i].className = kids[i].getAttribute('data-t') === null ? 'seg new' : 'seg';
+  }
+  btn.className = 'seg on';
+  var nw = $(pfx + '-catnew'); if (nw) { nw.value = ''; nw.style.display = 'none'; }
+  var hidden = $(pfx + '-category'); if (hidden) hidden.value = btn.getAttribute('data-t');
+};
+window.catNewToggle = function (pfx) {
+  var nw = $(pfx + '-catnew'); if (!nw) return;
+  nw.style.display = '';
+  nw.focus();
+  var hidden = $(pfx + '-category'); if (hidden) hidden.value = nw.value.trim();
+};
+window.catNewInput = function (pfx) {
+  var nw = $(pfx + '-catnew'), hidden = $(pfx + '-category');
+  if (nw && hidden) hidden.value = nw.value.trim();
+};
+
+/* ── صفحة إدارة التصنيفات ── */
+function renderCatsPage(kind) {
+  var L = KIND_LBL[kind], cats = catsRaw(kind);
+  var orphans = catNames(kind).filter(function (n) { return !catByName(kind, n); });
+  var html = '<button class="btn full primary" onclick="catNew(\'' + kind + '\')">➕ تصنيف جديد</button>';
+
+  if (!cats.length && !orphans.length) {
+    h('page', html + emptyBox('🏷️', 'لا توجد تصنيفات', 'أنشئ تصنيفًا ثم أسنِد إليه عناصرك'));
+    return;
+  }
+  html += '<div class="hint">التصنيف يظهر في القسم عند وجود عنصر فيه. إعادة'
+    + ' التسمية تنقل كل عناصره معه، والحذف يعيدها «غير مصنّف».</div>';
+
+  html += cats.map(function (c, i) {
+    var n = catCount(kind, c.name);
+    return '<div class="card"><div class="row">'
+      + '<div class="grow"><div class="name">🏷️ ' + esc(c.name) + '</div>'
+      + '<div class="sub">' + (n ? countWord(n, L.one, L.two, L.few, L.many) : 'فارغ') + '</div></div>'
+      + '<button class="ic"' + (i === 0 ? ' disabled' : '')
+      + ' onclick="catMove(\'' + kind + '\',\'' + c.id + '\',-1)">⬆️</button>'
+      + '<button class="ic"' + (i === cats.length - 1 ? ' disabled' : '')
+      + ' onclick="catMove(\'' + kind + '\',\'' + c.id + '\',1)">⬇️</button>'
+      + '<button class="ic" onclick="catRename(\'' + kind + '\',\'' + c.id + '\')">✏️</button>'
+      + '<button class="ic" onclick="catDel(\'' + kind + '\',\'' + c.id + '\')">🗑️</button>'
+      + '</div></div>';
+  }).join('');
+
+  // أسماء مكتوبة داخل العناصر ولم تُسجَّل كتصنيفات (نسخة قديمة أو استيراد)
+  if (orphans.length) {
+    html += orphans.map(function (n) {
+      return '<div class="card"><div class="row">'
+        + '<div class="grow"><div class="name">🏷️ ' + esc(n) + '</div>'
+        + '<div class="sub">' + countWord(catCount(kind, n), L.one, L.two, L.few, L.many)
+        + ' — غير مسجّل</div></div>'
+        + '<button class="btn sm" onclick="catAdopt(\'' + kind + '\',\'' + esc(n) + '\')">تسجيل</button>'
+        + '</div></div>';
+    }).join('');
+  }
+  h('page', html);
+}
+window.catNew = function (kind) {
+  openModal('➕ تصنيف جديد',
+    '<div class="f"><label>اسم التصنيف *</label>'
+    + '<input id="cn" class="inp" placeholder="' + esc(seedList(kind)[0] || 'اسم التصنيف') + '"></div>'
+    + '<div class="mft"><button class="btn primary" onclick="catCreate(\'' + kind + '\')">إنشاء</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.catCreate = function (kind) {
+  var name = (($('cn') || {}).value || '').trim();
+  if (!name) return toast('الاسم مطلوب', 'er');
+  if (catByName(kind, name)) return toast('التصنيف موجود', 'er');
+  catEnsure(kind, name);
+  closeModal(); render(); toast('✅ أُنشئ التصنيف');
+};
+window.catRename = function (kind, id) {
+  var c = DB.cats.find(function (x) { return x.id === id; }); if (!c) return;
+  openModal('✏️ إعادة تسمية التصنيف',
+    '<div class="f"><label>اسم التصنيف *</label>'
+    + '<input id="cn" class="inp" value="' + esc(c.name) + '"></div>'
+    + '<div class="hint">سيُنقل ' + countWord(catCount(kind, c.name), KIND_LBL[kind].one,
+      KIND_LBL[kind].two, KIND_LBL[kind].few, KIND_LBL[kind].many) + ' إلى الاسم الجديد.</div>'
+    + '<div class="mft"><button class="btn primary" onclick="catRenameSave(\'' + kind + '\',\'' + id + '\')">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.catRenameSave = function (kind, id) {
+  var c = DB.cats.find(function (x) { return x.id === id; }); if (!c) return;
+  var name = (($('cn') || {}).value || '').trim();
+  if (!name) return toast('الاسم مطلوب', 'er');
+  if (name === c.name) { closeModal(); return; }
+  if (catByName(kind, name)) return toast('التصنيف موجود', 'er');
+  var old = c.name;
+  c.name = name;
+  coll(kind).forEach(function (o) { if ((o.category || '').trim() === old) o.category = name; });
+  Store.saveCat(c);
+  Store.moveCatItems(kind, old, name);
+  closeModal(); render(); toast('✅ أُعيدت التسمية');
+};
+window.catDel = function (kind, id) {
+  var c = DB.cats.find(function (x) { return x.id === id; }); if (!c) return;
+  var n = catCount(kind, c.name);
+  confirmBox('حذف التصنيف «' + c.name + '»؟'
+    + (n ? ' لن يُحذف أي عنصر — تعود عناصره «غير مصنّف».' : ''), function () {
+    DB.cats = DB.cats.filter(function (x) { return x.id !== id; });
+    coll(kind).forEach(function (o) { if ((o.category || '').trim() === c.name) o.category = ''; });
+    Store.moveCatItems(kind, c.name, '');
+    Store.dropCat(id);
+    closeModal(); render(); toast('🗑️ حُذف التصنيف');
+  });
+};
+/** تسجيل اسم كُتِب داخل العناصر ليصير تصنيفًا كامل الصلاحيات. */
+window.catAdopt = function (kind, name) {
+  catEnsure(kind, name); render(); toast('✅ سُجّل التصنيف');
+};
+window.catMove = function (kind, id, dir) {
+  var cats = catsRaw(kind);
+  var i = cats.findIndex(function (c) { return c.id === id; });
+  var j = i + dir;
+  if (i < 0 || j < 0 || j >= cats.length) return;
+  var tmp = cats[i]; cats[i] = cats[j]; cats[j] = tmp;
+  // DB.cats تخلط الأقسام، فنعيد بناءها بترتيب هذا القسم الجديد مع إبقاء غيره
+  var rest = DB.cats.filter(function (c) { return c.kind !== kind; });
+  DB.cats = rest.concat(cats);
+  Store.setCatOrder(DB.cats.map(function (c) { return c.id; }));
+  render();
+};
+
 /* ════════════════════════ 💊 العلاجات ════════════════════════ */
 var MED_FLD = [
   ['trade_name', 'الاسم التجاري', false],
@@ -872,6 +1105,7 @@ function renderMeds() {
   var ng = groupsOf('meds').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو التصنيف…" value="' + esc(q) + '" oninput="renderMeds()">'
+    + '<button class="btn" onclick="goPage(\'cat:meds\')">🏷️</button>'
     + '<button class="btn" onclick="goPage(\'grp:meds\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="medForm()">+ إضافة</button></div>';
   if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
@@ -882,7 +1116,7 @@ function renderMeds() {
   } else {
     var fav = list.filter(function (m) { return m.default_include; });
     if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true);
-    var gs = groupBy(list), op = openByDefault(list, gs);
+    var gs = groupBy(list, 'meds'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')', g.items.map(medRow).join(''), op);
     });
@@ -893,15 +1127,19 @@ function renderMeds() {
    اسم عنصر واحد — وهذا ما كان يحدث في الوصفات (نوعان مطويّان بلا أسماء). */
 function openByDefault(list, groups) { return groups.length === 1 || list.length <= 40; }
 
-/** تجميع العناصر حسب حقل (تصنيف أو نوع) مع الحفاظ على ترتيب الظهور. */
-function groupBy(list, key, fallback) {
-  key = key || 'category';
-  var order = [], byCat = {};
+var UNCAT = 'غير مصنّف';
+/** تجميع عناصر القسم في تصنيفاتها، بترتيب التصنيفات كما رتّبها المستخدم.
+    التصنيفات الفارغة لا تظهر هنا — مكانها صفحة إدارة التصنيفات. */
+function groupBy(list, kind) {
+  var byCat = {}, extra = [];
   list.forEach(function (o) {
-    var c = (o[key] || '').trim() || (fallback || 'غير مصنّف');
-    if (!byCat[c]) { byCat[c] = []; order.push(c); }
+    var c = (o.category || '').trim() || UNCAT;
+    if (!byCat[c]) { byCat[c] = []; if (c !== UNCAT) extra.push(c); }
     byCat[c].push(o);
   });
+  var order = catNames(kind).filter(function (c) { return byCat[c]; });
+  extra.forEach(function (c) { if (order.indexOf(c) < 0) order.push(c); });
+  if (byCat[UNCAT]) order.push(UNCAT);              // غير المصنّف آخرًا دائمًا
   return order.map(function (c) { return { cat: c, items: byCat[c] }; });
 }
 function emptyBox(icon, title, sub) {
@@ -930,10 +1168,7 @@ window.medForm = function (id) {
   var body = MED_FLD.map(function (f) {
     var key = f[0], lbl = f[1], area = f[2];
     var v = esc(m[key] || '');
-    if (key === 'category') {
-      return '<div class="f"><label>' + lbl + '</label><input id="mf-category" class="inp" list="mcat-list" value="' + v + '" placeholder="مثال: مضادات حيوية"></div>'
-        + catDatalist('mcat-list', DB.meds);
-    }
+    if (key === 'category') return catField('mf', 'meds', m.category);
     if (area) return taField('mf-' + key, lbl, m[key] || '');
     return '<div class="f"><label>' + lbl + (key === 'trade_name' ? ' *' : '') + '</label>'
       + '<input id="mf-' + key + '" class="inp" value="' + v + '"></div>';
@@ -947,6 +1182,7 @@ window.medSave = function (id) {
   MED_FLD.forEach(function (f) { var el = $('mf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.default_include = ($('mf-default') || {}).checked ? 1 : 0;
   if (!body.trade_name) return toast('الاسم التجاري مطلوب', 'er');
+  catEnsure('meds', body.category);
   var rec;
   if (id) { rec = DB.meds.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.meds.push(body); rec = body; }
@@ -982,6 +1218,7 @@ function renderLabs() {
   var ng = groupsOf('labs').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالرمز أو الاسم أو التخصص…" value="' + esc(q) + '" oninput="renderLabs()">'
+    + '<button class="btn" onclick="goPage(\'cat:labs\')">🏷️</button>'
     + '<button class="btn" onclick="goPage(\'grp:labs\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="labForm()">+ إضافة</button></div>';
   if (DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
@@ -996,7 +1233,7 @@ function renderLabs() {
   } else {
     var common = list.filter(function (t) { return t.is_common; });
     if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true);
-    var gs = groupBy(list), op = openByDefault(list, gs);
+    var gs = groupBy(list, 'labs'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')', g.items.map(labRow).join(''), op);
     });
@@ -1010,8 +1247,7 @@ function accBlock(title, inner, open) {
 }
 window.labForm = function (id) {
   var t = id ? (DB.labs.find(function (x) { return x.id === id; }) || {}) : {};
-  var body = '<div class="f"><label>التصنيف (التخصص)</label><input id="lf-category" class="inp" list="cat-list" value="' + esc(t.category || '') + '" placeholder="مثال: أمراض الدم"></div>'
-    + catDatalist('cat-list', DB.labs)
+  var body = catField('lf', 'labs', t.category)
     + '<div class="f"><label>اسم التحليل *</label><input id="lf-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: صورة دم كاملة"></div>'
     + '<div class="f"><label>رمز التحليل (المصطلح)</label><input id="lf-code" class="inp" dir="ltr" value="' + esc(t.code || '') + '" placeholder="مثال: CBC"></div>'
     + taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
@@ -1021,16 +1257,6 @@ window.labForm = function (id) {
     + '<div class="mft"><button class="btn primary" onclick="labSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل تحليل' : '+ إضافة تحليل', body);
 };
-/** قائمة اقتراحات بالتصنيفات المستخدمة فعلًا، لتوحيدها بلا كتابة يدوية. */
-function catDatalist(listId, source) {
-  var seen = [];
-  source.forEach(function (x) {
-    var c = (x.category || '').trim();
-    if (c && seen.indexOf(c) < 0) seen.push(c);
-  });
-  return '<datalist id="' + listId + '">'
-    + seen.map(function (c) { return '<option value="' + esc(c) + '">'; }).join('') + '</datalist>';
-}
 window.labSave = function (id) {
   var body = {
     category: ($('lf-category') || {}).value.trim(),
@@ -1042,6 +1268,7 @@ window.labSave = function (id) {
     is_common: ($('lf-common') || {}).checked ? 1 : 0
   };
   if (!body.name) return toast('اسم التحليل مطلوب', 'er');
+  catEnsure('labs', body.category);
   var rec;
   if (id) { rec = DB.labs.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.labs.push(body); rec = body; }
@@ -1058,9 +1285,6 @@ window.labDel = function (id) {
 
 /* ════════════════════════ 📷 الأشعة والفحوصات ════════════════════════
    تصوير ومناظير وتخطيط — بنيتها كالتحاليل مع «المنطقة أو العضو» بدل الرمز. */
-var IMG_TYPES = ['أشعة سينية', 'موجات صوتية', 'أشعة مقطعية', 'رنين مغناطيسي',
-                 'منظار', 'تخطيط', 'قياس هشاشة', 'طب نووي', 'أخرى'];
-
 function imgRow(t) {
   var on = DB.cart.imaging.indexOf(t.id) >= 0;
   return '<div class="card' + (on ? ' sel' : '') + '">'
@@ -1085,6 +1309,7 @@ function renderImaging() {
   var ng = groupsOf('imaging').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المنطقة…" value="' + esc(q) + '" oninput="renderImaging()">'
+    + '<button class="btn" onclick="goPage(\'cat:imaging\')">🏷️</button>'
     + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="imgForm()">+ إضافة</button></div>';
   if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
@@ -1095,7 +1320,7 @@ function renderImaging() {
   } else {
     var common = list.filter(function (t) { return t.is_common; });
     if (common.length) html += accBlock('⭐ شائعة', common.map(imgRow).join(''), true);
-    var gs = groupBy(list, 'category', 'غير مصنّف'), op = openByDefault(list, gs);
+    var gs = groupBy(list, 'imaging'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')', g.items.map(imgRow).join(''), op);
     });
@@ -1104,13 +1329,7 @@ function renderImaging() {
 }
 window.imgForm = function (id) {
   var t = id ? (DB.imaging.find(function (x) { return x.id === id; }) || {}) : {};
-  var cur = t.category || '';
-  var body = '<div class="f"><label>نوع الفحص</label><div class="segs wrap">'
-    + IMG_TYPES.map(function (v) {
-      return '<button type="button" class="seg' + (cur === v ? ' on' : '') + '" data-t="' + esc(v) + '"'
-        + ' onclick="imgPickType(this)">' + esc(v) + '</button>';
-    }).join('')
-    + '</div><input type="hidden" id="if-category" value="' + esc(cur) + '"></div>'
+  var body = catField('if', 'imaging', t.category)
     + '<div class="f"><label>اسم الفحص *</label><input id="if-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: رنين مغناطيسي للعمود القطني"></div>'
     + '<div class="f"><label>المنطقة أو العضو</label><input id="if-region" class="inp" value="' + esc(t.region || '') + '" placeholder="مثال: العمود القطني"></div>'
     + taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
@@ -1119,12 +1338,6 @@ window.imgForm = function (id) {
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
     + '<div class="mft"><button class="btn primary" onclick="imgSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
-};
-window.imgPickType = function (btn) {
-  var kids = btn.parentNode.children;
-  for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
-  btn.className = 'seg on';
-  var hidden = $('if-category'); if (hidden) hidden.value = btn.getAttribute('data-t');
 };
 window.imgSave = function (id) {
   var body = {
@@ -1137,6 +1350,7 @@ window.imgSave = function (id) {
     is_common: ($('if-common') || {}).checked ? 1 : 0
   };
   if (!body.name) return toast('اسم الفحص مطلوب', 'er');
+  catEnsure('imaging', body.category);
   var rec;
   if (id) { rec = DB.imaging.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.imaging.push(body); rec = body; }
@@ -1154,6 +1368,7 @@ window.imgDel = function (id) {
 /* ════════════════════════ 🌿 الوصفات العلاجية ════════════════════════ */
 var RX_TYPES = ['علاجية', 'وقائية', 'غذائية'];
 var RX_FLD = [
+  ['category', 'التصنيف', 'cat'],
   ['name', 'اسم الوصفة', 'text'],
   ['type', 'نوع الوصفة', 'type'],
   ['purpose', 'الهدف', 'area'],
@@ -1185,11 +1400,12 @@ function recipeRow(r) {
 function renderRecipes() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
   var list = DB.recipes.filter(function (r) {
-    return !q || [r.name, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
+    return !q || [r.name, r.category, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
   });
   var ng = groupsOf('recipes').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المواد…" value="' + esc(q) + '" oninput="renderRecipes()">'
+    + '<button class="btn" onclick="goPage(\'cat:recipes\')">🏷️</button>'
     + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
   if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
@@ -1200,7 +1416,7 @@ function renderRecipes() {
   } else {
     var fav = list.filter(function (r) { return r.is_favorite; });
     if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true);
-    var gs = groupBy(list, 'type', 'بلا نوع'), op = openByDefault(list, gs);
+    var gs = groupBy(list, 'recipes'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')', g.items.map(recipeRow).join(''), op);
     });
@@ -1211,6 +1427,7 @@ window.recipeForm = function (id) {
   var r = id ? (DB.recipes.find(function (x) { return x.id === id; }) || {}) : {};
   var body = RX_FLD.map(function (f) {
     var key = f[0], lbl = f[1], kind = f[2], v = esc(r[key] || '');
+    if (kind === 'cat') return catField('rf', 'recipes', r.category);
     if (kind === 'type') {
       return '<div class="f"><label>' + lbl + '</label><div class="segs">'
         + RX_TYPES.map(function (t) {
@@ -1240,6 +1457,7 @@ window.recipeSave = function (id) {
   RX_FLD.forEach(function (f) { var el = $('rf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.is_favorite = ($('rf-fav') || {}).checked ? 1 : 0;
   if (!body.name) return toast('اسم الوصفة مطلوب', 'er');
+  catEnsure('recipes', body.category);
   var rec;
   if (id) { rec = DB.recipes.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.recipes.push(body); rec = body; }

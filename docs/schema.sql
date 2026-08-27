@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 5   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 6   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -73,6 +73,7 @@ CREATE TABLE imaging (
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE recipes (
     id           TEXT PRIMARY KEY,
+    category     TEXT,                           -- التصنيف (يختاره المستخدم)
     name         TEXT    NOT NULL,               -- اسم الوصفة (مطلوب)
     type         TEXT,                           -- علاجية / وقائية / غذائية
     purpose      TEXT,                           -- الهدف
@@ -119,7 +120,26 @@ CREATE TABLE group_items (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٧) الإعدادات — مخزن مفتاح/قيمة
+--  ٧) التصنيفات — كيان مستقل لكل قسم
+--  «العيون» و«الأذن» في العلاجات، «كيمياء الدم» و«المناعة» في التحاليل…
+--  كانت مجرّد نصّ داخل العنصر، فلم يكن ممكنًا إنشاء تصنيف قبل عناصره ولا
+--  إعادة تسميته دفعةً واحدة. الآن صفوف حقيقية، وعمود category في جداول
+--  الأقسام يشير لاسمها.
+--
+--  لماذا الربط بالاسم لا بالمعرّف؟ ليبقى العنصر مقروءًا بذاته في النسخة
+--  الاحتياطية بلا الحاجة لجدول التصنيفات. إعادة التسمية تُنفَّذ بتحديث واحد
+--  (DaliliDb.moveCatItems) على كل عناصر القسم، والحذف يفرّغ العمود فتعود
+--  العناصر «غير مصنّفة» ولا يُحذف منها شيء.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE cats (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT    NOT NULL,                -- القسم: meds/labs/imaging/recipes
+    name        TEXT    NOT NULL,                -- اسم التصنيف كما يظهر
+    sort_order  INTEGER NOT NULL DEFAULT 0       -- ترتيب المستخدم للمجموعات
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ٨) الإعدادات — مخزن مفتاح/قيمة
 --  المفاتيح المستخدمة حاليًا:
 --    pin_hash      بصمة SHA-256 لرمز القفل (لا الرمز نفسه)
 --    out_meds      JSON: أسماء حقول العلاجات الظاهرة في الطباعة/الصورة
@@ -130,6 +150,7 @@ CREATE TABLE group_items (
 --    hdr_title     ترويسة الطباعة: الصفة        (اختيارية)
 --    hdr_contact   ترويسة الطباعة: التواصل      (اختيارية)
 --    backup_at     وقت آخر نسخة احتياطية تلقائية (ميلي ثانية)
+--    cats_seeded   '1' بعد زرع التصنيفات المبدئية مرّة واحدة
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE settings (
     key    TEXT PRIMARY KEY,
@@ -145,6 +166,7 @@ CREATE INDEX idx_labs_category ON labs(category);
 CREATE INDEX idx_imaging_category ON imaging(category);
 CREATE INDEX idx_recipes_type  ON recipes(type);
 CREATE INDEX idx_groups_kind   ON groups(kind);
+CREATE INDEX idx_cats_kind     ON cats(kind);
 
 
 -- ============================================================================
@@ -171,6 +193,17 @@ CREATE INDEX idx_groups_kind   ON groups(kind);
 --  الإصدار ٤ → ٥
 --      CREATE TABLE IF NOT EXISTS imaging (…);          -- الأشعة والفحوصات
 --      CREATE INDEX IF NOT EXISTS idx_imaging_category ON imaging(category);
+--
+--  الإصدار ٥ → ٦
+--      -- التصنيفات كيانًا مستقلًّا + تصنيف للوصفات
+--      ALTER TABLE recipes ADD COLUMN category TEXT;   -- إن لم يكن موجودًا
+--      CREATE TABLE IF NOT EXISTS cats (…);
+--      CREATE INDEX IF NOT EXISTS idx_cats_kind ON cats(kind);
+--      -- ثم تُبنى التصنيفات ممّا هو مكتوب فعلًا في العناصر فلا يضيع شيء:
+--      INSERT INTO cats SELECT … FROM (SELECT DISTINCT category FROM <kind>
+--          WHERE category IS NOT NULL AND category<>'');
+--      -- ملاحظة: ALTER مشروط بفحص PRAGMA table_info لأن createRecipes صار
+--      -- يُنشئ العمود، فقاعدة مرقّاة من ٢ تملكه بينما القادمة من ٣–٥ لا.
 --
 --  عند إضافة ترقية جديدة:
 --    ١) ارفع DB_VERSION

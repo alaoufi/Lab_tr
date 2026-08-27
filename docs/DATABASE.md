@@ -10,7 +10,7 @@
 
 - **الكود:** `app/src/main/java/me/alaoufi/dalili/DaliliDb.java`
 - **المخطط الكامل كـSQL:** [`schema.sql`](schema.sql)
-- **إصدار المخطط الحالي:** `5`
+- **إصدار المخطط الحالي:** `6`
 
 ---
 
@@ -47,7 +47,7 @@ sort_order   INTEGER              ترتيب الإدراج
 | `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes | `default_include` |
 | `labs` | category, code, name\*, purpose, requirements, prohibitions | `is_common` |
 | `imaging` | category, name\*, region, purpose, requirements, prohibitions | `is_common` |
-| `recipes` | name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions | `is_favorite` |
+| `recipes` | category, name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions | `is_favorite` |
 
 \* الحقل المطلوب (`NOT NULL`) — والواجهة أيضًا تمنع الحفظ بدونه.
 
@@ -74,6 +74,31 @@ group_items(group_id, item_id, position, PRIMARY KEY (group_id, item_id))
 قائمة جاهزة داخل القسم — «فحوصات ما قبل الجراحة» مثلًا — تُطبع أو تُرسَل
 باسمها. مستقلّة تمامًا عن السلة.
 
+### `cats` — التصنيفات (كيان مستقل)
+
+```sql
+cats(id, kind, name, sort_order)
+```
+
+«العيون» و«الأذن» في العلاجات، «كيمياء الدم» و«المناعة» في التحاليل. كانت
+مجرّد نصّ داخل العنصر، فلم يكن ممكنًا إنشاء تصنيف قبل عناصره ولا إعادة
+تسميته دفعةً واحدة ولا ترتيب المجموعات. الآن صفوف حقيقية، وعمود
+`category` في جداول الأقسام يشير **لاسمها**.
+
+**لماذا الاسم لا المعرّف؟** ليبقى العنصر مقروءًا بذاته في النسخة الاحتياطية
+وفي أي تصدير، بلا حاجة لضمّ جدول التصنيفات. الثمن أن إعادة التسمية تلمس كل
+العناصر — لكنها تحديث واحد:
+
+```java
+// DaliliDb.moveCatItems — يخدم إعادة التسمية (قديم ← جديد)
+// والحذف (قديم ← '' أي «غير مصنّف»)
+UPDATE <kind> SET category = ? WHERE category = ?
+```
+
+`sort_order` هو ترتيب المستخدم، وهو ترتيب ظهور المجموعات في القسم.
+التصنيف الفارغ يعيش في `cats` ولا يظهر في القسم — مكانه صفحة إدارة
+التصنيفات.
+
 ### `settings` — مخزن مفتاح/قيمة
 
 | المفتاح | القيمة |
@@ -85,6 +110,7 @@ group_items(group_id, item_id, position, PRIMARY KEY (group_id, item_id))
 | `out_recipes` | نفسه للوصفات |
 | `hdr_name` / `hdr_title` / `hdr_contact` | ترويسة الطباعة الاختيارية — فارغة افتراضيًا فلا تظهر |
 | `backup_at` | وقت آخر نسخة احتياطية تلقائية |
+| `cats_seeded` | `'1'` بعد زرع التصنيفات المبدئية مرّة واحدة — فحذف تصنيف مزروع لا يعيده الإقلاع التالي |
 
 ---
 
@@ -148,6 +174,10 @@ private static String flagCol(String kind)   { … }   // ما اسم عمود �
 | `setCart(kind, jsonIds)` | يستبدل سلة القسم كاملة | نجاح |
 | `saveGroup(json)` | `{id, kind, name, items[]}` | نجاح |
 | `deleteGroup(id)` | | نجاح |
+| `saveCat(json)` | `{id, kind, name}` — إنشاء أو إعادة تسمية | نجاح |
+| `deleteCat(id)` | لا يمسّ العناصر | نجاح |
+| `moveCatItems(kind, from, to)` | نقل عناصر تصنيف؛ `to` فارغًا = «غير مصنّف» | نجاح |
+| `setCatOrder(jsonIds)` | ترتيب التصنيفات كما رتّبها المستخدم | نجاح |
 | `setSetting(key, value)` | `value = null` يحذف الإعداد | نجاح |
 | `replaceAll(json)` | استيراد نسخة احتياطية | نجاح |
 | `isEmpty()` | للترحيل مرّة واحدة | منطقي |
@@ -172,8 +202,9 @@ upsert: function (kind, o) {
   "meds":    [ { "id": "…", "trade_name": "…", …, "default_include": 0 } ],
   "labs":    [ { "id": "…", "code": "CBC", "name": "…", …, "is_common": 1 } ],
   "imaging": [ { "id": "…", "name": "رنين الدماغ", "region": "الدماغ", …, "is_common": 1 } ],
-  "recipes": [ { "id": "…", "name": "…", "type": "وقائية", …, "is_favorite": 0 } ],
+  "recipes": [ { "id": "…", "category": "…", "name": "…", "type": "وقائية", …, "is_favorite": 0 } ],
   "cart":    { "meds": ["id1"], "labs": ["id2","id3"], "imaging": [], "recipes": [] },
+  "cats":    [ { "id": "…", "kind": "labs", "name": "كيمياء الدم" } ],
   "groups":  [ { "id": "…", "kind": "labs", "name": "…", "items": ["id2","id3"] } ],
   "settings": { "pin_hash": "…", "out_labs": "[\"code\",\"requirements\"]" },
   "pin_hash": "…"
