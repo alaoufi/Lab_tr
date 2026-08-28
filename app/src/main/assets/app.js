@@ -2277,9 +2277,12 @@ function wrapBlock(ctx, text, maxW) {
 }
 var CART_TITLE = { meds: 'قائمة علاجات', labs: 'قائمة تحاليل',
                    imaging: 'طلب أشعة وفحوصات', recipes: 'قائمة وصفات' };
+/** عنوان القائمة المُرسَلة. الأقسام التي ينشئها المستخدم لا عنوان جاهز
+    لها في CART_TITLE، فاسم القسم نفسه هو العنوان — وبلا هذا كانت الورقة
+    تخرج بعنوان فارغ واسم الملف «undefined». */
 function cartTitle(kind, withIcon) {
-  var t = CART_TITLE[kind];
-  return withIcon ? kindLbl(kind).icon + ' ' + t : t;
+  var L = kindLbl(kind), t = CART_TITLE[kind] || L.title;
+  return withIcon ? L.icon + ' ' + t : t;
 }
 function buildCanvas(kind, ids, title) {
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
@@ -2377,8 +2380,9 @@ window.copyList = function (kind, ids, title) {
 };
 window.shareList = function (kind, ids, title, imgTitle) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
-  var canvas = buildCanvas(kind, ids, imgTitle || (kindLbl(kind).icon + ' ' + title));
-  var fname = title.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
+  var name = String(title || kindLbl(kind).title || 'دليلي');
+  var canvas = buildCanvas(kind, ids, imgTitle || (kindLbl(kind).icon + ' ' + name));
+  var fname = name.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
 
   // داخل التطبيق الأصلي (APK): جسر Android يستقبل الصورة ويطلق مشاركة نظامية حقيقية
   // (WebView لا يطبّق Web Share API إطلاقًا، بخلاف المتصفح/PWA)
@@ -2411,6 +2415,7 @@ var PV = null, PV_TAB = 'paper';
 /** يفتح المعاينة لقائمة معيّنة (سلة أو مجموعة). */
 window.openPreview = function (kind, ids, title, imgTitle) {
   if (!ids || !ids.length) { PV = null; return toast('القائمة فارغة', 'er'); }
+  title = title || kindLbl(kind).title;
   PV = { kind: kind, ids: ids.slice(), title: title,
          imgTitle: imgTitle || (kindLbl(kind).icon + ' ' + title) };
   PV_TAB = 'paper';

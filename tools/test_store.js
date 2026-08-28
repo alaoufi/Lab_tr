@@ -1509,3 +1509,38 @@ run('حقول عُرِّفت قبل التحديث تُدرَج في الإرس�
   c = load(b); c.Store.load(); c.backfillFieldOut();
   eq(c.DB.out.meds.indexOf('x:kOLD'), -1, 'a deliberate untick sticks:');
 });
+
+run('مخرجات قسم أنشأه المستخدم: عنوان صحيح وصورة تُرسَل', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.secNew(); c._els('sf-title').value = 'النصائح'; c.secCreate();
+  const k = c.DB.sections[4].id;
+  c.fldNew(k); c._els('ff-label').value = 'النصيحة'; c.fldCreate(k);
+  const fk = c.fieldsOf(k)[0].key;
+  c.secItemForm(k);
+  c._els('cf-name').value = 'العناية بالجرح';
+  c._els('cf-x-' + fk).value = 'نظّف الجرح مرّتين يوميًا';
+  c.secItemSave(k, '');
+
+  // اسم القسم هو عنوان القائمة — لا 'undefined'
+  eq(c.cartTitle(k, false), 'النصائح', 'list title:');
+  eq(c.cartTitle(k, true).indexOf('undefined'), -1, 'image title clean:');
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart(k, c.DB[k][0].id);
+  c.previewCart(k);
+  eq(c.PV.title, 'النصائح', 'preview carries it:');
+  eq(c._els('page').innerHTML.indexOf('undefined'), -1, 'nothing undefined on screen:');
+
+  // الصيغ الأربع تخرج سليمة — «صورة» كانت تنهار على عنوان مفقود
+  c.pvSend('pdf');
+  eq(A._pdfs[0].name, 'النصائح', 'pdf file name:');
+  eq(A._pdfs[0].html.indexOf('نظّف الجرح') >= 0, true, 'field value in the pdf:');
+  eq(A._pdfs[0].html.indexOf('النصائح') >= 0, true, 'heading printed:');
+  c.pvSend('img');
+  eq(A._imgs.length, 1, 'image actually sent:');
+  eq(A._imgs[0].name.indexOf('undefined'), -1, 'with a real file name:');
+  c.pvSend('print');
+  eq(A._jobs[0].name, 'النصائح', 'print job name:');
+  c.pvSend('copy');
+  eq(A._clip.indexOf('النصائح') >= 0 && A._clip.indexOf('نظّف الجرح') >= 0, true, 'copied text:');
+});
