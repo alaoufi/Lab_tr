@@ -1483,3 +1483,29 @@ run('الحقل الإضافي يظهر في العرض بلا ضبط يدوي',
   c.toggleOut('labs', 'x:' + lk);
   eq(c.itemsHtml('labs', [b._t.labs[0].id]).indexOf('مختبر الشفاء') < 0, true, 'still user-controlled:');
 });
+
+run('حقول عُرِّفت قبل التحديث تُدرَج في الإرسال مرّةً واحدة', () => {
+  const b = makeBridge(); let c = load(b); c.Store.load(); c.showApp();
+
+  // حالة نسخة سابقة: حقل موجود في القاعدة وليس في الحقول المرسلة
+  b._t.fields.push({ id: 'f1', kind: 'meds', key: 'kOLD', label: 'الشركة المصنّعة', type: 'text' });
+  c = load(b); c.Store.load();
+  eq(c.DB.out.meds.indexOf('x:kOLD'), -1, 'starts unticked, as it was:');
+
+  c.backfillFieldOut();
+  eq(c.DB.out.meds.indexOf('x:kOLD') >= 0, true, 'backfilled:');
+  eq(b._t.settings.out_meds.indexOf('x:kOLD') >= 0, true, 'persisted:');
+  eq(b._t.settings.fields_out_done, '1', 'guarded by a flag:');
+
+  // القيمة تصل المستند الآن
+  c.goPage('meds');
+  c._els('mf-trade_name').value = 'أوجمنتين';
+  c._els('mf-x-kOLD').value = 'GSK';
+  c.medSave('');
+  eq(c.itemsHtml('meds', [b._t.meds[0].id]).indexOf('GSK') >= 0, true, 'reaches the document:');
+
+  // إلغاء التأشير بعدها يبقى — لا تعيده الترقية في الإقلاع التالي
+  c.toggleOut('meds', 'x:kOLD');
+  c = load(b); c.Store.load(); c.backfillFieldOut();
+  eq(c.DB.out.meds.indexOf('x:kOLD'), -1, 'a deliberate untick sticks:');
+});

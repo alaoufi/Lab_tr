@@ -53,7 +53,7 @@ DaliliApp/
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٦٥ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٦٦ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -119,8 +119,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 15       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "2.4"    // ما يراه المستخدم
+versionCode 16       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "2.5"    // ما يراه المستخدم
 ```
 
 ---
@@ -239,6 +239,10 @@ fieldsOf(kind) / extraFields(pfx,kind,o) / readExtra(pfx,kind)
 **الحقل الجديد يُدرَج في `DB.out[kind]` لحظة إنشائه.** من عرّف حقلًا يريده
 أن يظهر؛ ولو تُرك بلا إدراج لبقي ما يكتبه فيه غائبًا عن الطباعة والصورة
 بلا سبب ظاهر — وهذا ما حدث فعلًا. الاختيار يبقى بيده بعدها من الإعدادات.
+
+`backfillFieldOut()` تعالج الحقول التي عُرِّفت **قبل** ذلك: تُدرجها مرّةً
+واحدة تحرسها العلامة `fields_out_done` في الإعدادات، فيبقى أي إلغاء تأشير
+لاحق ثابتًا ولا تعيده الترقية في الإقلاع التالي.
 
 > **مزلق:** `ensureSections` تكتب الصفّ في القاعدة فور استحداثه لا عند أول
 > تعديل. `setSectionOrder` تُحدّث صفوفًا موجودة فقط، فلولا ذلك ضاع ترتيبٌ
@@ -438,7 +442,7 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٦٥ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٦٦ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 

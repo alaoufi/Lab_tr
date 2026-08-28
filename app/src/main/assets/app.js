@@ -131,6 +131,7 @@ function applyData(data) {
   });
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
+  DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || 0) || 0;
   DB.groups = Array.isArray(data.groups) ? data.groups : [];
   // ترويسة الطباعة اختيارية بالكامل — تبقى فارغة ما لم يملأها المستخدم،
   // وأي سطر فارغ لا يظهر في الورقة أصلًا.
@@ -243,6 +244,10 @@ var Store = {
   setSeeded: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('cats_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setFieldsOutDone: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('fields_out_done', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
   setCatOrder: function (ids) {
     if (!NDB) { blobSave(); return true; }
@@ -457,6 +462,7 @@ function pageMeta(p) {
 async function boot() {
   Store.load();
   seedCats();
+  backfillFieldOut();
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
@@ -1310,6 +1316,24 @@ window.fldMove = function (kind, id, dir) {
   Store.setFieldOrder(DB.fields.map(function (f) { return f.id; }));
   render();
 };
+
+/**
+ * ترقية لمرّة واحدة: الحقول التي عُرِّفت قبل أن يصير الإدراج تلقائيًا بقيت
+ * خارج «الحقول المرسلة»، فكان ما يُكتب فيها يظهر على البطاقة ولا يصل
+ * الورقة ولا الصورة. نُدرجها هنا مرّةً واحدة تحرسها علامة في الإعدادات،
+ * حتى يبقى أي إلغاء تأشير يفعله المستخدم بعدها ثابتًا.
+ */
+function backfillFieldOut() {
+  if (DB.fields_out_done) return;
+  var touched = {};
+  DB.fields.forEach(function (f) {
+    var key = 'x:' + f.key, arr = DB.out[f.kind];
+    if (arr && arr.indexOf(key) < 0) { arr.push(key); touched[f.kind] = 1; }
+  });
+  Object.keys(touched).forEach(function (k) { Store.setOut(k); });
+  DB.fields_out_done = 1;
+  Store.setFieldsOutDone();
+}
 
 /** حقول المستخدم داخل نموذج العنصر — تُقرأ وتُكتب في o.extra. */
 function extraFields(pfx, kind, o) {
