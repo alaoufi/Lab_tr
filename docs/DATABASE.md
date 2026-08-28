@@ -10,7 +10,7 @@
 
 - **الكود:** `app/src/main/java/me/alaoufi/dalili/DaliliDb.java`
 - **المخطط الكامل كـSQL:** [`schema.sql`](schema.sql)
-- **إصدار المخطط الحالي:** `6`
+- **إصدار المخطط الحالي:** `7`
 
 ---
 
@@ -44,10 +44,10 @@ sort_order   INTEGER              ترتيب الإدراج
 
 | القسم | الحقول النصّية | عمود العلامة |
 |---|---|---|
-| `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes | `default_include` |
-| `labs` | category, code, name\*, purpose, requirements, prohibitions | `is_common` |
-| `imaging` | category, name\*, region, purpose, requirements, prohibitions | `is_common` |
-| `recipes` | category, name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions | `is_favorite` |
+| `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes, extra | `default_include` |
+| `labs` | category, code, name\*, purpose, requirements, prohibitions, extra | `is_common` |
+| `imaging` | category, name\*, region, purpose, requirements, prohibitions, extra | `is_common` |
+| `recipes` | category, name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions, extra | `is_favorite` |
 
 \* الحقل المطلوب (`NOT NULL`) — والواجهة أيضًا تمنع الحفظ بدونه.
 
@@ -73,6 +73,31 @@ group_items(group_id, item_id, position, PRIMARY KEY (group_id, item_id))
 
 قائمة جاهزة داخل القسم — «فحوصات ما قبل الجراحة» مثلًا — تُطبع أو تُرسَل
 باسمها. مستقلّة تمامًا عن السلة.
+
+### `sections` + `fields` + `items` — الأقسام وحقولها
+
+```sql
+sections(id, title, icon, builtin, sort_order)
+fields(id, kind, key, label, type, sort_order)
+items(id, section, name, category, extra, flag, sort_order)
+```
+
+الأقسام الأربعة الأصلية مسجّلة في `sections` كغيرها (`builtin=1`)، فيقدر
+المستخدم على تسميتها وتغيير أيقونتها وترتيبها؛ ولها جداولها الخاصة أعلاه
+ولا تُحذف. الأقسام التي ينشئها لا جدول لكلٍّ منها — عناصرها كلها في
+`items` يفرّقها عمود `section`.
+
+**لماذا لا جدول لكل قسم جديد؟** لأن ذلك يعني تغيير المخطط وقت التشغيل،
+ويُدخِل اسمًا من المستخدم في نصّ SQL كاسم جدول. باسم جدول ثابت ومرشّح
+مربوط (`WHERE section = ?`) لا يوجد هذا الباب أصلًا.
+
+**الحقول الإضافية** (`fields`) يعرّفها المستخدم داخل بيانات العنصر، وقيمتها
+تُحفَظ في عمود `extra` (نص JSON) على صفّ العنصر نفسه — في الأقسام الأصلية
+والجديدة سواء. فلا يتغيّر المخطط كلّما أُضيف حقل. و`key` يُولَّد مرّة ولا
+يتغيّر بإعادة التسمية، فتبقى القيم المحفوظة سليمة.
+
+في الواجهة يظهر الحقل الإضافي في نموذج العنصر، وفي «الحقول المرسلة»
+بمفتاح مسبوق بـ`x:` يعرف منه `outLines` أن قيمته في `extra`.
 
 ### `cats` — التصنيفات (كيان مستقل)
 
@@ -174,6 +199,12 @@ private static String flagCol(String kind)   { … }   // ما اسم عمود �
 | `setCart(kind, jsonIds)` | يستبدل سلة القسم كاملة | نجاح |
 | `saveGroup(json)` | `{id, kind, name, items[]}` | نجاح |
 | `deleteGroup(id)` | | نجاح |
+| `saveSection(json)` | `{id, title, icon, builtin}` | نجاح |
+| `deleteSection(id)` | قسم المستخدم بكل ما يتبعه؛ الأصلية مرفوضة | نجاح |
+| `setSectionOrder(jsonIds)` | ترتيب البطاقات في الرئيسية | نجاح |
+| `saveField(json)` | `{id, kind, key, label, type}` | نجاح |
+| `deleteField(id)` | | نجاح |
+| `setFieldOrder(jsonIds)` | | نجاح |
 | `saveCat(json)` | `{id, kind, name}` — إنشاء أو إعادة تسمية | نجاح |
 | `deleteCat(id)` | لا يمسّ العناصر | نجاح |
 | `moveCatItems(kind, from, to)` | نقل عناصر تصنيف؛ `to` فارغًا = «غير مصنّف» | نجاح |
@@ -204,6 +235,10 @@ upsert: function (kind, o) {
   "imaging": [ { "id": "…", "name": "رنين الدماغ", "region": "الدماغ", …, "is_common": 1 } ],
   "recipes": [ { "id": "…", "category": "…", "name": "…", "type": "وقائية", …, "is_favorite": 0 } ],
   "cart":    { "meds": ["id1"], "labs": ["id2","id3"], "imaging": [], "recipes": [] },
+  "sections":[ { "id": "meds", "title": "العلاجات", "icon": "💊", "builtin": 1 },
+               { "id": "sec_x", "title": "اللقاحات", "icon": "💉", "builtin": 0 } ],
+  "fields":  [ { "id": "…", "kind": "meds", "key": "f1", "label": "الشركة المصنّعة", "type": "text" } ],
+  "sec_x":   [ { "id": "…", "name": "لقاح الإنفلونزا", "category": "…", "extra": {…}, "flag": 0 } ],
   "cats":    [ { "id": "…", "kind": "labs", "name": "كيمياء الدم" } ],
   "groups":  [ { "id": "…", "kind": "labs", "name": "…", "items": ["id2","id3"] } ],
   "settings": { "pin_hash": "…", "out_labs": "[\"code\",\"requirements\"]" },

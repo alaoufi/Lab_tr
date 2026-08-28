@@ -11,20 +11,36 @@ const vm = require('vm');
 // جسر وهمي يحاكي دلالات DaliliDb (جداول منفصلة + سلة مرتّبة)
 function makeBridge() {
   const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [], cats: [],
+              sections: [], fields: [], items: [],
               cart: { meds: [], labs: [], imaging: [], recipes: [] }, settings: {} };
+  // عناصر الأقسام التي ينشئها المستخدم تعيش في items كما في DaliliDb
+  const isCustom = k => !['meds', 'labs', 'imaging', 'recipes'].includes(k);
+  const rows = k => (isCustom(k) ? t.items.filter(o => o.section === k) : t[k]);
   const upsert = (table, o) => {
+    if (isCustom(table)) {
+      const rec = Object.assign({}, o, { section: table });
+      const j = t.items.findIndex(x => x.id === o.id);
+      if (j >= 0) t.items[j] = Object.assign({}, t.items[j], rec); else t.items.push(rec);
+      return true;
+    }
     const i = t[table].findIndex(x => x.id === o.id);
     if (i >= 0) t[table][i] = Object.assign({}, t[table][i], o); else t[table].push(Object.assign({}, o));
     return true;
   };
   return {
     _t: t,
-    loadAll: () => JSON.stringify({ meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
-      groups: t.groups, cats: t.cats, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash }),
+    loadAll: () => {
+      const out = { meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
+        groups: t.groups, cats: t.cats, sections: t.sections, fields: t.fields,
+        cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash };
+      t.sections.filter(s => isCustom(s.id)).forEach(s => { out[s.id] = rows(s.id); });
+      return JSON.stringify(out);
+    },
     upsertMany: (kind, j) => { JSON.parse(j).forEach(o => upsert(kind, o)); return true; },
     upsertItem: (kind, j) => upsert(kind, JSON.parse(j)),
     deleteItem: (kind, id) => {
-      t[kind] = t[kind].filter(x => x.id !== id);
+      if (isCustom(kind)) t.items = t.items.filter(x => !(x.id === id && x.section === kind));
+      else t[kind] = t[kind].filter(x => x.id !== id);
       t.cart[kind] = t.cart[kind].filter(x => x !== id);
       // كما تفعل DaliliDb.delete: تنظيف المجموعات من الإشارات اليتيمة
       t.groups.forEach(g => { if (g.kind === kind) g.items = g.items.filter(x => x !== id); });
@@ -47,7 +63,40 @@ function makeBridge() {
     },
     deleteCat: id => { t.cats = t.cats.filter(c => c.id !== id); return true; },
     moveCatItems: (kind, from, to) => {
-      t[kind].forEach(o => { if ((o.category || '') === from) o.category = to || ''; });
+      rows(kind).forEach(o => { if ((o.category || '') === from) o.category = to || ''; });
+      return true;
+    },
+    saveSection: j => {
+      const sec = JSON.parse(j);
+      const i = t.sections.findIndex(x => x.id === sec.id);
+      if (i >= 0) t.sections[i] = Object.assign({}, t.sections[i], sec);
+      else t.sections.push(Object.assign({}, sec));
+      return true;
+    },
+    deleteSection: id => {
+      t.sections = t.sections.filter(s => s.id !== id);
+      t.items = t.items.filter(o => o.section !== id);
+      t.fields = t.fields.filter(f => f.kind !== id);
+      t.cats = t.cats.filter(c => c.kind !== id);
+      t.groups = t.groups.filter(g => g.kind !== id);
+      delete t.cart[id];
+      return true;
+    },
+    setSectionOrder: j => {
+      const ids = JSON.parse(j);
+      t.sections.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      return true;
+    },
+    saveField: j => {
+      const f = JSON.parse(j);
+      const i = t.fields.findIndex(x => x.id === f.id);
+      if (i >= 0) t.fields[i] = Object.assign({}, t.fields[i], f); else t.fields.push(Object.assign({}, f));
+      return true;
+    },
+    deleteField: id => { t.fields = t.fields.filter(f => f.id !== id); return true; },
+    setFieldOrder: j => {
+      const ids = JSON.parse(j);
+      t.fields.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
       return true;
     },
     setCatOrder: j => {
@@ -60,6 +109,11 @@ function makeBridge() {
       const d = JSON.parse(j);
       t.meds = d.meds || []; t.labs = d.labs || []; t.imaging = d.imaging || [];
       t.recipes = d.recipes || []; t.groups = d.groups || []; t.cats = d.cats || [];
+      t.sections = d.sections || []; t.fields = d.fields || [];
+      t.items = [];
+      t.sections.filter(s => isCustom(s.id)).forEach(s => {
+        (d[s.id] || []).forEach(o => t.items.push(Object.assign({}, o, { section: s.id })));
+      });
       t.cart = d.cart || { meds: [], labs: [], imaging: [], recipes: [] };
       if (d.pin_hash) t.settings.pin_hash = d.pin_hash;
       return true;
@@ -1191,4 +1245,162 @@ run('التصنيفات تدخل النسخة الاحتياطية وتعود م
   c2.applyData(backup); c2.Store.replaceAll();
   eq(b2._t.cats.map(x => x.name), ['العيون'], 'restored into the db:');
   eq(c2.catNames('meds'), ['العيون'], 'and visible to the ui:');
+});
+
+run('التصنيف: قائمة منسدلة لا شرائح', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  ['كيمياء الدم', 'المناعة'].forEach(n => {
+    c._els('lf-name').value = 'ت-' + n; c._els('lf-category').value = n; c.labSave('');
+  });
+  const html = c.catField('lf', 'labs', 'المناعة');
+  eq(html.indexOf('<select') >= 0, true, 'renders a select:');
+  eq(html.indexOf('class="seg"') < 0, true, 'no chips any more:');
+  eq(html.split('<option').length - 1, 4, 'blank + two categories + «new»:');
+  eq(html.indexOf('<option value="المناعة" selected>') >= 0, true, 'current one preselected:');
+  eq(html.indexOf('➕ تصنيف جديد') >= 0, true, 'create option present:');
+
+  // قيمة غير مسجّلة (نسخة قديمة) تُعرض في حقل «الجديد» فلا تضيع
+  const orphan = c.catField('lf', 'labs', 'تصنيف قديم');
+  eq(orphan.indexOf('value="تصنيف قديم"') >= 0, true, 'unknown value kept:');
+  eq(orphan.indexOf('display:none') < 0, true, 'and its box is open:');
+});
+
+run('الحقول الإضافية: تعريف وحفظ وطباعة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('fld:meds');
+  c.fldNew('meds'); c._els('ff-label').value = 'الشركة المصنّعة';
+  c._els('ff-type').value = 'text'; c.fldCreate('meds');
+  c.fldNew('meds'); c._els('ff-label').value = 'ملاحظات الصيدلية';
+  c._els('ff-type').value = 'area'; c.fldCreate('meds');
+  eq(b._t.fields.length, 2, 'persisted:');
+  eq(b._t.fields.map(f => f.kind), ['meds', 'meds'], 'under the right section:');
+  const keys = b._t.fields.map(f => f.key);
+
+  // تظهر في النموذج وتُحفَظ داخل extra
+  c.goPage('meds');
+  c.medForm();
+  eq(c._els('page').innerHTML !== null, true);
+  c._els('mf-trade_name').value = 'أوجمنتين';
+  c._els('mf-x-' + keys[0]).value = 'GSK';
+  c._els('mf-x-' + keys[1]).value = 'يُحفظ مبرّدًا';
+  c.medSave('');
+  eq(b._t.meds[0].extra[keys[0]], 'GSK', 'value stored in extra:');
+  eq(b._t.meds[0].extra[keys[1]], 'يُحفظ مبرّدًا');
+
+  // قابلة للإرسال كأي حقل أصلي
+  eq(c.outDefs('meds').some(f => f[0] === 'x:' + keys[0]), true, 'offered as a sendable field:');
+  c.DB.out.meds = ['x:' + keys[0]];
+  const html = c.itemsHtml('meds', [b._t.meds[0].id]);
+  eq(html.indexOf('الشركة المصنّعة') >= 0 && html.indexOf('GSK') >= 0, true, 'printed:');
+
+  // إعادة التسمية تُبقي القيمة (المفتاح لا يتغيّر)
+  c.fldEdit('meds', b._t.fields[0].id);
+  c._els('ff-label').value = 'المصنّع';
+  c.fldSave(b._t.fields[0].id);
+  eq(b._t.fields[0].key, keys[0], 'key unchanged:');
+  eq(c.DB.meds[0].extra[keys[0]], 'GSK', 'value survived the rename:');
+
+  // الحذف ينظّف الحقول المرسلة
+  c.fldDel('meds', b._t.fields[0].id); c._els('cb-yes').onclick();
+  eq(b._t.fields.length, 1, 'field gone:');
+  eq(c.DB.out.meds.indexOf('x:' + keys[0]), -1, 'removed from the sent fields:');
+});
+
+run('الأقسام: إنشاء قسم كامل يعمل كالأصلية', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('secs');
+  eq(b._t.sections.length, 4, 'the four builtins are registered:');
+
+  c.secNew(); c._els('sf-title').value = 'اللقاحات'; c._els('sf-icon').value = '💉';
+  c.secCreate();
+  const k = c.DB.sections[4].id;
+  eq(c.DB.sections.length, 5, 'section added:');
+  eq(c.curPage(), k, 'opened it:');
+  eq(c.KINDS.indexOf(k) >= 0, true, 'joined KINDS:');
+
+  // حقل خاص به ثم عنصر
+  c.fldNew(k); c._els('ff-label').value = 'عمر الجرعة'; c.fldCreate(k);
+  const fk = c.fieldsOf(k)[0].key;
+  c.secItemForm(k);
+  c._els('cf-name').value = 'لقاح الإنفلونزا';
+  c._els('cf-category').value = 'لقاحات موسمية';
+  c._els('cf-x-' + fk).value = 'من ٦ أشهر';
+  c.secItemSave(k, '');
+  eq(b._t.items.length, 1, 'stored in the generic items table:');
+  eq(b._t.items[0].section, k, 'tagged with its section:');
+  eq(c.DB[k][0].extra[fk], 'من ٦ أشهر', 'custom field stored:');
+  eq(c.catNames(k), ['لقاحات موسمية'], 'category auto-registered:');
+
+  // السلة والمعاينة والطباعة بلا سطر إضافي
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.DB.out[k] = ['category', 'x:' + fk];
+  c.toggleCart(k, c.DB[k][0].id);
+  c.previewCart(k); c.pvSend('pdf');
+  eq(A._pdfs.length, 1, 'pdf sent:');
+  eq(A._pdfs[0].html.indexOf('من ٦ أشهر') >= 0, true, 'custom field in the document:');
+  eq(A._pdfs[0].html.indexOf('لقاح الإنفلونزا') >= 0, true, 'item in the document:');
+});
+
+run('الأقسام: تسمية الأصلي وترتيبه وحذف المُنشأ', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+
+  // تسمية قسم أصلي: ألفاظ العدّ ترجع محايدة فتبقى الجملة صحيحة
+  eq(c.kindLbl('recipes').few, 'وصفات', 'specific words while unnamed:');
+  c.secEdit('recipes'); c._els('sf-title').value = 'الخلطات'; c.secSave('recipes');
+  eq(c.kindLbl('recipes').title, 'الخلطات', 'renamed:');
+  eq(c.kindLbl('recipes').few, 'عناصر', 'falls back to neutral counting words:');
+  eq(b._t.sections.find(s => s.id === 'recipes').title, 'الخلطات', 'persisted:');
+
+  // الترتيب
+  c.secMove('labs', -1);
+  eq(c.KINDS.slice(0, 2), ['labs', 'meds'], 'reordered:');
+  eq(b._t.sections.map(s => s.id).slice(0, 2), ['labs', 'meds'], 'order persisted:');
+
+  // قسم مُنشأ: حذفه ينظّف كل ما يتبعه
+  c.secNew(); c._els('sf-title').value = 'مؤقّت'; c.secCreate();
+  const k = c.DB.sections[c.DB.sections.length - 1].id;
+  c.fldNew(k); c._els('ff-label').value = 'حقل'; c.fldCreate(k);
+  c.secItemForm(k); c._els('cf-name').value = 'عنصر'; c._els('cf-category').value = 'تص';
+  c.secItemSave(k, '');
+  c.goPage('grp:' + k); c.groupNew(k); c._els('gn').value = 'مج'; c.groupCreate(k);
+  eq(b._t.items.length, 1);
+
+  c.secDel(k); c._els('cb-yes').onclick();
+  eq(c.DB.sections.length, 4, 'section removed:');
+  eq(b._t.items.length, 0, 'its items too:');
+  eq(b._t.fields.filter(f => f.kind === k).length, 0, 'its fields:');
+  eq(b._t.cats.filter(x => x.kind === k).length, 0, 'its categories:');
+  eq(b._t.groups.filter(g => g.kind === k).length, 0, 'its groups:');
+  eq(c.KINDS.indexOf(k), -1, 'and it left KINDS:');
+
+  // الأصلية لا تُحذف
+  c.secDel('meds');
+  eq(c.DB.sections.length, 4, 'builtin refused deletion:');
+});
+
+run('الأقسام والحقول تبقى بعد إعادة التشغيل وتدخل النسخة الاحتياطية', () => {
+  const b = makeBridge(); let c = load(b); c.Store.load(); c.showApp();
+  c.secNew(); c._els('sf-title').value = 'اللقاحات'; c._els('sf-icon').value = '💉';
+  c.secCreate();
+  const k = c.DB.sections[4].id;
+  c.fldNew(k); c._els('ff-label').value = 'عمر الجرعة'; c.fldCreate(k);
+  const fk = c.fieldsOf(k)[0].key;
+  c.secItemForm(k); c._els('cf-name').value = 'لقاح'; c._els('cf-x-' + fk).value = 'سنة';
+  c.secItemSave(k, '');
+
+  c = load(b); c.Store.load();                 // «إعادة فتح» التطبيق
+  eq(c.DB.sections.length, 5, 'sections reloaded:');
+  eq(c.kindLbl(k).title + c.kindLbl(k).icon, 'اللقاحات💉', 'name and icon kept:');
+  eq(c.DB[k].length, 1, 'its items reloaded:');
+  eq(c.DB[k][0].extra[fk], 'سنة', 'custom values reloaded:');
+
+  // نسخة احتياطية → قاعدة جديدة
+  const backup = JSON.parse(JSON.stringify(c.DB));
+  const b2 = makeBridge(); const c2 = load(b2); c2.Store.load();
+  c2.applyData(backup); c2.Store.replaceAll();
+  eq(b2._t.sections.length, 5, 'sections restored:');
+  eq(b2._t.fields.length, 1, 'fields restored:');
+  eq(b2._t.items.length, 1, 'custom items restored:');
+  eq(c2.DB[k][0].extra[fk], 'سنة', 'with their values:');
 });

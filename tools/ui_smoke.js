@@ -58,7 +58,7 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n5-settings.png', fullPage: true });
 
-  // التصنيفات: صفحة الإدارة ثم الشرائح داخل نموذج العنصر
+  // التصنيفات: صفحة الإدارة ثم القائمة المنسدلة داخل نموذج العنصر
   await p.evaluate(() => goPage('cat:labs'));
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n6-categories.png', fullPage: true });
@@ -67,6 +67,14 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.screenshot({ path: 'n7-category-picker.png', fullPage: true });
   await p.evaluate(() => closeModal());
   await p.waitForTimeout(200);
+
+  // الأقسام والحقول الإضافية
+  await p.evaluate(() => goPage('secs'));
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n8-sections.png', fullPage: true });
+  await p.evaluate(() => goPage('fld:meds'));
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n9-fields.png', fullPage: true });
 
   console.log(errs.length ? errs.join('\n') : 'لا أخطاء في الكونسول ✅');
   await b.close();

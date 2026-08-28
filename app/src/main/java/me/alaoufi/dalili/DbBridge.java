@@ -23,9 +23,13 @@ public class DbBridge {
         this.db = db;
     }
 
-    /** لا يُسمح إلا بالجداول المعروفة — اسم الجدول يدخل في نص SQL. */
+    /**
+     * قسم مقبول: أحد الأربعة الأصلية (اسم جدول ثابت في الكود) أو قسمٌ
+     * أنشأه المستخدم (يذهب لجدول items بمرشّح مربوط). في الحالتين لا يصل
+     * نصّ من المستخدم إلى اسم جدول داخل SQL.
+     */
     private static boolean validKind(String kind) {
-        return DaliliDb.isKind(kind);
+        return DaliliDb.isKind(kind) || DaliliDb.isCustomKind(kind);
     }
 
     /** كل البيانات دفعة واحدة عند الإقلاع: {pin_hash, meds, labs, cart}. */
@@ -61,6 +65,75 @@ public class DbBridge {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "upsertMany failed", e);
+            return false;
+        }
+    }
+
+    /** حفظ قسم (اسمه وأيقونته) — {id, title, icon, builtin}. */
+    @JavascriptInterface
+    public boolean saveSection(String json) {
+        try {
+            db.saveSection(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveSection failed", e);
+            return false;
+        }
+    }
+
+    /** حذف قسم أنشأه المستخدم بكل ما يتبعه. الأقسام الأصلية لا تُحذف. */
+    @JavascriptInterface
+    public boolean deleteSection(String id) {
+        try {
+            db.deleteSection(id);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "deleteSection failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean setSectionOrder(String jsonIds) {
+        try {
+            db.setSectionOrder(new JSONArray(jsonIds));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "setSectionOrder failed", e);
+            return false;
+        }
+    }
+
+    /** حفظ حقل إضافي داخل بيانات العنصر — {id, kind, key, label, type}. */
+    @JavascriptInterface
+    public boolean saveField(String json) {
+        try {
+            db.saveField(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveField failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean deleteField(String id) {
+        try {
+            db.deleteField(id);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "deleteField failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean setFieldOrder(String jsonIds) {
+        try {
+            db.setFieldOrder(new JSONArray(jsonIds));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "setFieldOrder failed", e);
             return false;
         }
     }

@@ -103,6 +103,10 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .f{margin-bottom:11px}
 .f label{display:block;font-size:12.5px;font-weight:800;color:var(--mid);margin-bottom:5px}
 .inp{width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:10px;font-family:inherit;font-size:14px;outline:none;background:#fff}
+/* القائمة المنسدلة: سهم مرسوم يدويًا لأن مظهر النظام يختلف بين الأجهزة */
+select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointer;padding-left:32px;
+  background-image:linear-gradient(45deg,transparent 50%,var(--mid) 50%),linear-gradient(135deg,var(--mid) 50%,transparent 50%);
+  background-position:14px calc(50% - 2px),19px calc(50% - 2px);background-size:5px 5px,5px 5px;background-repeat:no-repeat}
 .inp:focus{border-color:var(--teal)}
 .ta{min-height:78px;resize:none;overflow:hidden;line-height:1.75}
 /* شريط أدوات الحقل: إدراج نقاط وترقيم وسطر جديد */

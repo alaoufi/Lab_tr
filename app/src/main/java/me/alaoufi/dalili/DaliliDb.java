@@ -23,9 +23,16 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 6;
+    private static final int DB_VERSION = 7;
 
-    /** الأقسام — وهي أيضًا أسماء الجداول وقيم عمود cart.kind. */
+    /**
+     * الأقسام الأصلية الأربعة — وهي أيضًا أسماء جداولها.
+     *
+     * <p>الأقسام التي ينشئها المستخدم لا جدول لكلٍّ منها (لا نغيّر المخطط
+     * وقت التشغيل)؛ عناصرها كلها في جدول {@code items} يفرّقها عمود
+     * {@code section}. لذلك اسم الجدول هنا ثابت دائمًا ولا يأتي من
+     * المستخدم إطلاقًا — لا مجال لحقن SQL عبر اسم قسم.
+     */
     public static final String[] KINDS = { "meds", "labs", "imaging", "recipes" };
 
     private static final String[] MED_TEXT_COLS = {
@@ -52,6 +59,11 @@ public class DaliliDb extends SQLiteOpenHelper {
     public static boolean isKind(String kind) {
         for (String k : KINDS) if (k.equals(kind)) return true;
         return false;
+    }
+
+    /** قسم من إنشاء المستخدم: معرّف غير فارغ ليس من الأربعة الأصلية. */
+    public static boolean isCustomKind(String kind) {
+        return kind != null && !kind.isEmpty() && !isKind(kind);
     }
 
     private static String[] textCols(String kind) {
@@ -97,6 +109,9 @@ public class DaliliDb extends SQLiteOpenHelper {
         createRecipes(db);
         createGroups(db);
         createCats(db);
+        createSections(db);
+        createFields(db);
+        createItems(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -180,6 +195,58 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * الأقسام: الأربعة الأصلية مسجّلة هنا أيضًا ليتمكّن المستخدم من تغيير
+     * اسمها وأيقونتها وترتيبها، ومعها ما ينشئه من أقسام جديدة.
+     * {@code builtin=1} يعني أن لها جدولها الخاص ولا تُحذف.
+     */
+    private void createSections(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS sections ("
+                + "id TEXT PRIMARY KEY,"
+                + "title TEXT NOT NULL,"
+                + "icon TEXT,"
+                + "builtin INTEGER NOT NULL DEFAULT 0,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+    }
+
+    /**
+     * الحقول الإضافية التي يعرّفها المستخدم داخل بيانات العنصر. القيمة
+     * نفسها تُحفَظ في عمود {@code extra} (JSON) على صفّ العنصر، فلا يتغيّر
+     * المخطط كلّما أضاف المستخدم حقلًا.
+     */
+    private void createFields(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS fields ("
+                + "id TEXT PRIMARY KEY,"
+                + "kind TEXT NOT NULL,"      // القسم الذي ينتمي له الحقل
+                + "key TEXT NOT NULL,"       // المفتاح داخل extra
+                + "label TEXT NOT NULL,"     // ما يراه المستخدم
+                + "type TEXT NOT NULL,"      // text | area
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_fields_kind ON fields(kind)");
+    }
+
+    /** عناصر الأقسام التي ينشئها المستخدم — جدول واحد يفرّقه عمود section. */
+    private void createItems(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS items ("
+                + "id TEXT PRIMARY KEY,"
+                + "section TEXT NOT NULL,"
+                + "name TEXT NOT NULL,"
+                + "category TEXT,"
+                + "extra TEXT,"              // JSON: قيم الحقول التي عرّفها المستخدم
+                + "flag INTEGER NOT NULL DEFAULT 0,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_items_section ON items(section)");
+    }
+
+    /** عمود extra على الأقسام الأصلية — يحمل قيم حقول المستخدم. */
+    private void addExtraColumns(SQLiteDatabase db) {
+        for (String kind : KINDS) {
+            if (!hasColumn(db, kind, "extra")) {
+                db.execSQL("ALTER TABLE " + kind + " ADD COLUMN extra TEXT");
+            }
+        }
+    }
+
     private static boolean hasColumn(SQLiteDatabase db, String table, String col) {
         Cursor c = db.rawQuery("PRAGMA table_info(" + table + ")", null);
         try {
@@ -238,6 +305,14 @@ public class DaliliDb extends SQLiteOpenHelper {
             createCats(db);
             seedCatsFromItems(db);
         }
+        if (oldVersion < 7) {
+            // أقسام يملكها المستخدم (تسمية وأيقونة وترتيب وإضافة قسم جديد)
+            // + حقول إضافية داخل بيانات العنصر.
+            createSections(db);
+            createFields(db);
+            createItems(db);
+            addExtraColumns(db);
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -249,6 +324,18 @@ public class DaliliDb extends SQLiteOpenHelper {
         for (String kind : KINDS) {
             out.put(kind, readItems(db, kind));
             cart.put(kind, readCart(db, kind));
+        }
+        JSONArray sections = readSections(db);
+        out.put("sections", sections);
+        out.put("fields", readFields(db));
+        // أقسام المستخدم: عناصرها في items، وتصل للواجهة بنفس شكل الأصلية
+        for (int i = 0; i < sections.length(); i++) {
+            JSONObject sec = sections.optJSONObject(i);
+            String id = sec == null ? "" : sec.optString("id");
+            if (isCustomKind(id)) {
+                out.put(id, readCustomItems(db, id));
+                cart.put(id, readCart(db, id));
+            }
         }
         out.put("cart", cart);
         out.put("cats", readCats(db));
@@ -268,6 +355,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 for (String col : textCols(kind)) o.put(col, str(c, col));
                 String flag = flagCol(kind);
                 o.put(flag, c.getInt(c.getColumnIndexOrThrow(flag)));
+                o.put("extra", parseExtra(str(c, "extra")));
                 arr.put(o);
             }
         } finally { c.close(); }
@@ -282,6 +370,146 @@ public class DaliliDb extends SQLiteOpenHelper {
             while (c.moveToNext()) arr.put(c.getString(0));
         } finally { c.close(); }
         return arr;
+    }
+
+    private JSONArray readSections(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("sections", null, null, null, null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("title", str(c, "title"));
+                o.put("icon", str(c, "icon"));
+                o.put("builtin", c.getInt(c.getColumnIndexOrThrow("builtin")));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    private JSONArray readFields(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("fields", null, null, null, null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("kind", str(c, "kind"));
+                o.put("key", str(c, "key"));
+                o.put("label", str(c, "label"));
+                o.put("type", str(c, "type"));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    /** عناصر قسمٍ أنشأه المستخدم — من جدول items بمرشّح مربوط لا باسم جدول. */
+    private JSONArray readCustomItems(SQLiteDatabase db, String section) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("items", null, "section=?", new String[]{section},
+                null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("name", str(c, "name"));
+                o.put("category", str(c, "category"));
+                o.put("flag", c.getInt(c.getColumnIndexOrThrow("flag")));
+                o.put("extra", parseExtra(str(c, "extra")));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    /** {@code extra} يصل الواجهة كائنًا لا نصًّا، وأي نص تالف يعود كائنًا فارغًا. */
+    private static JSONObject parseExtra(String raw) {
+        if (raw == null || raw.isEmpty()) return new JSONObject();
+        try { return new JSONObject(raw); } catch (Exception e) { return new JSONObject(); }
+    }
+
+    public void saveSection(JSONObject o) {
+        writeSection(getWritableDatabase(), o, -1);
+    }
+
+    private void writeSection(SQLiteDatabase db, JSONObject o, int order) {
+        String id = o.optString("id");
+        if (id.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put("title", o.optString("title", ""));
+        v.put("icon", o.optString("icon", ""));
+        v.put("builtin", o.optInt("builtin", 0));
+        if (order >= 0) v.put("sort_order", order);
+        if (db.update("sections", v, "id=?", new String[]{id}) == 0) {
+            v.put("id", id);
+            if (order < 0) v.put("sort_order", nextSortOrder(db, "sections"));
+            db.insert("sections", null, v);
+        }
+    }
+
+    /** حذف قسم أنشأه المستخدم: عناصره وسلّته وتصنيفاته وحقوله ومجموعاته. */
+    public void deleteSection(String id) {
+        if (!isCustomKind(id)) return;      // الأصلية لا تُحذف
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            db.delete("items", "section=?", new String[]{id});
+            db.delete("sections", "id=?", new String[]{id});
+            db.delete("fields", "kind=?", new String[]{id});
+            db.delete("cats", "kind=?", new String[]{id});
+            db.delete("cart", "kind=?", new String[]{id});
+            db.delete("group_items", "group_id IN (SELECT id FROM groups WHERE kind=?)",
+                    new String[]{id});
+            db.delete("groups", "kind=?", new String[]{id});
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    public void setSectionOrder(JSONArray ids) {
+        reorder(getWritableDatabase(), "sections", ids);
+    }
+
+    public void saveField(JSONObject o) {
+        writeField(getWritableDatabase(), o, -1);
+    }
+
+    private void writeField(SQLiteDatabase db, JSONObject o, int order) {
+        String id = o.optString("id");
+        if (id.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put("kind", o.optString("kind", ""));
+        v.put("key", o.optString("key", ""));
+        v.put("label", o.optString("label", ""));
+        v.put("type", o.optString("type", "text"));
+        if (order >= 0) v.put("sort_order", order);
+        if (db.update("fields", v, "id=?", new String[]{id}) == 0) {
+            v.put("id", id);
+            if (order < 0) v.put("sort_order", nextSortOrder(db, "fields"));
+            db.insert("fields", null, v);
+        }
+    }
+
+    public void deleteField(String id) {
+        getWritableDatabase().delete("fields", "id=?", new String[]{id});
+    }
+
+    public void setFieldOrder(JSONArray ids) {
+        reorder(getWritableDatabase(), "fields", ids);
+    }
+
+    /** ترتيب صفوف جدول بحسب قائمة معرّفات — اسم الجدول من الكود لا من المستخدم. */
+    private void reorder(SQLiteDatabase db, String table, JSONArray ids) {
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < ids.length(); i++) {
+                ContentValues v = new ContentValues();
+                v.put("sort_order", i + 1);
+                db.update(table, v, "id=?", new String[]{ids.optString(i)});
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
     }
 
     private JSONArray readCats(SQLiteDatabase db) throws Exception {
@@ -327,10 +555,14 @@ public class DaliliDb extends SQLiteOpenHelper {
      * (القديم ← الجديد) والحذف (القديم ← فارغ = «غير مصنّف»).
      */
     public void moveCatItems(String kind, String from, String to) {
-        if (!isKind(kind)) return;
         ContentValues v = new ContentValues();
         v.put("category", to == null ? "" : to);
-        getWritableDatabase().update(kind, v, "category=?", new String[]{from});
+        if (isCustomKind(kind)) {
+            getWritableDatabase().update("items", v, "section=? AND category=?",
+                    new String[]{kind, from});
+        } else if (isKind(kind)) {
+            getWritableDatabase().update(kind, v, "category=?", new String[]{from});
+        }
     }
 
     /** ترتيب التصنيفات كما رتّبها المستخدم — قائمة معرّفات بالترتيب. */
@@ -429,12 +661,35 @@ public class DaliliDb extends SQLiteOpenHelper {
         ContentValues v = new ContentValues();
         for (String col : textCols(kind)) v.put(col, o.optString(col, ""));
         v.put(flagCol(kind), o.optInt(flagCol(kind), 0));
+        v.put("extra", extraStr(o));
+        return v;
+    }
+
+    /** قيم الحقول التي عرّفها المستخدم — نصّ JSON في عمود واحد. */
+    private static String extraStr(JSONObject o) {
+        JSONObject x = o.optJSONObject("extra");
+        return x == null ? "" : x.toString();
+    }
+
+    /** صفّ عنصر في قسمٍ أنشأه المستخدم. */
+    private static ContentValues customValues(String section, JSONObject o) {
+        ContentValues v = new ContentValues();
+        v.put("section", section);
+        v.put("name", o.optString("name", ""));
+        v.put("category", o.optString("category", ""));
+        v.put("flag", o.optInt("flag", 0));
+        v.put("extra", extraStr(o));
         return v;
     }
 
     /** إضافة أو تعديل عنصر. يُحافظ على ترتيب الإدراج للعناصر الجديدة. */
     public void upsert(String kind, JSONObject o) {
-        upsertRow(getWritableDatabase(), kind, o.optString("id"), values(kind, o));
+        SQLiteDatabase db = getWritableDatabase();
+        if (isCustomKind(kind)) {
+            upsertRow(db, "items", o.optString("id"), customValues(kind, o));
+        } else {
+            upsertRow(db, kind, o.optString("id"), values(kind, o));
+        }
     }
 
     /**
@@ -445,10 +700,12 @@ public class DaliliDb extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
+            boolean custom = isCustomKind(kind);
             for (int i = 0; i < items.length(); i++) {
                 JSONObject o = items.optJSONObject(i);
                 if (o == null || o.optString("id").isEmpty()) continue;
-                upsertRow(db, kind, o.optString("id"), values(kind, o));
+                if (custom) upsertRow(db, "items", o.optString("id"), customValues(kind, o));
+                else upsertRow(db, kind, o.optString("id"), values(kind, o));
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -473,7 +730,8 @@ public class DaliliDb extends SQLiteOpenHelper {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();
         try {
-            db.delete(kind, "id=?", new String[]{id});
+            if (isCustomKind(kind)) db.delete("items", "id=? AND section=?", new String[]{id, kind});
+            else db.delete(kind, "id=?", new String[]{id});
             db.delete("cart", "kind=? AND item_id=?", new String[]{kind, id});
             // وإلا بقيت إشارة يتيمة في كل مجموعة تضمّ العنصر
             db.delete("group_items", "item_id=? AND group_id IN "
@@ -531,8 +789,11 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.beginTransaction();
         try {
             for (String kind : KINDS) db.delete(kind, null, null);
+            db.delete("items", null, null);
             db.delete("cart", null, null);
             db.delete("cats", null, null);
+            db.delete("sections", null, null);
+            db.delete("fields", null, null);
             db.delete("groups", null, null);
             db.delete("group_items", null, null);
 
@@ -548,9 +809,36 @@ public class DaliliDb extends SQLiteOpenHelper {
                 }
             }
 
+            // الأقسام أولًا: منها نعرف أي أقسام أنشأها المستخدم فنستعيد عناصرها
+            JSONArray sections = data.optJSONArray("sections");
+            for (int i = 0; sections != null && i < sections.length(); i++) {
+                JSONObject o = sections.optJSONObject(i);
+                if (o != null) writeSection(db, o, i + 1);
+            }
+            JSONArray fields = data.optJSONArray("fields");
+            for (int i = 0; fields != null && i < fields.length(); i++) {
+                JSONObject o = fields.optJSONObject(i);
+                if (o != null) writeField(db, o, i + 1);
+            }
+
             JSONObject cart = data.optJSONObject("cart");
-            if (cart != null) {
-                for (String kind : KINDS) insertCartRows(db, kind, cart.optJSONArray(kind));
+            for (String kind : KINDS) {
+                if (cart != null) insertCartRows(db, kind, cart.optJSONArray(kind));
+            }
+            for (int i = 0; sections != null && i < sections.length(); i++) {
+                JSONObject sec = sections.optJSONObject(i);
+                String id = sec == null ? "" : sec.optString("id");
+                if (!isCustomKind(id)) continue;
+                JSONArray items = data.optJSONArray(id);
+                for (int j = 0; items != null && j < items.length(); j++) {
+                    JSONObject o = items.optJSONObject(j);
+                    if (o == null || o.optString("id").isEmpty()) continue;
+                    ContentValues v = customValues(id, o);
+                    v.put("id", o.optString("id"));
+                    v.put("sort_order", j + 1);
+                    db.insertWithOnConflict("items", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+                }
+                if (cart != null) insertCartRows(db, id, cart.optJSONArray(id));
             }
 
             JSONArray cats = data.optJSONArray("cats");

@@ -7,10 +7,13 @@
 'use strict';
 
 var KEY = 'clinic_tool_v1';   /* تخزين الإصدارات السابقة — يُستخدم للترحيل والبديل */
-var KINDS = ['meds', 'labs', 'imaging', 'recipes'];
+/** الأقسام الأصلية الأربعة — لها جداولها وحقولها المكتوبة في الكود. */
+var BUILTIN = ['meds', 'labs', 'imaging', 'recipes'];
+/** أقسام هذه النسخة من البيانات (الأصلية + ما أنشأه المستخدم) — يُملأ في applyData. */
+var KINDS = BUILTIN.slice();
 var DB = { pin_hash: null, meds: [], labs: [], imaging: [], recipes: [],
            cart: { meds: [], labs: [], imaging: [], recipes: [] },
-           cats: [], groups: [], out: null };
+           cats: [], groups: [], sections: [], fields: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -58,16 +61,50 @@ var OUT_DEF = {
   recipes: ['ingredients', 'preparation', 'dose']
 };
 var OUT_ALL = { meds: OUT_MEDS, labs: OUT_LABS, imaging: OUT_IMAGING, recipes: OUT_RECIPES };
-function outDefs(kind) { return OUT_ALL[kind]; }
+/**
+ * الحقول القابلة للإرسال في قسم: الأصلية المكتوبة في الكود، ثم ما عرّفه
+ * المستخدم. حقول المستخدم تُسبَق بـ«x:» فيعرف `outLines` أن قيمتها في
+ * `extra` لا في العنصر مباشرةً.
+ */
+function outDefs(kind) {
+  var base = OUT_ALL[kind] ? OUT_ALL[kind].slice() : [['category', 'التصنيف']];
+  return base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label]; }));
+}
+function outValue(o, key) {
+  if (key.indexOf('x:') === 0) return ((o.extra || {})[key.slice(2)]) || '';
+  return o[key] == null ? '' : o[key];
+}
 /** مجموعة القسم في الذاكرة. */
 function coll(kind) { return DB[kind]; }
 function setColl(kind, arr) { DB[kind] = arr; }
-var KIND_LBL = {
+/** الأسماء الأصلية للأقسام الأربعة — مرجع الزرع، وأساس المقارنة عند التسمية. */
+var KIND_DEF = {
   meds: { one: 'علاج واحد', two: 'علاجان', few: 'علاجات', many: 'علاجًا', title: 'العلاجات', icon: '💊' },
   labs: { one: 'تحليل واحد', two: 'تحليلان', few: 'تحاليل', many: 'تحليلًا', title: 'التحاليل', icon: '🧪' },
   imaging: { one: 'فحص واحد', two: 'فحصان', few: 'فحوصات', many: 'فحصًا', title: 'الأشعة والفحوصات', icon: '📷' },
   recipes: { one: 'وصفة واحدة', two: 'وصفتان', few: 'وصفات', many: 'وصفة', title: 'الوصفات العلاجية', icon: '🌿' }
 };
+/** ألفاظ عدّ محايدة تصلح لأي قسم — تُستعمل لما لا نعرف مفرده. */
+var GEN_LBL = { one: 'عنصر واحد', two: 'عنصران', few: 'عناصر', many: 'عنصرًا' };
+
+/**
+ * تسمية القسم وأيقونته وألفاظ عدّه. القسم الأصلي يحتفظ بألفاظه الخاصة
+ * («٣ تحاليل») ما دام اسمه لم يتغيّر؛ فإن سمّاه المستخدم باسم آخر — أو كان
+ * قسمًا أنشأه بنفسه — رجعنا لألفاظ محايدة، لأن اشتقاق جمع عربي صحيح من اسم
+ * كيفما كان غير ممكن، و«٣ عناصر» صحيحة دائمًا بينما «٣ وصفات» تحت اسم
+ * «الخلطات» ليست كذلك.
+ */
+function kindLbl(kind) {
+  var s = secOf(kind) || {}, d = KIND_DEF[kind];
+  var title = s.title || (d ? d.title : kind);
+  var w = (d && title === d.title) ? d : GEN_LBL;
+  return { title: title, icon: s.icon || (d ? d.icon : '📄'),
+           one: w.one, two: w.two, few: w.few, many: w.many };
+}
+function secOf(kind) {
+  return DB.sections.find(function (s) { return s.id === kind; });
+}
+function isBuiltin(kind) { return BUILTIN.indexOf(kind) >= 0; }
 var NDB = (typeof window.NativeDb === 'object' && window.NativeDb) ? window.NativeDb : null;
 
 function parseList(raw, fallback) {
@@ -80,13 +117,17 @@ function applyData(data) {
   // بدل الخروج، وإلا بقي DB.out فارغًا وانهارت الطباعة والإعدادات.
   data = data || {};
   var c = data.cart || {}, st = data.settings || {}, o = data.out || {};
+  // الأقسام تُقرأ أولًا لأنها تحدّد KINDS التي يدور عليها كل ما بعدها
+  DB.sections = Array.isArray(data.sections) ? data.sections : [];
+  DB.fields = Array.isArray(data.fields) ? data.fields : [];
+  ensureSections();
   DB.cart = {}; DB.out = {};
   KINDS.forEach(function (k) {
     setColl(k, Array.isArray(data[k]) ? data[k] : []);
     DB.cart[k] = Array.isArray(c[k]) ? c[k] : [];
     // الحقول المرسلة: من جدول الإعدادات داخل التطبيق، أو من النسخة
     // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
-    DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k]);
+    DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k] || []);
   });
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
@@ -109,7 +150,7 @@ function blobSave() {
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
-            out: DB.out, header: DB.header };
+            sections: DB.sections, fields: DB.fields, out: DB.out, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
   return o;
 }
@@ -161,6 +202,30 @@ var Store = {
   setBackupAt: function (t) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('backup_at', String(t)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  saveSection: function (sec) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.saveSection(JSON.stringify(sec)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  dropSection: function (id) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.deleteSection(id) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setSectionOrder: function (ids) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSectionOrder(JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  saveField: function (f) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.saveField(JSON.stringify(f)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  dropField: function (id) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.deleteField(id) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setFieldOrder: function (ids) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setFieldOrder(JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
   },
   saveCat: function (c) {
     if (!NDB) { blobSave(); return true; }
@@ -369,16 +434,22 @@ var PAGES = {
 /** عنوان صفحات المجموعات يُحسَب لأنه يتضمّن اسم القسم أو اسم المجموعة. */
 function pageMeta(p) {
   if (PAGES[p]) return PAGES[p];
+  if (p === 'secs') return { icon: '🗂️', title: 'إدارة الأقسام' };
   if (p.indexOf('cat:') === 0) {
-    return { icon: '🏷️', title: 'تصنيفات ' + KIND_LBL[p.slice(4)].title };
+    return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
   }
+  if (p.indexOf('fld:') === 0) {
+    return { icon: '🧩', title: 'حقول ' + kindLbl(p.slice(4)).title };
+  }
+  // قسم أنشأه المستخدم: عنوانه وأيقونته من تسجيله
+  if (secOf(p)) { var L = kindLbl(p); return { icon: L.icon, title: L.title }; }
   if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
     if (a[2]) {
       var g = DB.groups.find(function (x) { return x.id === a[2]; });
       return { icon: '📁', title: (GRP && GRP.id === a[2] ? GRP.name : (g ? g.name : 'مجموعة')) || 'مجموعة' };
     }
-    return { icon: '📁', title: a[1] === 'all' ? 'مجموعاتي المحفوظة' : 'مجموعات ' + KIND_LBL[a[1]].title };
+    return { icon: '📁', title: a[1] === 'all' ? 'مجموعاتي المحفوظة' : 'مجموعات ' + kindLbl(a[1]).title };
   }
   return PAGES.home;
 }
@@ -429,10 +500,10 @@ function renderSettings() {
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">الحقول المرسلة في الطباعة والصورة</div>'
     + '<div class="muted" style="margin-bottom:9px">اسم العلاج واسم التحليل يظهران دائمًا. اختر ما يُضاف معهما.</div>'
-    + outBlock('meds', '💊 العلاجات', OUT_MEDS)
-    + outBlock('labs', '🧪 التحاليل', OUT_LABS)
-    + outBlock('imaging', '📷 الأشعة والفحوصات', OUT_IMAGING)
-    + outBlock('recipes', '🌿 الوصفات', OUT_RECIPES)
+    + KINDS.map(function (k) {
+      var L = kindLbl(k);
+      return outBlock(k, L.icon + ' ' + L.title, outDefs(k));
+    }).join('')
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">ترويسة الطباعة (اختيارية — اتركها فارغة إن لم ترغب)</div>'
@@ -444,11 +515,17 @@ function renderSettings() {
     + '</div>'
     + backupSection()
     + '<div class="settings-sec">'
+    + '<div class="settings-lbl">الأقسام</div>'
+    + '<div class="muted" style="margin-bottom:9px">سمِّ الأقسام ورتّبها، وأضِف أقسامًا جديدة، ولكل قسم تصنيفاته وحقوله الإضافية.</div>'
+    + '<button class="btn full primary" onclick="goPage(\'secs\')">🗂️ إدارة الأقسام (' + DB.sections.length + ')</button>'
+    + '</div>'
+    + '<div class="settings-sec">'
     + '<div class="settings-lbl">إضافة سريعة</div>'
-    + '<button class="btn full" onclick="medForm()">💊 + إضافة علاج</button>'
-    + '<button class="btn full" onclick="labForm()">🧪 + إضافة تحليل</button>'
-    + '<button class="btn full" onclick="imgForm()">📷 + إضافة فحص/أشعة</button>'
-    + '<button class="btn full" onclick="recipeForm()">🌿 + إضافة وصفة</button>'
+    + KINDS.map(function (k) {
+      var L = kindLbl(k);
+      return '<button class="btn full" onclick="quickAdd(\'' + k + '\')">'
+        + L.icon + ' + إضافة إلى ' + esc(L.title) + '</button>';
+    }).join('')
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">المكتبة الجاهزة (مدمجة داخل التطبيق)</div>'
@@ -571,7 +648,7 @@ function renderLibraryPage(kind) {
     + '➕ إضافة المحدد: <span id="lib-n">0</span></button>'
     + '<input id="lib-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث في المكتبة…" oninput="libRender()">'
     + '<div class="muted" style="margin-top:7px">'
-    + lib.length + ' ' + KIND_LBL[kind].many + ' في ' + libCats().length + ' تصنيفًا. '
+    + lib.length + ' ' + kindLbl(kind).many + ' في ' + libCats().length + ' تصنيفًا. '
     + 'العناصر الباهتة مضافة عندك مسبقًا.'
     + (kind === 'meds' ? ' الجرعات فارغة عمدًا — أضِفها بنفسك بعد الإضافة.' : '')
     + '</div></div><div id="lib-list"></div>');
@@ -654,7 +731,7 @@ window.libAdd = function () {
   LIB_SEL = {};
   libSyncMine();          // المضاف حديثًا يصير باهتًا فلا يُضاف مرتين
   libCount(); libRender();
-  var L = KIND_LBL[kind];
+  var L = kindLbl(kind);
   toast('✅ تمت إضافة ' + countWord(items.length, L.one, L.two, L.few, L.many));
 };
 
@@ -821,13 +898,16 @@ function render() {
   else if (p === 'imaging') renderImaging();
   else if (p === 'recipes') renderRecipes();
   else if (p === 'settings') renderSettings();
+  else if (p === 'secs') renderSectionsPage();
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
+  else if (p.indexOf('fld:') === 0) renderFieldsPage(p.slice(4));
   else if (p.indexOf('grp:') === 0) {
     var a = p.split(':');
     if (a[2]) renderGroupPage(a[1], a[2]); else renderGroupsPage(a[1]);
   }
+  else if (secOf(p)) renderCustomSection(p);
   else renderHome();
 }
 
@@ -849,7 +929,7 @@ function renderHome() {
     html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
       + KINDS.map(function (k) {
         return DB.cart[k].length
-          ? '<button class="btn white sm" onclick="goPage(\'' + k + '\')">' + KIND_LBL[k].title + ' (' + DB.cart[k].length + ')</button>'
+          ? '<button class="btn white sm" onclick="goPage(\'' + k + '\')">' + kindLbl(k).title + ' (' + DB.cart[k].length + ')</button>'
           : '';
       }).join('') + '</div>';
   }
@@ -860,13 +940,368 @@ function renderHome() {
   }
   html += '<div class="hgrid">'
     + KINDS.map(function (k, i) {
-      var n = coll(k).length, L = KIND_LBL[k];
+      var n = coll(k).length, L = kindLbl(k);
       return homeCard(k, L.icon, L.title,
         n ? countWord(n, L.one, L.two, L.few, L.many) : 'لا شيء بعد',
         (i === KINDS.length - 1 && KINDS.length % 2) ? ' wide' : '');
     }).join('')
     + '</div>';
   h('page', html);
+}
+
+/* ════════════════════════ 🗂️ الأقسام ════════════════════════
+   الأقسام الأربعة الأصلية مسجّلة كبقيّتها، فيقدر المستخدم على تسميتها
+   وتغيير أيقونتها وترتيبها، وعلى إضافة أقسام جديدة كاملة. الأصلية لها
+   جداولها وحقولها المكتوبة في الكود ولا تُحذف؛ الجديدة عناصرها في جدول
+   `items` وحقولها كلها من تعريف المستخدم. */
+
+/**
+ * يضمن وجود الأربعة الأصلية ويحدّث KINDS ومصفوفات العناصر والسلة.
+ *
+ * الصفّ يُكتب في القاعدة فور استحداثه لا عند أول تعديل: `setSectionOrder`
+ * تُحدّث صفوفًا موجودة فقط، فلولا ذلك ضاع ترتيبٌ يغيّره المستخدم قبل أن
+ * يكون قد سمّى قسمًا واحدًا.
+ */
+function ensureSections() {
+  BUILTIN.forEach(function (k) {
+    if (secOf(k)) return;
+    var d = KIND_DEF[k];
+    var sec = { id: k, title: d.title, icon: d.icon, builtin: 1 };
+    DB.sections.push(sec);
+    Store.saveSection(sec);
+  });
+  KINDS = DB.sections.map(function (s) { return s.id; });
+  KINDS.forEach(function (k) {
+    if (!Array.isArray(DB[k])) DB[k] = [];
+    if (!Array.isArray(DB.cart[k])) DB.cart[k] = [];
+  });
+}
+/** «+ إضافة» من الإعدادات — يفتح نموذج القسم أيًّا كان أصليًّا أو جديدًا. */
+window.quickAdd = function (kind) {
+  if (kind === 'meds') return medForm();
+  if (kind === 'labs') return labForm();
+  if (kind === 'imaging') return imgForm();
+  if (kind === 'recipes') return recipeForm();
+  secItemForm(kind);
+};
+
+function renderSectionsPage() {
+  var html = '<button class="btn full primary" onclick="secNew()">➕ قسم جديد</button>'
+    + '<div class="hint">الأقسام الأصلية تُسمّى وتُرتَّب ولا تُحذف. ولكل قسم'
+    + ' تصنيفاته وحقوله الإضافية.</div>';
+
+  html += DB.sections.map(function (s, i) {
+    var L = kindLbl(s.id), n = coll(s.id).length, nf = fieldsOf(s.id).length;
+    return '<div class="card"><div class="row">'
+      + '<div class="grow"><div class="name">' + L.icon + ' ' + esc(L.title)
+      + (s.builtin ? '' : ' <span class="chip">قسم جديد</span>') + '</div>'
+      + '<div class="sub">' + (n ? countWord(n, L.one, L.two, L.few, L.many) : 'فارغ')
+      + ' • ' + countWord(catNames(s.id).length, 'تصنيف واحد', 'تصنيفان', 'تصنيفات', 'تصنيفًا')
+      + (nf ? ' • ' + countWord(nf, 'حقل إضافي', 'حقلان إضافيان', 'حقول إضافية', 'حقلًا إضافيًا') : '')
+      + '</div></div>'
+      + '<button class="ic"' + (i === 0 ? ' disabled' : '')
+      + ' onclick="secMove(\'' + s.id + '\',-1)">⬆️</button>'
+      + '<button class="ic"' + (i === DB.sections.length - 1 ? ' disabled' : '')
+      + ' onclick="secMove(\'' + s.id + '\',1)">⬇️</button>'
+      + '<button class="ic" onclick="secEdit(\'' + s.id + '\')">✏️</button>'
+      + (s.builtin ? '' : '<button class="ic" onclick="secDel(\'' + s.id + '\')">🗑️</button>')
+      + '</div>'
+      + '<div class="row" style="gap:7px;margin-top:7px">'
+      + '<button class="btn sm grow" onclick="goPage(\'cat:' + s.id + '\')">🏷️ التصنيفات</button>'
+      + '<button class="btn sm grow" onclick="goPage(\'fld:' + s.id + '\')">🧩 الحقول الإضافية</button>'
+      + '</div></div>';
+  }).join('');
+  h('page', html);
+}
+
+/** نموذج القسم — الاسم والأيقونة. الأيقونة رمز تعبيري واحد. */
+function secFormBody(s) {
+  var icons = ['💊', '🧪', '📷', '🌿', '🩺', '💉', '🦷', '👁️', '🫀', '🧠', '🦴',
+               '🍎', '📋', '📌', '🧬', '🧫', '🩹', '📄'];
+  var cur = s.icon || '📄';
+  return '<div class="f"><label>اسم القسم *</label>'
+    + '<input id="sf-title" class="inp" value="' + esc(s.title || '') + '" placeholder="مثال: اللقاحات"></div>'
+    + '<div class="f"><label>الأيقونة</label><div class="segs wrap">'
+    + icons.map(function (v) {
+      return '<button type="button" class="seg' + (cur === v ? ' on' : '') + '"'
+        + ' data-t="' + v + '" onclick="secPickIcon(this)">' + v + '</button>';
+    }).join('')
+    + '</div><input type="hidden" id="sf-icon" value="' + esc(cur) + '"></div>';
+}
+window.secPickIcon = function (btn) {
+  var kids = btn.parentNode.children;
+  for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
+  btn.className = 'seg on';
+  var hidden = $('sf-icon'); if (hidden) hidden.value = btn.getAttribute('data-t');
+};
+window.secNew = function () {
+  openModal('➕ قسم جديد', secFormBody({ icon: '📋' })
+    + '<div class="hint">القسم الجديد يبدأ بحقل «الاسم» فقط — أضِف إليه ما تشاء'
+    + ' من «الحقول الإضافية»، وله تصنيفاته وسلّته ومجموعاته وطباعته كالبقية.</div>'
+    + '<div class="mft"><button class="btn primary" onclick="secCreate()">إنشاء</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.secCreate = function () {
+  var title = (($('sf-title') || {}).value || '').trim();
+  if (!title) return toast('اسم القسم مطلوب', 'er');
+  var sec = { id: 'sec_' + uid(), title: title, icon: ($('sf-icon') || {}).value || '📋', builtin: 0 };
+  DB.sections.push(sec);
+  DB[sec.id] = []; DB.cart[sec.id] = [];
+  DB.out[sec.id] = [];
+  KINDS = DB.sections.map(function (s) { return s.id; });
+  Store.saveSection(sec); Store.setOut(sec.id);
+  closeModal(); goPage(sec.id); toast('✅ أُنشئ القسم');
+};
+window.secEdit = function (id) {
+  var s = secOf(id); if (!s) return;
+  openModal('✏️ تعديل القسم', secFormBody(s)
+    + '<div class="mft"><button class="btn primary" onclick="secSave(\'' + id + '\')">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.secSave = function (id) {
+  var s = secOf(id); if (!s) return;
+  var title = (($('sf-title') || {}).value || '').trim();
+  if (!title) return toast('اسم القسم مطلوب', 'er');
+  s.title = title;
+  s.icon = ($('sf-icon') || {}).value || s.icon;
+  Store.saveSection(s);
+  closeModal(); render(); toast('✅ حُفظ القسم');
+};
+window.secDel = function (id) {
+  var s = secOf(id); if (!s || s.builtin) return;
+  var n = coll(id).length;
+  confirmBox('حذف قسم «' + s.title + '»؟'
+    + (n ? ' سيُحذف معه ' + countWord(n, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
+      + ' وتصنيفاته ومجموعاته.' : ''), function () {
+    DB.sections = DB.sections.filter(function (x) { return x.id !== id; });
+    DB.cats = DB.cats.filter(function (c) { return c.kind !== id; });
+    DB.fields = DB.fields.filter(function (f) { return f.kind !== id; });
+    DB.groups = DB.groups.filter(function (g) { return g.kind !== id; });
+    delete DB[id]; delete DB.cart[id]; delete DB.out[id];
+    KINDS = DB.sections.map(function (x) { return x.id; });
+    Store.dropSection(id);
+    closeModal(); goPage('secs'); toast('🗑️ حُذف القسم');
+  });
+};
+window.secMove = function (id, dir) {
+  var i = DB.sections.findIndex(function (s) { return s.id === id; });
+  var j = i + dir;
+  if (i < 0 || j < 0 || j >= DB.sections.length) return;
+  var tmp = DB.sections[i]; DB.sections[i] = DB.sections[j]; DB.sections[j] = tmp;
+  KINDS = DB.sections.map(function (s) { return s.id; });
+  Store.setSectionOrder(KINDS);
+  render();
+};
+
+/* ── صفحة قسمٍ أنشأه المستخدم ──
+   عارض واحد يخدم أي قسم جديد: الاسم حقل ثابت، والتصنيف، ثم حقول المستخدم.
+   بقيّة الوظائف (السلة، المجموعات، المعاينة، الطباعة) تعمل بلا سطر إضافي
+   لأنها كلها تدور على `kind` لا على أسماء الحقول. */
+function secRow(kind, o) {
+  var on = DB.cart[kind].indexOf(o.id) >= 0;
+  var sub = fieldsOf(kind).map(function (f) {
+    var v = (o.extra || {})[f.key];
+    return v ? '<div class="sub">' + esc(f.label) + ': ' + esc(v) + '</div>' : '';
+  }).slice(0, 2).join('');
+  return '<div class="card' + (on ? ' sel' : '') + '"><div class="row">'
+    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'' + kind + '\',\'' + o.id + '\')">'
+    + '<div class="grow" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">'
+    + '<div class="name">' + esc(o.name) + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
+    + sub + '</div>'
+    + '<button class="ic" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="secItemDel(\'' + kind + '\',\'' + o.id + '\')">🗑️</button>'
+    + '</div></div>';
+}
+function renderCustomSection(kind) {
+  var L = kindLbl(kind);
+  var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var list = coll(kind).filter(function (o) {
+    if (!q) return true;
+    var hay = [o.name, o.category].concat(fieldsOf(kind).map(function (f) {
+      return (o.extra || {})[f.key] || '';
+    })).join(' ').toLowerCase();
+    return hay.indexOf(q) >= 0;
+  });
+  var ng = groupsOf(kind).length;
+  var html = '<div class="toolbar">'
+    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث…" value="' + esc(q) + '" oninput="render()">'
+    + '<button class="btn" onclick="goPage(\'cat:' + kind + '\')">🏷️</button>'
+    + '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn primary" onclick="secItemForm(\'' + kind + '\')">+ إضافة</button></div>';
+  if (DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
+  if (!list.length) {
+    h('page', html + emptyBox(L.icon, 'لا شيء في ' + L.title,
+      fieldsOf(kind).length ? 'اضغط «+ إضافة» لتبدأ'
+        : 'أضِف حقولًا لهذا القسم من ⚙️ الإعدادات ← إدارة الأقسام'));
+    return;
+  }
+  if (q) {
+    html += list.map(function (o) { return secRow(kind, o); }).join('');
+  } else {
+    var fav = list.filter(function (o) { return o.flag; });
+    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(function (o) { return secRow(kind, o); }).join(''), true);
+    var gs = groupBy(list, kind), op = openByDefault(list, gs);
+    gs.forEach(function (g) {
+      html += accBlock(L.icon + ' ' + g.cat + ' (' + g.items.length + ')',
+        g.items.map(function (o) { return secRow(kind, o); }).join(''), op);
+    });
+  }
+  h('page', html);
+}
+window.secItemForm = function (kind, id) {
+  var o = id ? (coll(kind).find(function (x) { return x.id === id; }) || {}) : {};
+  var L = kindLbl(kind);
+  var body = '<div class="f"><label>الاسم *</label>'
+    + '<input id="cf-name" class="inp" value="' + esc(o.name || '') + '"></div>'
+    + catField('cf', kind, o.category)
+    + extraFields('cf', kind, o)
+    + '<label class="chk-row"><input type="checkbox" id="cf-flag" ' + (o.flag ? 'checked' : '') + '> ⭐ مفضّل</label>'
+    + '<div class="mft"><button class="btn primary" onclick="secItemSave(\'' + kind + '\',\'' + (id || '') + '\')">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>';
+  openModal((id ? '✏️ تعديل — ' : '+ إضافة — ') + L.title, body);
+};
+window.secItemSave = function (kind, id) {
+  var body = {
+    name: (($('cf-name') || {}).value || '').trim(),
+    category: (($('cf-category') || {}).value || '').trim(),
+    extra: readExtra('cf', kind),
+    flag: ($('cf-flag') || {}).checked ? 1 : 0
+  };
+  if (!body.name) return toast('الاسم مطلوب', 'er');
+  catEnsure(kind, body.category);
+  var rec;
+  if (id) { rec = coll(kind).find(function (x) { return x.id === id; }); Object.assign(rec, body); }
+  else { body.id = uid(); coll(kind).push(body); rec = body; }
+  Store.upsert(kind, rec); closeModal(); toast('✅ تم الحفظ');
+  if (curPage() !== kind) goPage(kind); else render();
+};
+window.secItemDel = function (kind, id) {
+  confirmBox('حذف هذا العنصر؟', function () {
+    setColl(kind, coll(kind).filter(function (x) { return x.id !== id; }));
+    DB.cart[kind] = DB.cart[kind].filter(function (x) { return x !== id; });
+    Store.remove(kind, id); closeModal(); toast('🗑️ تم الحذف'); render();
+  });
+};
+
+/* ════════════════════════ 🧩 الحقول الإضافية ════════════════════════
+   حقل يعرّفه المستخدم داخل بيانات العنصر. قيمته تُحفَظ في `extra` (JSON)
+   على صفّ العنصر نفسه، فلا يتغيّر مخطط القاعدة كلّما أُضيف حقل. ويظهر في
+   النموذج وفي «الحقول المرسلة» كأي حقل أصلي. */
+
+function fieldsOf(kind) {
+  return DB.fields.filter(function (f) { return f.kind === kind; });
+}
+/** مفتاح ثابت لا يتغيّر بتغيّر التسمية، فلا تضيع القيم عند إعادة التسمية. */
+function fieldKey() { return 'f' + uid(); }
+
+function renderFieldsPage(kind) {
+  var L = kindLbl(kind), list = fieldsOf(kind);
+  var html = '<button class="btn full primary" onclick="fldNew(\'' + kind + '\')">➕ حقل جديد</button>'
+    + '<div class="hint">حقول تضيفها لبيانات ' + esc(L.title) + '. تظهر في نموذج'
+    + ' العنصر، وتقدر تختارها في «الحقول المرسلة» لتُطبع وتُرسَل.</div>';
+
+  if (!list.length) {
+    h('page', html + emptyBox('🧩', 'لا حقول إضافية', 'الحقول الأصلية للقسم موجودة دائمًا'));
+    return;
+  }
+  html += list.map(function (f, i) {
+    return '<div class="card"><div class="row">'
+      + '<div class="grow"><div class="name">🧩 ' + esc(f.label) + '</div>'
+      + '<div class="sub">' + (f.type === 'area' ? 'نصّ طويل' : 'سطر واحد') + '</div></div>'
+      + '<button class="ic"' + (i === 0 ? ' disabled' : '')
+      + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',-1)">⬆️</button>'
+      + '<button class="ic"' + (i === list.length - 1 ? ' disabled' : '')
+      + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',1)">⬇️</button>'
+      + '<button class="ic" onclick="fldEdit(\'' + kind + '\',\'' + f.id + '\')">✏️</button>'
+      + '<button class="ic" onclick="fldDel(\'' + kind + '\',\'' + f.id + '\')">🗑️</button>'
+      + '</div></div>';
+  }).join('');
+  h('page', html);
+}
+function fldFormBody(f) {
+  var t = f.type || 'text';
+  return '<div class="f"><label>اسم الحقل *</label>'
+    + '<input id="ff-label" class="inp" value="' + esc(f.label || '') + '" placeholder="مثال: الشركة المصنّعة"></div>'
+    + '<div class="f"><label>نوع الحقل</label><div class="segs">'
+    + [['text', 'سطر واحد'], ['area', 'نصّ طويل']].map(function (o) {
+      return '<button type="button" class="seg' + (t === o[0] ? ' on' : '') + '"'
+        + ' data-t="' + o[0] + '" onclick="fldPickType(this)">' + o[1] + '</button>';
+    }).join('')
+    + '</div><input type="hidden" id="ff-type" value="' + t + '"></div>';
+}
+window.fldPickType = function (btn) {
+  var kids = btn.parentNode.children;
+  for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
+  btn.className = 'seg on';
+  var hidden = $('ff-type'); if (hidden) hidden.value = btn.getAttribute('data-t');
+};
+window.fldNew = function (kind) {
+  openModal('➕ حقل جديد', fldFormBody({})
+    + '<div class="mft"><button class="btn primary" onclick="fldCreate(\'' + kind + '\')">إنشاء</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.fldCreate = function (kind) {
+  var label = (($('ff-label') || {}).value || '').trim();
+  if (!label) return toast('اسم الحقل مطلوب', 'er');
+  var f = { id: uid(), kind: kind, key: fieldKey(), label: label,
+            type: ($('ff-type') || {}).value || 'text' };
+  DB.fields.push(f); Store.saveField(f);
+  closeModal(); render(); toast('✅ أُضيف الحقل');
+};
+window.fldEdit = function (kind, id) {
+  var f = DB.fields.find(function (x) { return x.id === id; }); if (!f) return;
+  openModal('✏️ تعديل الحقل', fldFormBody(f)
+    + '<div class="mft"><button class="btn primary" onclick="fldSave(\'' + id + '\')">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+};
+window.fldSave = function (id) {
+  var f = DB.fields.find(function (x) { return x.id === id; }); if (!f) return;
+  var label = (($('ff-label') || {}).value || '').trim();
+  if (!label) return toast('اسم الحقل مطلوب', 'er');
+  // المفتاح لا يتغيّر — إعادة التسمية لا تفقد القيم المحفوظة
+  f.label = label;
+  f.type = ($('ff-type') || {}).value || f.type;
+  Store.saveField(f);
+  closeModal(); render(); toast('✅ حُفظ الحقل');
+};
+window.fldDel = function (kind, id) {
+  var f = DB.fields.find(function (x) { return x.id === id; }); if (!f) return;
+  confirmBox('حذف حقل «' + f.label + '»؟ ما كُتب فيه داخل العناصر لن يظهر بعدها.', function () {
+    DB.fields = DB.fields.filter(function (x) { return x.id !== id; });
+    DB.out[kind] = (DB.out[kind] || []).filter(function (k) { return k !== 'x:' + f.key; });
+    Store.dropField(id); Store.setOut(kind);
+    closeModal(); render(); toast('🗑️ حُذف الحقل');
+  });
+};
+window.fldMove = function (kind, id, dir) {
+  var list = fieldsOf(kind);
+  var i = list.findIndex(function (f) { return f.id === id; });
+  var j = i + dir;
+  if (i < 0 || j < 0 || j >= list.length) return;
+  var tmp = list[i]; list[i] = list[j]; list[j] = tmp;
+  DB.fields = DB.fields.filter(function (f) { return f.kind !== kind; }).concat(list);
+  Store.setFieldOrder(DB.fields.map(function (f) { return f.id; }));
+  render();
+};
+
+/** حقول المستخدم داخل نموذج العنصر — تُقرأ وتُكتب في o.extra. */
+function extraFields(pfx, kind, o) {
+  var x = (o && o.extra) || {};
+  return fieldsOf(kind).map(function (f) {
+    var id = pfx + '-x-' + f.key;
+    if (f.type === 'area') return taField(id, f.label, x[f.key] || '');
+    return '<div class="f"><label>' + esc(f.label) + '</label>'
+      + '<input id="' + id + '" class="inp" value="' + esc(x[f.key] || '') + '"></div>';
+  }).join('');
+}
+function readExtra(pfx, kind) {
+  var out = {};
+  fieldsOf(kind).forEach(function (f) {
+    var el = $(pfx + '-x-' + f.key);
+    var v = el ? String(el.value || '').trim() : '';
+    if (v) out[f.key] = v;
+  });
+  return out;
 }
 
 /* ════════════════════════ 🏷️ التصنيفات ════════════════════════
@@ -929,44 +1364,48 @@ function seedCats() {
   DB.cats_seeded = 1; Store.setSeeded();
 }
 
-/** حقل اختيار التصنيف داخل نموذج العنصر — شرائح + إنشاء فوري بلا مغادرة. */
+/** اختيار التصنيف: قائمة منسدلة سطرًا واحدًا مهما كثرت التصنيفات، وفيها
+    خيار إنشاء تصنيف جديد يكشف حقل اسمه بلا مغادرة النموذج. */
+/* خيار «تصنيف جديد» آخر القائمة دائمًا، ونتعرّف عليه بموقعه لا بقيمته:
+   أي قيمة حارسة قد يكتبها المستخدم اسمًا لتصنيف، كما أن المحرف NUL يُستبدَل
+   أصلًا عند تحليل HTML فلا تعود المقارنة النصّية صحيحة. */
+var CAT_NEW = '__new__';
+function catIsNew(sel) { return sel.selectedIndex === sel.options.length - 1; }
 function catField(pfx, kind, cur) {
   cur = (cur || '').trim();
   var names = catNames(kind);
-  return '<div class="f"><label>التصنيف</label><div class="segs wrap">'
+  var known = !cur || names.indexOf(cur) >= 0;
+  return '<div class="f"><label>التصنيف</label>'
+    + '<select id="' + pfx + '-catsel" class="inp sel" onchange="catSel(\'' + pfx + '\')">'
+    + '<option value=""' + (cur ? '' : ' selected') + '>— بلا تصنيف —</option>'
     + names.map(function (n) {
-      return '<button type="button" class="seg' + (cur === n ? ' on' : '') + '"'
-        + ' data-t="' + esc(n) + '" onclick="catPick(this,\'' + pfx + '\')">' + esc(n) + '</button>';
+      return '<option value="' + esc(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + '</option>';
     }).join('')
-    + '<button type="button" class="seg new" onclick="catNewToggle(\'' + pfx + '\')">➕ تصنيف جديد</button>'
-    + '</div>'
-    + '<input id="' + pfx + '-catnew" class="inp" style="display:none;margin-top:7px"'
+    + '<option value="' + CAT_NEW + '"' + (known ? '' : ' selected') + '>➕ تصنيف جديد…</option>'
+    + '</select>'
+    + '<input id="' + pfx + '-catnew" class="inp" style="margin-top:7px'
+    + (known ? ';display:none' : '') + '" value="' + (known ? '' : esc(cur)) + '"'
     + ' placeholder="اسم التصنيف الجديد" oninput="catNewInput(\'' + pfx + '\')">'
     + '<input type="hidden" id="' + pfx + '-category" value="' + esc(cur) + '"></div>';
 }
-window.catPick = function (btn, pfx) {
-  var kids = btn.parentNode.children;
-  for (var i = 0; i < kids.length; i++) {
-    kids[i].className = kids[i].getAttribute('data-t') === null ? 'seg new' : 'seg';
+window.catSel = function (pfx) {
+  var sel = $(pfx + '-catsel'), nw = $(pfx + '-catnew'), hidden = $(pfx + '-category');
+  if (!sel || !hidden) return;
+  if (catIsNew(sel)) {
+    if (nw) { nw.style.display = ''; nw.focus(); hidden.value = String(nw.value || '').trim(); }
+    return;
   }
-  btn.className = 'seg on';
-  var nw = $(pfx + '-catnew'); if (nw) { nw.value = ''; nw.style.display = 'none'; }
-  var hidden = $(pfx + '-category'); if (hidden) hidden.value = btn.getAttribute('data-t');
-};
-window.catNewToggle = function (pfx) {
-  var nw = $(pfx + '-catnew'); if (!nw) return;
-  nw.style.display = '';
-  nw.focus();
-  var hidden = $(pfx + '-category'); if (hidden) hidden.value = nw.value.trim();
+  if (nw) { nw.value = ''; nw.style.display = 'none'; }
+  hidden.value = sel.value;
 };
 window.catNewInput = function (pfx) {
   var nw = $(pfx + '-catnew'), hidden = $(pfx + '-category');
-  if (nw && hidden) hidden.value = nw.value.trim();
+  if (nw && hidden) hidden.value = String(nw.value || '').trim();
 };
 
 /* ── صفحة إدارة التصنيفات ── */
 function renderCatsPage(kind) {
-  var L = KIND_LBL[kind], cats = catsRaw(kind);
+  var L = kindLbl(kind), cats = catsRaw(kind);
   var orphans = catNames(kind).filter(function (n) { return !catByName(kind, n); });
   var html = '<button class="btn full primary" onclick="catNew(\'' + kind + '\')">➕ تصنيف جديد</button>';
 
@@ -1023,8 +1462,8 @@ window.catRename = function (kind, id) {
   openModal('✏️ إعادة تسمية التصنيف',
     '<div class="f"><label>اسم التصنيف *</label>'
     + '<input id="cn" class="inp" value="' + esc(c.name) + '"></div>'
-    + '<div class="hint">سيُنقل ' + countWord(catCount(kind, c.name), KIND_LBL[kind].one,
-      KIND_LBL[kind].two, KIND_LBL[kind].few, KIND_LBL[kind].many) + ' إلى الاسم الجديد.</div>'
+    + '<div class="hint">سيُنقل ' + countWord(catCount(kind, c.name), kindLbl(kind).one,
+      kindLbl(kind).two, kindLbl(kind).few, kindLbl(kind).many) + ' إلى الاسم الجديد.</div>'
     + '<div class="mft"><button class="btn primary" onclick="catRenameSave(\'' + kind + '\',\'' + id + '\')">حفظ</button>'
     + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
 };
@@ -1173,6 +1612,7 @@ window.medForm = function (id) {
     return '<div class="f"><label>' + lbl + (key === 'trade_name' ? ' *' : '') + '</label>'
       + '<input id="mf-' + key + '" class="inp" value="' + v + '"></div>';
   }).join('');
+  body += extraFields('mf', 'meds', m);
   body += '<label class="chk-row"><input type="checkbox" id="mf-default" ' + (m.default_include ? 'checked' : '') + '> ⭐ محدَّد افتراضيًا</label>';
   body += '<div class="mft"><button class="btn primary" onclick="medSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل علاج' : '+ إضافة علاج', body);
@@ -1181,6 +1621,7 @@ window.medSave = function (id) {
   var body = {};
   MED_FLD.forEach(function (f) { var el = $('mf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.default_include = ($('mf-default') || {}).checked ? 1 : 0;
+  body.extra = readExtra('mf', 'meds');
   if (!body.trade_name) return toast('الاسم التجاري مطلوب', 'er');
   catEnsure('meds', body.category);
   var rec;
@@ -1253,6 +1694,7 @@ window.labForm = function (id) {
     + taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
     + taField('lf-requirements', 'متطلبات التحليل', t.requirements, 'مثال: صيام ٨–١٢ ساعة')
     + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي')
+    + extraFields('lf', 'labs', t)
     + '<label class="chk-row"><input type="checkbox" id="lf-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ تحليل شائع</label>'
     + '<div class="mft"><button class="btn primary" onclick="labSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل تحليل' : '+ إضافة تحليل', body);
@@ -1265,7 +1707,8 @@ window.labSave = function (id) {
     purpose: ($('lf-purpose') || {}).value.trim(),
     requirements: ($('lf-requirements') || {}).value.trim(),
     prohibitions: ($('lf-prohibitions') || {}).value.trim(),
-    is_common: ($('lf-common') || {}).checked ? 1 : 0
+    is_common: ($('lf-common') || {}).checked ? 1 : 0,
+    extra: readExtra('lf', 'labs')
   };
   if (!body.name) return toast('اسم التحليل مطلوب', 'er');
   catEnsure('labs', body.category);
@@ -1335,6 +1778,7 @@ window.imgForm = function (id) {
     + taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
     + taField('if-requirements', 'التحضير المطلوب', t.requirements, 'مثال: صيام ٦ ساعات، إحضار فحوصات الكلى')
     + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب')
+    + extraFields('if', 'imaging', t)
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
     + '<div class="mft"><button class="btn primary" onclick="imgSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
@@ -1347,7 +1791,8 @@ window.imgSave = function (id) {
     purpose: ($('if-purpose') || {}).value.trim(),
     requirements: ($('if-requirements') || {}).value.trim(),
     prohibitions: ($('if-prohibitions') || {}).value.trim(),
-    is_common: ($('if-common') || {}).checked ? 1 : 0
+    is_common: ($('if-common') || {}).checked ? 1 : 0,
+    extra: readExtra('if', 'imaging')
   };
   if (!body.name) return toast('اسم الفحص مطلوب', 'er');
   catEnsure('imaging', body.category);
@@ -1441,6 +1886,7 @@ window.recipeForm = function (id) {
     return '<div class="f"><label>' + lbl + (key === 'name' ? ' *' : '') + '</label>'
       + '<input id="rf-' + key + '" class="inp" value="' + v + '"></div>';
   }).join('');
+  body += extraFields('rf', 'recipes', r);
   body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
   body += '<div class="mft"><button class="btn primary" onclick="recipeSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal(id ? '✏️ تعديل وصفة' : '+ إضافة وصفة', body);
@@ -1456,6 +1902,7 @@ window.recipeSave = function (id) {
   var body = {};
   RX_FLD.forEach(function (f) { var el = $('rf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.is_favorite = ($('rf-fav') || {}).checked ? 1 : 0;
+  body.extra = readExtra('rf', 'recipes');
   if (!body.name) return toast('اسم الوصفة مطلوب', 'er');
   catEnsure('recipes', body.category);
   var rec;
@@ -1511,7 +1958,7 @@ function renderGroupsPage(kind) {
     return;
   }
   html += gs.map(function (g) {
-    var L = KIND_LBL[g.kind];
+    var L = kindLbl(g.kind);
     return '<div class="card"><div class="row">'
       + '<div class="grow" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
@@ -1661,7 +2108,7 @@ function outLines(kind, o) {
   var sel = DB.out[kind], lines = [];
   defs.forEach(function (f) {
     if (f[0] === merged || sel.indexOf(f[0]) < 0) return;
-    var v = String(o[f[0]] == null ? '' : o[f[0]]).trim();
+    var v = String(outValue(o, f[0])).trim();
     if (v) lines.push({ l: f[1], v: v });
   });
   return lines;
@@ -1777,7 +2224,7 @@ var CART_TITLE = { meds: 'قائمة علاجات', labs: 'قائمة تحالي
                    imaging: 'طلب أشعة وفحوصات', recipes: 'قائمة وصفات' };
 function cartTitle(kind, withIcon) {
   var t = CART_TITLE[kind];
-  return withIcon ? KIND_LBL[kind].icon + ' ' + t : t;
+  return withIcon ? kindLbl(kind).icon + ' ' + t : t;
 }
 function buildCanvas(kind, ids, title) {
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
@@ -1875,7 +2322,7 @@ window.copyList = function (kind, ids, title) {
 };
 window.shareList = function (kind, ids, title, imgTitle) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
-  var canvas = buildCanvas(kind, ids, imgTitle || (KIND_LBL[kind].icon + ' ' + title));
+  var canvas = buildCanvas(kind, ids, imgTitle || (kindLbl(kind).icon + ' ' + title));
   var fname = title.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
 
   // داخل التطبيق الأصلي (APK): جسر Android يستقبل الصورة ويطلق مشاركة نظامية حقيقية
@@ -1910,7 +2357,7 @@ var PV = null, PV_TAB = 'paper';
 window.openPreview = function (kind, ids, title, imgTitle) {
   if (!ids || !ids.length) { PV = null; return toast('القائمة فارغة', 'er'); }
   PV = { kind: kind, ids: ids.slice(), title: title,
-         imgTitle: imgTitle || (KIND_LBL[kind].icon + ' ' + title) };
+         imgTitle: imgTitle || (kindLbl(kind).icon + ' ' + title) };
   PV_TAB = 'paper';
   goPage('pv');
 };
@@ -1942,7 +2389,7 @@ function pvImgHtml() {
 function renderPreview() {
   if (!PV) { h('page', emptyBox('👁️', 'لا يوجد ما يُعرَض', 'اختر عناصر ثم اضغط «عرض وإرسال»')); return; }
   ensurePreviewCss();
-  var n = PV.ids.length, L = KIND_LBL[PV.kind];
+  var n = PV.ids.length, L = kindLbl(PV.kind);
   var html = '<div class="pvtabs">'
     + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
     + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button>'

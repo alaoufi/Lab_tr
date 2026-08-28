@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 6   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 7   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -31,6 +31,7 @@ CREATE TABLE meds (
     uses             TEXT,                      -- الاستخدامات
     cautions         TEXT,                      -- المحاذير
     notes            TEXT,                      -- ملاحظات
+    extra            TEXT,                      -- JSON: قيم الحقول التي عرّفها المستخدم
     default_include  INTEGER NOT NULL DEFAULT 0, -- ⭐ محدَّد افتراضيًا (0/1)
     sort_order       INTEGER NOT NULL DEFAULT 0
 );
@@ -46,6 +47,7 @@ CREATE TABLE labs (
     purpose       TEXT,                          -- الهدف من التحليل
     requirements  TEXT,                          -- متطلباته (صيام، نوع العيّنة)
     prohibitions  TEXT,                          -- ممنوعاته
+    extra         TEXT,                          -- JSON: حقول المستخدم
     is_common     INTEGER NOT NULL DEFAULT 0,    -- ⭐ تحليل شائع (0/1)
     sort_order    INTEGER NOT NULL DEFAULT 0
 );
@@ -62,6 +64,7 @@ CREATE TABLE imaging (
     purpose       TEXT,                          -- الهدف من الفحص
     requirements  TEXT,                          -- التحضير المطلوب
     prohibitions  TEXT,                          -- موانع الإجراء
+    extra         TEXT,                          -- JSON: حقول المستخدم
     is_common     INTEGER NOT NULL DEFAULT 0,
     sort_order    INTEGER NOT NULL DEFAULT 0
 );
@@ -84,6 +87,7 @@ CREATE TABLE recipes (
     duration     TEXT,                           -- مدة الاستخدام
     effects      TEXT,                           -- الأعراض المتوقعة
     precautions  TEXT,                           -- الاحتياطات
+    extra        TEXT,                           -- JSON: حقول المستخدم
     is_favorite  INTEGER NOT NULL DEFAULT 0,     -- ⭐ مفضّلة (0/1)
     sort_order   INTEGER NOT NULL DEFAULT 0
 );
@@ -139,7 +143,51 @@ CREATE TABLE cats (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ٨) الإعدادات — مخزن مفتاح/قيمة
+--  ٨) الأقسام — الأربعة الأصلية وما ينشئه المستخدم
+--  الأصلية مسجّلة هنا أيضًا ليقدر المستخدم على تسميتها وتغيير أيقونتها
+--  وترتيبها. builtin=1 يعني أن لها جدولها الخاص أعلاه ولا تُحذف.
+--  الأقسام الجديدة لا جدول لكلٍّ منها — عناصرها في items أدناه.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE sections (
+    id          TEXT PRIMARY KEY,               -- 'meds' … أو 'sec_<uid>'
+    title       TEXT    NOT NULL,               -- الاسم كما يظهر
+    icon        TEXT,                           -- رمز تعبيري واحد
+    builtin     INTEGER NOT NULL DEFAULT 0,
+    sort_order  INTEGER NOT NULL DEFAULT 0      -- ترتيب البطاقات في الرئيسية
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ٩) الحقول الإضافية — حقول يعرّفها المستخدم داخل بيانات العنصر
+--  القيمة نفسها في عمود extra (JSON) على صفّ العنصر، فلا يتغيّر المخطط
+--  كلّما أضاف المستخدم حقلًا. key ثابت لا يتغيّر بإعادة التسمية فلا تضيع
+--  القيم المحفوظة.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE fields (
+    id          TEXT PRIMARY KEY,
+    kind        TEXT    NOT NULL,               -- القسم (sections.id)
+    key         TEXT    NOT NULL,               -- المفتاح داخل extra
+    label       TEXT    NOT NULL,               -- ما يراه المستخدم
+    type        TEXT    NOT NULL,               -- 'text' | 'area'
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ١٠) عناصر الأقسام التي ينشئها المستخدم
+--  جدول واحد يفرّق بينها عمود section، فلا يتغيّر المخطط وقت التشغيل ولا
+--  يدخل اسمٌ من المستخدم في نصّ SQL كاسم جدول.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE items (
+    id          TEXT PRIMARY KEY,
+    section     TEXT    NOT NULL,               -- sections.id
+    name        TEXT    NOT NULL,
+    category    TEXT,                           -- cats.name
+    extra       TEXT,                           -- JSON: قيم حقول القسم
+    flag        INTEGER NOT NULL DEFAULT 0,     -- ⭐ مفضّل
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ١١) الإعدادات — مخزن مفتاح/قيمة
 --  المفاتيح المستخدمة حاليًا:
 --    pin_hash      بصمة SHA-256 لرمز القفل (لا الرمز نفسه)
 --    out_meds      JSON: أسماء حقول العلاجات الظاهرة في الطباعة/الصورة
@@ -167,6 +215,8 @@ CREATE INDEX idx_imaging_category ON imaging(category);
 CREATE INDEX idx_recipes_type  ON recipes(type);
 CREATE INDEX idx_groups_kind   ON groups(kind);
 CREATE INDEX idx_cats_kind     ON cats(kind);
+CREATE INDEX idx_fields_kind   ON fields(kind);
+CREATE INDEX idx_items_section ON items(section);
 
 
 -- ============================================================================
@@ -204,6 +254,14 @@ CREATE INDEX idx_cats_kind     ON cats(kind);
 --          WHERE category IS NOT NULL AND category<>'');
 --      -- ملاحظة: ALTER مشروط بفحص PRAGMA table_info لأن createRecipes صار
 --      -- يُنشئ العمود، فقاعدة مرقّاة من ٢ تملكه بينما القادمة من ٣–٥ لا.
+--
+--  الإصدار ٦ → ٧
+--      -- أقسام يملكها المستخدم + حقول إضافية داخل بيانات العنصر
+--      CREATE TABLE IF NOT EXISTS sections (…);
+--      CREATE TABLE IF NOT EXISTS fields (…);
+--      CREATE TABLE IF NOT EXISTS items (…);
+--      ALTER TABLE <kind> ADD COLUMN extra TEXT;   -- للأربعة، إن لم يكن موجودًا
+--      -- الأقسام الأصلية تُسجَّل من الواجهة عند أول إقلاع (ensureSections)
 --
 --  عند إضافة ترقية جديدة:
 --    ١) ارفع DB_VERSION
