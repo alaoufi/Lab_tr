@@ -4,6 +4,7 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageInfo;
 import android.net.Uri;
 import android.os.Bundle;
 import android.print.PdfPrint;
@@ -138,6 +139,26 @@ public class MainActivity extends ComponentActivity {
 
     /** جسر JS↔Android: مشاركة الصورة الناتجة، وطباعة القوائم عبر خدمة النظام. */
     public class AndroidBridge {
+
+        /**
+         * رقم الإصدار كما هو في الحزمة المثبَّتة فعلًا.
+         *
+         * <p>يُقرأ من {@code PackageManager} لا من ثابت مكتوب في الواجهة: مصدره
+         * الوحيد هو {@code versionName/versionCode} في {@code app/build.gradle}،
+         * فيتحدّث وحده مع كل بناء ولا يمكن أن يتقادم أو يخالف ما ثبّته المستخدم.
+         */
+        @JavascriptInterface
+        public String appVersion() {
+            try {
+                PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+                long code = android.os.Build.VERSION.SDK_INT >= 28
+                        ? pi.getLongVersionCode() : pi.versionCode;
+                return pi.versionName + " (" + code + ")";
+            } catch (Exception e) {
+                Log.e("DaliliApp", "appVersion failed", e);
+                return "";
+            }
+        }
 
         /**
          * الطباعة داخل WebView: {@code window.open} لا يعمل هنا إطلاقًا (لا نوافذ

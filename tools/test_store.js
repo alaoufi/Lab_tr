@@ -1404,3 +1404,31 @@ run('الأقسام والحقول تبقى بعد إعادة التشغيل و�
   eq(b2._t.items.length, 1, 'custom items restored:');
   eq(c2.DB[k][0].extra[fk], 'سنة', 'with their values:');
 });
+
+run('رقم الإصدار يُقرأ من الحزمة لا من ثابت في الواجهة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+
+  // بلا جسر (معاينة في المتصفح): لا يُختلق رقم
+  c.window.AndroidBridge = undefined;
+  eq(c.appVersion(), 'معاينة في المتصفح', 'no invented number in the browser:');
+
+  // داخل التطبيق: ما تقوله الحزمة حرفيًا
+  const A = androidStub();
+  A.appVersion = () => '2.3 (14)';
+  c.window.AndroidBridge = A;
+  eq(c.appVersion(), '2.3 (14)', 'reported verbatim:');
+
+  c.goPage('settings');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('إصدار التطبيق') >= 0, true, 'shown in settings:');
+  eq(html.indexOf('2.3 (14)') >= 0, true, 'with the value:');
+
+  // بناء لاحق يرفع الرقم: الواجهة تتبعه بلا تعديل فيها
+  A.appVersion = () => '9.9 (99)';
+  c.goPage('home'); c.goPage('settings');
+  eq(c._els('page').innerHTML.indexOf('9.9 (99)') >= 0, true, 'follows the build:');
+
+  // جسر بلا الدالة (نسخة أقدم من الغلاف) لا يكسر الصفحة
+  delete A.appVersion;
+  eq(c.appVersion(), 'معاينة في المتصفح', 'degrades safely:');
+});

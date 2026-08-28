@@ -53,7 +53,7 @@ DaliliApp/
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٦٣ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٦٤ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -110,11 +110,17 @@ buildTypes { release { signingConfig signingConfigs.release } }
 
 ### د) رقم الإصدار
 
-في `app/build.gradle`. ارفع **الاثنين** مع كل إصدار توزّعه:
+في `app/build.gradle`، وهو **المصدر الوحيد**: التطبيق يعرض رقمه في
+«الإعدادات ← حول» قارئًا إياه من الحزمة المثبَّتة عبر
+`AndroidBridge.appVersion()` (`PackageManager`)، لا من ثابت مكتوب في
+`app.js`. فلا يوجد رقم ثانٍ يُنسى تحديثه ولا احتمال أن يخالف المعروضُ ما
+ثبّته المستخدم فعلًا.
+
+ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 13       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "2.2"    // ما يراه المستخدم
+versionCode 14       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "2.3"    // ما يراه المستخدم
 ```
 
 ---
@@ -428,7 +434,7 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٦٣ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٦٤ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 

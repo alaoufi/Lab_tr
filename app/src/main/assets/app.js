@@ -487,6 +487,22 @@ function showApp() {
 
 /* ── صفحة الإعدادات: رمز القفل + الحقول المرسلة + المكتبة + النسخ الاحتياطي ── */
 window.openSettings = function () { goPage('settings'); };
+/**
+ * رقم الإصدار من الحزمة المثبَّتة نفسها — لا ثابت مكتوب هنا.
+ *
+ * مصدره الوحيد `versionName/versionCode` في `app/build.gradle`، فيتحدّث مع
+ * كل بناء بلا تعديل يدوي في مكانين ولا احتمال أن يخالف ما ثبّته المستخدم.
+ * في المتصفح (بلا جسر) لا حزمة أصلًا، فنقول ذلك صراحةً بدل رقم مضلّل.
+ */
+function appVersion() {
+  var b = window.AndroidBridge;
+  if (b && typeof b.appVersion === 'function') {
+    var v = b.appVersion();
+    if (v) return v;
+  }
+  return 'معاينة في المتصفح';
+}
+
 function renderSettings() {
   var hasPin = !!DB.pin_hash;
   var lib = window.LIBRARY || { labs: [], meds: [] };
@@ -540,6 +556,8 @@ function renderSettings() {
     + '<input type="file" accept="application/json" onchange="importBackup(this)" style="display:none"></label>'
     + '</div>'
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
+    + '<div class="ver"><span class="ver-l">إصدار التطبيق</span>'
+    + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
     + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا. التطبيق لا يملك صلاحية إنترنت أصلًا.</div></div>'
   );
 }
