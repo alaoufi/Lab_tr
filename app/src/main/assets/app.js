@@ -1117,15 +1117,12 @@ window.secMove = function (id, dir) {
    لأنها كلها تدور على `kind` لا على أسماء الحقول. */
 function secRow(kind, o) {
   var on = DB.cart[kind].indexOf(o.id) >= 0;
-  var sub = fieldsOf(kind).map(function (f) {
-    var v = (o.extra || {})[f.key];
-    return v ? '<div class="sub">' + esc(f.label) + ': ' + esc(v) + '</div>' : '';
-  }).slice(0, 2).join('');
   return '<div class="card' + (on ? ' sel' : '') + '"><div class="row">'
     + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'' + kind + '\',\'' + o.id + '\')">'
     + '<div class="grow" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">'
     + '<div class="name">' + esc(o.name) + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
-    + sub + '</div>'
+    + (o.category ? '<div class="sub">' + esc(o.category) + '</div>' : '')
+    + extraRow(kind, o) + '</div>'
     + '<button class="ic" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">✏️</button>'
     + '<button class="ic" onclick="secItemDel(\'' + kind + '\',\'' + o.id + '\')">🗑️</button>'
     + '</div></div>';
@@ -1209,6 +1206,14 @@ window.secItemDel = function (kind, id) {
 function fieldsOf(kind) {
   return DB.fields.filter(function (f) { return f.kind === kind; });
 }
+/** قيم الحقول الإضافية كما تظهر على بطاقة العنصر داخل القائمة. */
+function extraRow(kind, o) {
+  var x = (o && o.extra) || {};
+  return fieldsOf(kind).map(function (f) {
+    var v = x[f.key];
+    return v ? '<div class="xf"><span class="xf-l">' + esc(f.label) + ':</span> ' + esc(v) + '</div>' : '';
+  }).join('');
+}
 /** مفتاح ثابت لا يتغيّر بتغيّر التسمية، فلا تضيع القيم عند إعادة التسمية. */
 function fieldKey() { return 'f' + uid(); }
 
@@ -1264,7 +1269,11 @@ window.fldCreate = function (kind) {
   var f = { id: uid(), kind: kind, key: fieldKey(), label: label,
             type: ($('ff-type') || {}).value || 'text' };
   DB.fields.push(f); Store.saveField(f);
-  closeModal(); render(); toast('✅ أُضيف الحقل');
+  // يُدرَج في الحقول المرسلة فورًا: من أنشأ حقلًا يريده أن يظهر، ولو لم
+  // يُدرَج لبقي ما يكتبه فيه غائبًا عن الطباعة والصورة بلا سبب ظاهر.
+  DB.out[kind] = (DB.out[kind] || []).concat('x:' + f.key);
+  Store.setOut(kind);
+  closeModal(); render(); toast('✅ أُضيف الحقل — ويظهر في الإرسال');
 };
 window.fldEdit = function (kind, id) {
   var f = DB.fields.find(function (x) { return x.id === id; }); if (!f) return;
@@ -1549,6 +1558,7 @@ function medRow(m) {
     + '<div class="name">' + esc(m.trade_name) + (m.default_include ? ' <span class="star">★</span>' : '') + '</div>'
     + (m.scientific_name ? '<div class="sub">' + esc(m.scientific_name) + (m.concentration ? ' • ' + esc(m.concentration) : '') + '</div>' : '')
     + (m.dosage ? '<div class="req">💊 ' + esc(m.dosage) + '</div>' : '')
+    + extraRow('meds', m)
     + '</div>'
     + '<button class="ic" onclick="medForm(\'' + m.id + '\')">✏️</button>'
     + '<button class="ic" onclick="medDel(\'' + m.id + '\')">🗑️</button>'
@@ -1667,6 +1677,7 @@ function labRow(t) {
     + (t.code ? '<div class="sub">' + esc(t.name) + '</div>' : '')
     + (t.requirements ? '<div class="req">📋 ' + esc(t.requirements) + '</div>' : '')
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
+    + extraRow('labs', t)
     + '</div>'
     + '<button class="ic" onclick="labForm(\'' + t.id + '\')">✏️</button>'
     + '<button class="ic" onclick="labDel(\'' + t.id + '\')">🗑️</button>'
@@ -1757,6 +1768,7 @@ function imgRow(t) {
     + (t.purpose ? '<div class="sub">' + esc(t.purpose) + '</div>' : '')
     + (t.requirements ? '<div class="req">📋 ' + esc(t.requirements) + '</div>' : '')
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
+    + extraRow('imaging', t)
     + '</div>'
     + '<button class="ic" onclick="imgForm(\'' + t.id + '\')">✏️</button>'
     + '<button class="ic" onclick="imgDel(\'' + t.id + '\')">🗑️</button>'
@@ -1855,6 +1867,7 @@ function recipeRow(r) {
     + (r.purpose ? '<div class="sub">' + esc(r.purpose) + '</div>' : '')
     + (r.dose ? '<div class="req">⚖️ ' + esc(r.dose) + '</div>' : '')
     + (r.precautions ? '<div class="ban">⛔ ' + esc(r.precautions) + '</div>' : '')
+    + extraRow('recipes', r)
     + '</div>'
     + '<button class="ic" onclick="recipeForm(\'' + r.id + '\')">✏️</button>'
     + '<button class="ic" onclick="recipeDel(\'' + r.id + '\')">🗑️</button>'

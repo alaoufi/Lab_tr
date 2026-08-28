@@ -1288,11 +1288,19 @@ run('الحقول الإضافية: تعريف وحفظ وطباعة', () => {
   eq(b._t.meds[0].extra[keys[0]], 'GSK', 'value stored in extra:');
   eq(b._t.meds[0].extra[keys[1]], 'يُحفظ مبرّدًا');
 
-  // قابلة للإرسال كأي حقل أصلي
+  // تظهر في الإرسال بلا أي خطوة إضافية — الحقل الجديد مُدرَج منذ إنشائه
   eq(c.outDefs('meds').some(f => f[0] === 'x:' + keys[0]), true, 'offered as a sendable field:');
-  c.DB.out.meds = ['x:' + keys[0]];
+  eq(c.DB.out.meds.indexOf('x:' + keys[0]) >= 0, true, 'included by default:');
+  eq(b._t.settings.out_meds.indexOf('x:' + keys[0]) >= 0, true, 'and persisted:');
   const html = c.itemsHtml('meds', [b._t.meds[0].id]);
   eq(html.indexOf('الشركة المصنّعة') >= 0 && html.indexOf('GSK') >= 0, true, 'printed:');
+  eq(html.indexOf('يُحفظ مبرّدًا') >= 0, true, 'the long one too:');
+
+  // وتظهر على بطاقة العنصر في القائمة نفسها
+  c.goPage('meds');
+  const card = c._els('page').innerHTML;
+  eq(card.indexOf('class="xf"') >= 0, true, 'rendered on the card:');
+  eq(card.indexOf('GSK') >= 0, true, 'with its value:');
 
   // إعادة التسمية تُبقي القيمة (المفتاح لا يتغيّر)
   c.fldEdit('meds', b._t.fields[0].id);
@@ -1431,4 +1439,47 @@ run('رقم الإصدار يُقرأ من الحزمة لا من ثابت في 
   // جسر بلا الدالة (نسخة أقدم من الغلاف) لا يكسر الصفحة
   delete A.appVersion;
   eq(c.appVersion(), 'معاينة في المتصفح', 'degrades safely:');
+});
+
+run('الحقل الإضافي يظهر في العرض بلا ضبط يدوي', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+
+  // قسم أصلي
+  c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.fldNew('labs'); c._els('ff-label').value = 'المختبر المفضّل'; c.fldCreate('labs');
+  const lk = c.fieldsOf('labs')[0].key;
+  c.labForm(b._t.labs[0].id);
+  c._els('lf-name').value = 'CBC';
+  c._els('lf-x-' + lk).value = 'مختبر الشفاء';
+  c.labSave(b._t.labs[0].id);
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart('labs', b._t.labs[0].id);
+  c.previewCart('labs'); c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('المختبر المفضّل') >= 0, true, 'label in the sent document:');
+  eq(A._pdfs[0].html.indexOf('مختبر الشفاء') >= 0, true, 'value in the sent document:');
+  eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'alongside the built-in fields:');
+
+  // نصّ الحافظة يحمله أيضًا
+  c.pvSend('copy');
+  eq(A._clip.indexOf('• المختبر المفضّل: مختبر الشفاء') >= 0, true, 'in the copied text:');
+
+  // قسم أنشأه المستخدم
+  c.secNew(); c._els('sf-title').value = 'اللقاحات'; c.secCreate();
+  const k = c.DB.sections[4].id;
+  c.fldNew(k); c._els('ff-label').value = 'عمر الجرعة'; c.fldCreate(k);
+  const fk = c.fieldsOf(k)[0].key;
+  eq(c.DB.out[k].indexOf('x:' + fk) >= 0, true, 'included for a new section too:');
+  c.secItemForm(k);
+  c._els('cf-name').value = 'لقاح'; c._els('cf-x-' + fk).value = 'من ٦ أشهر';
+  c.secItemSave(k, '');
+  eq(c._els('page').innerHTML.indexOf('من ٦ أشهر') >= 0, true, 'on its card:');
+  c.toggleCart(k, c.DB[k][0].id);
+  c.previewCart(k); c.pvSend('pdf');
+  eq(A._pdfs[1].html.indexOf('من ٦ أشهر') >= 0, true, 'and in its document:');
+
+  // إلغاء التأشير يخفيه — الاختيار يبقى بيد المستخدم
+  c.toggleOut('labs', 'x:' + lk);
+  eq(c.itemsHtml('labs', [b._t.labs[0].id]).indexOf('مختبر الشفاء') < 0, true, 'still user-controlled:');
 });
