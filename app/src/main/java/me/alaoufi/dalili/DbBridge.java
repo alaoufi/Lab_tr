@@ -138,6 +138,29 @@ public class DbBridge {
         }
     }
 
+    /** تسجيل إرسال — {id, kind, title, who, ids[], ts}. يُقصّ على آخر عشرة. */
+    @JavascriptInterface
+    public boolean addSent(String json) {
+        try {
+            db.addSent(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "addSent failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean clearSent() {
+        try {
+            db.clearSent();
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "clearSent failed", e);
+            return false;
+        }
+    }
+
     /** حفظ تصنيف (إنشاء أو إعادة تسمية) — {id, kind, name}. */
     @JavascriptInterface
     public boolean saveCat(String json) {

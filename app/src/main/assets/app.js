@@ -13,7 +13,7 @@ var BUILTIN = ['meds', 'labs', 'imaging', 'recipes'];
 var KINDS = BUILTIN.slice();
 var DB = { pin_hash: null, meds: [], labs: [], imaging: [], recipes: [],
            cart: { meds: [], labs: [], imaging: [], recipes: [] },
-           cats: [], groups: [], sections: [], fields: [], out: null };
+           cats: [], groups: [], sections: [], fields: [], sent: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -132,6 +132,9 @@ function applyData(data) {
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
   DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || 0) || 0;
+  DB.dense = Number(data.dense || st.dense || 0) || 0;
+  DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
+  DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.groups = Array.isArray(data.groups) ? data.groups : [];
   // ترويسة الطباعة اختيارية بالكامل — تبقى فارغة ما لم يملأها المستخدم،
   // وأي سطر فارغ لا يظهر في الورقة أصلًا.
@@ -151,7 +154,8 @@ function blobSave() {
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
-            sections: DB.sections, fields: DB.fields, out: DB.out, header: DB.header };
+            sections: DB.sections, fields: DB.fields, sent: DB.sent,
+            out: DB.out, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
   return o;
 }
@@ -244,6 +248,22 @@ var Store = {
   setSeeded: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('cats_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setFmt: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('fmt', DB.fmt) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  addSent: function (rec) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.addSent(JSON.stringify(rec)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  clearSent: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.clearSent() || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setDense: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('dense', String(DB.dense)) || dbFail(); } catch (e) { return dbFail(); }
   },
   setFieldsOutDone: function () {
     if (!NDB) { blobSave(); return true; }
@@ -440,6 +460,7 @@ var PAGES = {
 function pageMeta(p) {
   if (PAGES[p]) return PAGES[p];
   if (p === 'secs') return { icon: '🗂️', title: 'إدارة الأقسام' };
+  if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
   }
@@ -923,6 +944,7 @@ function render() {
   else if (p === 'recipes') renderRecipes();
   else if (p === 'settings') renderSettings();
   else if (p === 'secs') renderSectionsPage();
+  else if (p === 'sent') renderSentPage();
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
@@ -961,6 +983,10 @@ function renderHome() {
   if (DB.groups.length) {
     html += '<button class="btn full" style="margin-bottom:12px" onclick="goPage(\'grp:all\')">'
       + '📁 مجموعاتي المحفوظة (' + DB.groups.length + ')</button>';
+  }
+  if (DB.sent.length) {
+    html += '<button class="btn full" style="margin-bottom:12px" onclick="goPage(\'sent\')">'
+      + '🕘 آخر ما أرسلت (' + DB.sent.length + ')</button>';
   }
   html += '<div class="hgrid">'
     + KINDS.map(function (k, i) {
@@ -1243,11 +1269,13 @@ function renderCustomSection(kind) {
     html += list.map(function (o) { return secRow(kind, o); }).join('');
   } else {
     var fav = list.filter(function (o) { return o.flag; });
-    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(function (o) { return secRow(kind, o); }).join(''), true);
+    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(function (o) { return secRow(kind, o); }).join(''), true,
+      'pickFlag(&#39;' + kind + '&#39;)');
     var gs = groupBy(list, kind), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock(L.icon + ' ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(function (o) { return secRow(kind, o); }).join(''), op);
+        g.items.map(function (o) { return secRow(kind, o); }).join(''), op,
+        pickCall(kind, g.cat));
     });
   }
   h('page', html);
@@ -1697,10 +1725,11 @@ function renderMeds() {
     html += list.map(medRow).join('');
   } else {
     var fav = list.filter(function (m) { return m.default_include; });
-    if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true);
+    if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true, 'pickFlag(&#39;meds&#39;)');
     var gs = groupBy(list, 'meds'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')', g.items.map(medRow).join(''), op);
+      html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')',
+        g.items.map(medRow).join(''), op, pickCall('meds', g.cat));
     });
   }
   h('page', html);
@@ -1824,18 +1853,46 @@ function renderLabs() {
     html += list.map(labRow).join('');
   } else {
     var common = list.filter(function (t) { return t.is_common; });
-    if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true);
+    if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true, 'pickFlag(&#39;labs&#39;)');
     var gs = groupBy(list, 'labs'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')', g.items.map(labRow).join(''), op);
+      html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')',
+        g.items.map(labRow).join(''), op, pickCall('labs', g.cat));
     });
   }
   h('page', html);
 }
 var _accSeq = 0;
-function accBlock(title, inner, open) {
-  var id = 'acc' + (_accSeq++);
-  return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title) + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
+/** `pick` نداءُ «تحديد الكل» — يُوضع داخل الرأس ويمنع طيّ المجموعة عند نقره. */
+function accBlock(title, inner, open, pick) {
+  return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title)
+    + (pick ? '<button class="acc-pick" onclick="event.stopPropagation();event.preventDefault();'
+        + pick + '" title="تحديد الكل">☑️</button>' : '')
+    + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
+}
+/** تحديد كل عناصر تصنيف — أو رفعُ التحديد عنها إن كانت كلها محدَّدة. */
+function toggleIds(kind, ids) {
+  if (!ids.length) return;
+  var arr = DB.cart[kind];
+  var allIn = ids.every(function (id) { return arr.indexOf(id) >= 0; });
+  if (allIn) DB.cart[kind] = arr.filter(function (id) { return ids.indexOf(id) < 0; });
+  else ids.forEach(function (id) { if (arr.indexOf(id) < 0) arr.push(id); });
+  Store.setCart(kind); render();
+}
+window.pickCat = function (kind, cat) {
+  toggleIds(kind, coll(kind).filter(function (o) {
+    return ((o.category || '').trim() || UNCAT) === cat;
+  }).map(function (o) { return o.id; }));
+};
+window.pickFlag = function (kind) {
+  var f = kind === 'meds' ? 'default_include'
+    : (kind === 'labs' || kind === 'imaging') ? 'is_common'
+    : (isBuiltin(kind) ? 'is_favorite' : 'flag');
+  toggleIds(kind, coll(kind).filter(function (o) { return o[f]; }).map(function (o) { return o.id; }));
+};
+/** نداء «تحديد الكل» لتصنيف — الاسم يمرّ عبر esc فلا تكسره علامة اقتباس. */
+function pickCall(kind, cat) {
+  return 'pickCat(&#39;' + kind + '&#39;,&#39;' + esc(cat).replace(/&#39;/g, '\\&#39;') + '&#39;)';
 }
 window.labForm = function (id) {
   var t = id ? (DB.labs.find(function (x) { return x.id === id; }) || {}) : newItem('labs');
@@ -1920,10 +1977,11 @@ function renderImaging() {
     html += list.map(imgRow).join('');
   } else {
     var common = list.filter(function (t) { return t.is_common; });
-    if (common.length) html += accBlock('⭐ شائعة', common.map(imgRow).join(''), true);
+    if (common.length) html += accBlock('⭐ شائعة', common.map(imgRow).join(''), true, 'pickFlag(&#39;imaging&#39;)');
     var gs = groupBy(list, 'imaging'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')', g.items.map(imgRow).join(''), op);
+      html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')',
+        g.items.map(imgRow).join(''), op, pickCall('imaging', g.cat));
     });
   }
   h('page', html);
@@ -2026,10 +2084,11 @@ function renderRecipes() {
     html += list.map(recipeRow).join('');
   } else {
     var fav = list.filter(function (r) { return r.is_favorite; });
-    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true);
+    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true, 'pickFlag(&#39;recipes&#39;)');
     var gs = groupBy(list, 'recipes'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
-      html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')', g.items.map(recipeRow).join(''), op);
+      html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')',
+        g.items.map(recipeRow).join(''), op, pickCall('recipes', g.cat));
     });
   }
   h('page', html);
@@ -2314,19 +2373,28 @@ function headerHtml() {
 /** تنسيق ورقة الطباعة — مصدر واحد تستعمله الطباعة والمعاينة معًا حتى لا
     تختلف المعاينة عمّا يُطبَع فعلًا. عند تمرير `scope` تُسبَق كل قاعدة به
     فتُحصَر داخل بطاقة المعاينة ولا تسرّب إلى واجهة التطبيق. */
-function printCss(scope) {
+/**
+ * `dense` يضغط المقاسات فتدخل قائمة أطول في الصفحة الواحدة — الفرق في
+ * حجم الخط والهوامش فقط، فلا يتغيّر شيء في المحتوى ولا في ترتيبه.
+ */
+function printCss(scope, dense) {
   var s = scope ? scope + ' ' : '';
   var body = scope ? scope : 'body';
+  var F = dense ? { base: '9.5pt', h1: '12pt', name: '9.5pt', line: '8.5pt',
+                    pad: '3pt 5pt', gap: '2.5pt', lh: '1.25' }
+                : { base: '11pt', h1: '14pt', name: '11pt', line: '9.5pt',
+                    pad: '4pt 7pt', gap: '4pt', lh: '1.35' };
   return (scope ? '' : '@page{size:A4;margin:12mm 10mm}')
     + s + '*{box-sizing:border-box;font-family:Tahoma,Arial,sans-serif}'
     // في المعاينة لا نضبط الهوامش: بطاقة `.paper` تحتفظ بهوامشها في الواجهة.
     + body + '{' + (scope ? '' : 'margin:0;')
-    + 'color:#0f172a;font-size:11pt;line-height:1.35;-webkit-print-color-adjust:exact}'
-    + s + 'h1{font-size:14pt;color:#0f766e;margin:0}'
+    + 'color:#0f172a;font-size:' + F.base + ';line-height:' + F.lh + ';-webkit-print-color-adjust:exact}'
+    + s + 'h1{font-size:' + F.h1 + ';color:#0f766e;margin:0}'
     + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
-    + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:4pt 7pt;margin-bottom:4pt;page-break-inside:avoid}'
-    + s + '.rx-name{font-weight:bold;font-size:11pt;color:#0f766e;margin-bottom:1pt;line-height:1.3}'
-    + s + '.rx-f{font-size:9.5pt;margin:0.5pt 0;line-height:1.35;white-space:pre-wrap}'
+    + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:' + F.pad
+    + ';margin-bottom:' + F.gap + ';page-break-inside:avoid}'
+    + s + '.rx-name{font-weight:bold;font-size:' + F.name + ';color:#0f766e;margin-bottom:1pt;line-height:1.3}'
+    + s + '.rx-f{font-size:' + F.line + ';margin:0.5pt 0;line-height:' + F.lh + ';white-space:pre-wrap}'
     + s + '.rx-l{color:#475569;font-weight:bold}'
     + s + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
     + s + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
@@ -2335,23 +2403,29 @@ function printCss(scope) {
     + s + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}';
 }
 /** جسم الورقة (ترويسة + عنوان + تاريخ + المحتوى) — مشترك بين الطباعة والمعاينة. */
-function docBody(title, body) {
+function docBody(title, body, who) {
   return headerHtml()
     + '<h1>' + esc(title) + '</h1>'
-    + '<div class="sub">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
+    + '<div class="sub">' + (who ? esc(who) + ' • ' : '')
+    + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
     + body;
 }
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
-function printDoc(title, body) {
+function printDoc(title, body, who) {
   return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title>'
-    + '<style>' + printCss('') + '</style></head><body>'
-    + docBody(title, body) + '</body></html>';
+    + '<style>' + printCss('', DB.dense) + '</style></head><body>'
+    + docBody(title, body, who) + '</body></html>';
 }
-window.printList = function (kind, ids, title) {
+/** اسم الملف وعنوان مهمّة الطباعة: العنوان ومعه اسم المريض إن كُتِب. */
+function outName(title, who) {
+  return String(title || 'دليلي') + (who ? ' - ' + who : '');
+}
+window.printList = function (kind, ids, title, who) {
   var body = itemsHtml(kind, ids);
   if (!body) return toast('القائمة فارغة', 'er');
-  var html = printDoc(title, body);
+  var html = printDoc(title, body, who);
+  title = outName(title, who);
 
   // داخل التطبيق: window.open لا يعمل في WebView إطلاقًا، فنمرّر الصفحة
   // لخدمة الطباعة في أندرويد (ومنها «حفظ كـPDF»)
@@ -2451,24 +2525,24 @@ function buildCanvas(kind, ids, title) {
   return c;
 }
 /** يبني نفس ورقة الطباعة لكن يُخرجها ملف PDF ويفتح قائمة الإرسال مباشرةً. */
-window.pdfList = function (kind, ids, title) {
+window.pdfList = function (kind, ids, title, who) {
   var body = itemsHtml(kind, ids);
   if (!body) return toast('القائمة فارغة', 'er');
   if (!(window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function')) {
     return toast('إرسال PDF متاح داخل التطبيق', 'er');
   }
-  window.AndroidBridge.sharePdf(printDoc(title, body), title);
+  window.AndroidBridge.sharePdf(printDoc(title, body, who), outName(title, who));
   toast('📄 يجري تجهيز ملف PDF…');
 };
 
 /** نصّ عادي للصق في واتساب أو أي مكان — أخفّ من الصورة وقابل للبحث. */
-function listText(kind, ids, title) {
+function listText(kind, ids, title, who) {
   var hd = DB.header || {}, lines = [];
   if (hd.name) lines.push(hd.name);
   if (hd.title) lines.push(hd.title);
   if (hd.contact) lines.push(hd.contact);
   if (lines.length) lines.push('');
-  lines.push(title + ' — ' + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
+  lines.push(title + (who ? ' — ' + who : '') + ' — ' + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
   lines.push('');
   rowsFor(kind, ids).forEach(function (r) {
     lines.push(r.title);
@@ -2480,9 +2554,9 @@ function listText(kind, ids, title) {
   });
   return lines.join('\n');
 }
-window.copyList = function (kind, ids, title) {
+window.copyList = function (kind, ids, title, who) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
-  var text = listText(kind, ids, title);
+  var text = listText(kind, ids, title, who);
   if (window.AndroidBridge && typeof window.AndroidBridge.copyText === 'function') {
     window.AndroidBridge.copyText(text);
     return toast('📋 نُسخ النص — الصقه حيث تشاء');
@@ -2492,9 +2566,10 @@ window.copyList = function (kind, ids, title) {
       function () { toast('تعذّر النسخ', 'er'); });
   } catch (e) { toast('تعذّر النسخ', 'er'); }
 };
-window.shareList = function (kind, ids, title, imgTitle) {
+window.shareList = function (kind, ids, title, imgTitle, who) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
-  var name = String(title || kindLbl(kind).title || 'دليلي');
+  var name = outName(title || kindLbl(kind).title, who);
+  if (who) imgTitle = (imgTitle || (kindLbl(kind).icon + ' ' + title)) + ' — ' + who;
   var canvas = buildCanvas(kind, ids, imgTitle || (kindLbl(kind).icon + ' ' + name));
   var fname = name.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
 
@@ -2536,24 +2611,53 @@ window.openPreview = function (kind, ids, title, imgTitle) {
   goPage('pv');
 };
 window.pvTab = function (t) { PV_TAB = t; render(); };
-
-/** تنسيق الورقة يُحقن مرّة واحدة، محصورًا داخل `.paper`. */
-var PV_CSS = false;
-function ensurePreviewCss() {
-  if (PV_CSS) return;
+/** الصيغ الأربع — الأولى في الشريط هي آخر ما استعمله المستخدم. */
+var FMTS = [['pdf', '📄 PDF', 'wa'], ['img', '🖼️ صورة', 'wa'],
+            ['print', '🖨️ طباعة', 'white'], ['copy', '📋 نسخ', 'white']];
+/**
+ * يُقرأ من الحقل مباشرةً، ويُحدَّث سطر الورقة وحده لا الصفحة كلها: إعادة
+ * الرسم تكتب innerHTML من جديد فيفقد الحقل تركيزه وسط الكتابة.
+ */
+window.pvWho = function () {
+  var e = $('pv-who');
+  if (!PV || !e) return;
+  PV.who = String(e.value || '').trim();
   try {
-    var st = document.createElement('style');
-    st.id = 'pv-css';
-    st.textContent = printCss('.paper');
-    (document.head || document.body).appendChild(st);
-    PV_CSS = true;
+    var sub = document.querySelector('.paper .sub');
+    if (sub) {
+      sub.textContent = (PV.who ? PV.who + ' • ' : '')
+        + new Date().toLocaleDateString('ar-SA-u-nu-latn');
+    }
+  } catch (err) { /* بيئة بلا DOM كامل */ }
+};
+
+/** تنسيق الورقة محصورًا داخل `.paper` — يُعاد بناؤه إذا تغيّرت الكثافة. */
+var PV_CSS = null;
+function ensurePreviewCss() {
+  var want = DB.dense ? 'd' : 'n';
+  if (PV_CSS === want) return;
+  try {
+    var st = document.getElementById('pv-css');
+    if (!st) {
+      st = document.createElement('style');
+      st.id = 'pv-css';
+      (document.head || document.body).appendChild(st);
+    }
+    st.textContent = printCss('.paper', DB.dense);
+    PV_CSS = want;
   } catch (e) { /* بيئة بلا DOM كامل — الورقة تظهر بتنسيق الواجهة */ }
 }
+window.pvDense = function () {
+  DB.dense = DB.dense ? 0 : 1;
+  Store.setDense();
+  render();
+  toast(DB.dense ? '🗜️ ورقة مضغوطة' : '📄 ورقة عادية');
+};
 
 /** صورة المعاينة = نفس اللوحة المُرسَلة، مصغَّرة داخل الصفحة. */
 function pvImgHtml() {
   try {
-    var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle);
+    var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''));
     return '<div class="pvimg"><img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '"></div>';
   } catch (e) {
     return emptyBox('🖼️', 'تعذّر توليد الصورة', 'جرّب الورقة أو الإرسال مباشرة');
@@ -2567,28 +2671,137 @@ function renderPreview() {
   var html = '<div class="pvtabs">'
     + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
     + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button>'
+    + '<button class="pvt' + (PV_TAB === 'list' ? ' on' : '') + '" onclick="pvTab(\'list\')">✏️ العناصر</button>'
     + '</div>'
     + '<div class="hint">' + L.icon + ' ' + esc(PV.title) + ' — '
-    + countWord(n, L.one, L.two, L.few, L.many) + '</div>';
+    + countWord(n, L.one, L.two, L.few, L.many)
+    + (PV_TAB === 'paper' ? '<button class="btn white sm" style="margin-right:auto"'
+        + ' onclick="pvDense()">' + (DB.dense ? '📄 عادي' : '🗜️ مضغوط') + '</button>' : '')
+    + '</div>';
+
+  // اسم المريض اختياري بالكامل: فارغ = لا يظهر شيء في الورقة ولا اسم الملف
+  html += '<div class="f pvwho"><label>اسم المريض (اختياري)</label>'
+    + '<input id="pv-who" class="inp" value="' + esc(PV.who || '') + '"'
+    + ' placeholder="يظهر في الورقة وفي اسم الملف" oninput="pvWho()"></div>';
 
   if (PV_TAB === 'img') html += pvImgHtml();
-  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, PV.ids)) + '</div>';
+  else if (PV_TAB === 'list') html += pvListHtml();
+  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, PV.ids), PV.who) + '</div>';
 
-  html += '<div class="pvbar">'
-    + '<button class="btn wa sm" onclick="pvSend(\'pdf\')">📄 PDF</button>'
-    + '<button class="btn wa sm" onclick="pvSend(\'img\')">🖼️ صورة</button>'
-    + '<button class="btn white sm" onclick="pvSend(\'print\')">🖨️ طباعة</button>'
-    + '<button class="btn white sm" onclick="pvSend(\'copy\')">📋 نسخ</button>'
-    + '</div>';
+  html += '<div class="pvbar">' + FMTS.slice()
+    .sort(function (a, b) {                       // المفضّلة أولًا
+      return (b[0] === DB.fmt ? 1 : 0) - (a[0] === DB.fmt ? 1 : 0);
+    })
+    .map(function (f, i) {
+      return '<button class="btn ' + (i === 0 ? 'primary' : f[2]) + ' sm"'
+        + ' onclick="pvSend(\'' + f[0] + '\')">' + f[1] + '</button>';
+    }).join('') + '</div>';
   h('page', html);
 }
 
+/**
+ * تبويب «العناصر»: حذف وترتيب لهذا الإرسال وحده. لا يمسّ تحديدك في القسم
+ * ولا المجموعة المحفوظة — فالمعاينة نافذة على ما سيخرج الآن لا محرّر بيانات.
+ */
+function pvListHtml() {
+  if (!PV.ids.length) return emptyBox('✏️', 'لم يبقَ شيء', 'ارجع وحدّد من جديد');
+  return '<div class="hint">الحذف والترتيب هنا للإرسال الحالي فقط — تحديدك في القسم يبقى كما هو.</div>'
+    + PV.ids.map(function (id, i) {
+      var o = itemById(PV.kind, id);
+      return '<div class="card"><div class="row">'
+        + '<span class="idx">' + (i + 1) + '</span>'
+        + '<div class="grow"><div class="name">' + esc(itemLabel(PV.kind, o)) + '</div></div>'
+        + '<button class="ic"' + (i === 0 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',-1)">⬆️</button>'
+        + '<button class="ic"' + (i === PV.ids.length - 1 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',1)">⬇️</button>'
+        + '<button class="ic" onclick="pvDrop(' + i + ')">✖️</button>'
+        + '</div></div>';
+    }).join('')
+    + '<div class="pvpad"></div>';
+}
+window.pvMove = function (i, dir) {
+  var j = i + dir;
+  if (!PV || j < 0 || j >= PV.ids.length) return;
+  var t = PV.ids[i]; PV.ids[i] = PV.ids[j]; PV.ids[j] = t;
+  render();
+};
+window.pvDrop = function (i) {
+  if (!PV) return;
+  PV.ids.splice(i, 1);
+  render();
+};
+
 window.pvSend = function (how) {
   if (!PV) return;
-  if (how === 'pdf') pdfList(PV.kind, PV.ids, PV.title);
-  else if (how === 'img') shareList(PV.kind, PV.ids, PV.title, PV.imgTitle);
-  else if (how === 'print') printList(PV.kind, PV.ids, PV.title);
-  else copyList(PV.kind, PV.ids, PV.title);
+  if (!PV.ids.length) return toast('القائمة فارغة', 'er');
+  pvWho();
+  var who = PV.who || '';
+  if (how === 'pdf') pdfList(PV.kind, PV.ids, PV.title, who);
+  else if (how === 'img') shareList(PV.kind, PV.ids, PV.title, PV.imgTitle, who);
+  else if (how === 'print') printList(PV.kind, PV.ids, PV.title, who);
+  else copyList(PV.kind, PV.ids, PV.title, who);
+  if (DB.fmt !== how) { DB.fmt = how; Store.setFmt(); }
+  logSent(PV.kind, PV.ids, PV.title, who);
+};
+
+/* ── سجل الإرسالات ──────────────────────────────────────────────
+   لقطة لما أُرسِل فعلًا: تعيده بضغطة بلا إعادة تحديد. لا يحفظ العناصر
+   نفسها بل معرّفاتها، فما حُذف منها لاحقًا يُستبعَد عند الاسترجاع. */
+function logSent(kind, ids, title, who) {
+  var rec = { id: uid(), kind: kind, title: title || '', who: who || '',
+              ids: ids.slice(), ts: Date.now() };
+  DB.sent.unshift(rec);
+  DB.sent = DB.sent.slice(0, 10);
+  Store.addSent(rec);
+}
+function renderSentPage() {
+  if (!DB.sent.length) {
+    h('page', emptyBox('🕘', 'لا إرسالات بعد', 'كل قائمة ترسلها تُحفَظ هنا لتعيدها بضغطة'));
+    return;
+  }
+  var html = '<div class="hint">آخر ' + DB.sent.length + ' قوائم أرسلتها. اضغط أيّها لتفتحه في'
+    + ' المعاينة جاهزًا للإرسال من جديد.</div>';
+  html += DB.sent.map(function (r) {
+    var L = kindLbl(r.kind);
+    var live = r.ids.filter(function (id) { return itemById(r.kind, id); });
+    var gone = r.ids.length - live.length;
+    return '<div class="card"><div class="row">'
+      + '<div class="grow" onclick="sentOpen(\'' + r.id + '\')">'
+      + '<div class="name">' + L.icon + ' ' + esc(r.title || L.title)
+      + (r.who ? ' <span class="chip">' + esc(r.who) + '</span>' : '') + '</div>'
+      + '<div class="sub">' + countWord(live.length, L.one, L.two, L.few, L.many)
+      + (gone ? ' • ' + gone + ' محذوف' : '') + ' • ' + sentWhen(r.ts) + '</div></div>'
+      + '<button class="btn primary sm" onclick="sentOpen(\'' + r.id + '\')">👁️ فتح</button>'
+      + '</div></div>';
+  }).join('');
+  html += '<button class="btn full" onclick="sentClear()">🧹 إفراغ السجل</button>';
+  h('page', html);
+}
+/** تاريخ مختصر — اليوم/أمس ثم التاريخ. */
+function sentWhen(ts) {
+  var d = new Date(ts), now = new Date();
+  var day = 24 * 60 * 60 * 1000;
+  var a = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  var b = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  var t = d.toLocaleTimeString('ar-SA-u-nu-latn', { hour: '2-digit', minute: '2-digit' });
+  if (b === a) return 'اليوم ' + t;
+  if (b === a - day) return 'أمس ' + t;
+  return d.toLocaleDateString('ar-SA-u-nu-latn');
+}
+window.sentOpen = function (id) {
+  var r = DB.sent.find(function (x) { return x.id === id; });
+  if (!r) return;
+  var live = r.ids.filter(function (i) { return itemById(r.kind, i); });
+  if (!live.length) return toast('عناصر هذه القائمة لم تعد موجودة', 'er');
+  openPreview(r.kind, live, r.title, null);
+  if (PV) PV.who = r.who || '';
+  if (live.length < r.ids.length) toast('بعض العناصر حُذفت — عُرِض الباقي');
+  render();
+};
+window.sentClear = function () {
+  confirmBox('إفراغ سجل الإرسالات؟ لا يُحذف أي عنصر.', function () {
+    DB.sent = []; Store.clearSent();
+    closeModal(); render(); toast('🧹 أُفرِغ السجل');
+  });
 };
 
 /** مداخل المعاينة: السلة، ومحرّر المجموعة، ومجموعة محفوظة من القائمة. */

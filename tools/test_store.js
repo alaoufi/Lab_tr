@@ -11,7 +11,7 @@ const vm = require('vm');
 // جسر وهمي يحاكي دلالات DaliliDb (جداول منفصلة + سلة مرتّبة)
 function makeBridge() {
   const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [], cats: [],
-              sections: [], fields: [], items: [],
+              sections: [], fields: [], items: [], sent: [],
               cart: { meds: [], labs: [], imaging: [], recipes: [] }, settings: {} };
   // عناصر الأقسام التي ينشئها المستخدم تعيش في items كما في DaliliDb
   const isCustom = k => !['meds', 'labs', 'imaging', 'recipes'].includes(k);
@@ -32,7 +32,7 @@ function makeBridge() {
     loadAll: () => {
       const out = { meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
         groups: t.groups, cats: t.cats, sections: t.sections, fields: t.fields,
-        cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash };
+        sent: t.sent, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash };
       t.sections.filter(s => isCustom(s.id)).forEach(s => { out[s.id] = rows(s.id); });
       return JSON.stringify(out);
     },
@@ -66,6 +66,13 @@ function makeBridge() {
       rows(kind).forEach(o => { if ((o.category || '') === from) o.category = to || ''; });
       return true;
     },
+    // سجل الإرسالات — الأحدث أولًا، ويُقصّ على عشرة كما في DaliliDb
+    addSent: j => {
+      t.sent.unshift(JSON.parse(j));
+      t.sent = t.sent.slice(0, 10);
+      return true;
+    },
+    clearSent: () => { t.sent = []; return true; },
     saveSection: j => {
       const sec = JSON.parse(j);
       const i = t.sections.findIndex(x => x.id === sec.id);
@@ -109,7 +116,7 @@ function makeBridge() {
       const d = JSON.parse(j);
       t.meds = d.meds || []; t.labs = d.labs || []; t.imaging = d.imaging || [];
       t.recipes = d.recipes || []; t.groups = d.groups || []; t.cats = d.cats || [];
-      t.sections = d.sections || []; t.fields = d.fields || [];
+      t.sections = d.sections || []; t.fields = d.fields || []; t.sent = d.sent || [];
       t.items = [];
       t.sections.filter(s => isCustom(s.id)).forEach(s => {
         (d[s.id] || []).forEach(o => t.items.push(Object.assign({}, o, { section: s.id })));
@@ -1072,7 +1079,7 @@ run('المعاينة: تعرض الورقة نفسها التي ستُرسَل'
   c.previewCart('labs');
   eq(c.curPage(), 'pv', 'opened the preview page:');
   eq(c._els('hdr-title').innerHTML, 'معاينة قبل الإرسال', 'page title:');
-  eq(c.PV_CSS, true, 'paper stylesheet injected once:');
+  eq(c.PV_CSS, 'n', 'paper stylesheet injected for the current density:');
 
   const html = c._els('page').innerHTML;
   eq(html.split('class="rx-item"').length - 1, 3, 'every selected item shown:');
@@ -1653,4 +1660,160 @@ run('الإضافة: الحقول قليلة الاستعمال مطويّة و�
   c.recipeSave('');
   eq(b._t.recipes[0].ingredients, 'زنجبيل وعسل', 'visible field saved:');
   eq(b._t.recipes[0].precautions, 'يُتجنّب دون سنة', 'folded field saved too:');
+});
+
+run('العرض: تحديد كل التصنيف بضغطة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  [['CBC', 'أمراض الدم'], ['ESR', 'أمراض الدم'], ['FBS', 'كيمياء الدم']].forEach(([n, cat]) => {
+    c._els('lf-name').value = n; c._els('lf-category').value = cat; c.labSave('');
+  });
+  eq(c._els('page').innerHTML.indexOf('acc-pick') >= 0, true, 'the button is in the group header:');
+
+  c.pickCat('labs', 'أمراض الدم');
+  eq(b._t.cart.labs.length, 2, 'the whole category selected:');
+  eq(c.DB.labs.filter(l => b._t.cart.labs.indexOf(l.id) >= 0).map(l => l.name),
+    ['CBC', 'ESR'], 'the right two:');
+
+  c.pickCat('labs', 'أمراض الدم');
+  eq(b._t.cart.labs.length, 0, 'pressing again clears them:');
+
+  // لا يمسّ تصنيفًا آخر
+  c.pickCat('labs', 'كيمياء الدم');
+  c.pickCat('labs', 'أمراض الدم');
+  eq(b._t.cart.labs.length, 3, 'categories add up:');
+  c.pickCat('labs', 'كيمياء الدم');
+  eq(b._t.cart.labs.length, 2, 'and clear independently:');
+});
+
+run('العرض: تعديل القائمة من داخل المعاينة لا يمسّ التحديد', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  ['CBC', 'ESR', 'FBS'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+  c.previewCart('labs');
+  eq(c.PV.ids.length, 3, 'three in the preview:');
+
+  c.pvTab('list');
+  eq(c._els('page').innerHTML.indexOf('للإرسال الحالي فقط') >= 0, true, 'says it is temporary:');
+
+  c.pvMove(0, 1);
+  eq(c.PV.ids[0], c.DB.labs[1].id, 'reordered:');
+  c.pvDrop(0);
+  eq(c.PV.ids.length, 2, 'dropped from the send:');
+  eq(b._t.cart.labs.length, 3, 'but the selection is untouched:');
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.pvSend('pdf');
+  eq(A._pdfs[0].html.split('class="rx-item"').length - 1, 2, 'sends what the preview shows:');
+
+  // إفراغ القائمة من المعاينة يمنع الإرسال بلا انهيار
+  c.pvDrop(0); c.pvDrop(0);
+  c.pvSend('pdf');
+  eq(A._pdfs.length, 1, 'empty list refused:');
+});
+
+run('العرض: ورقة مضغوطة تصغّر المقاسات وتُحفَظ', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs'); c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.previewCart('labs'); c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('font-size:11pt') >= 0, true, 'normal density by default:');
+
+  c.pvDense();
+  eq(c.DB.dense, 1, 'toggled:');
+  eq(b._t.settings.dense, '1', 'persisted:');
+  c.pvSend('pdf');
+  eq(A._pdfs[1].html.indexOf('font-size:9.5pt') >= 0, true, 'compact sizes:');
+  eq(A._pdfs[1].html.indexOf('CBC') >= 0, true, 'same content:');
+
+  c.pvDense();
+  eq(c.DB.dense, 0, 'back to normal:');
+});
+
+run('الإرسال: الصيغة المفضّلة تتصدّر الشريط', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs'); c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.previewCart('labs');
+  eq(c.DB.fmt, 'pdf', 'pdf to begin with:');
+  let bar = c._els('page').innerHTML;
+  eq(bar.indexOf('📄 PDF') < bar.indexOf('🖼️ صورة'), true, 'pdf first:');
+
+  c.pvSend('img');
+  eq(c.DB.fmt, 'img', 'remembers what was used:');
+  eq(b._t.settings.fmt, 'img', 'persisted:');
+  c.render();
+  bar = c._els('page').innerHTML;
+  eq(bar.indexOf('🖼️ صورة') < bar.indexOf('📄 PDF'), true, 'image moved to the front:');
+  eq(bar.split('btn primary sm').length - 1, 1, 'and it is the highlighted one:');
+});
+
+run('الإرسال: اسم المريض في الورقة واسم الملف والنص', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs'); c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  c.previewCart('labs');
+  c._els('pv-who').value = 'سعد العتيبي';
+  c.pvWho();
+  c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('سعد العتيبي') >= 0, true, 'in the paper:');
+  eq(A._pdfs[0].name, 'قائمة تحاليل - سعد العتيبي', 'in the file name:');
+
+  c.pvSend('copy');
+  eq(A._clip.indexOf('سعد العتيبي') >= 0, true, 'in the copied text:');
+
+  // فارغ = لا أثر له إطلاقًا
+  c._els('pv-who').value = ''; c.pvWho();
+  c.pvSend('pdf');
+  eq(A._pdfs[1].name, 'قائمة تحاليل', 'no trace when left empty:');
+  eq(A._pdfs[1].html.indexOf('سعد') < 0, true, 'and none in the paper:');
+});
+
+run('الإرسال: السجل يحفظ آخر عشرة ويعيدها بضغطة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+  ['CBC', 'ESR'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+
+  c.previewCart('labs');
+  c._els('pv-who').value = 'سعد'; c.pvWho();
+  c.pvSend('pdf');
+  eq(b._t.sent.length, 1, 'recorded:');
+  eq(b._t.sent[0].ids.length, 2, 'with its items:');
+  eq(b._t.sent[0].who, 'سعد', 'and the patient:');
+
+  c.goHome();
+  eq(c._els('page').innerHTML.indexOf('آخر ما أرسلت (1)') >= 0, true, 'shortcut on home:');
+
+  // إعادة الفتح
+  c.clearCart('labs');
+  c.goPage('sent');
+  eq(c._els('page').innerHTML.indexOf('اليوم') >= 0, true, 'shows when it was sent:');
+  c.sentOpen(c.DB.sent[0].id);
+  eq(c.curPage(), 'pv', 'opened the preview:');
+  eq(c.PV.ids.length, 2, 'with the same list:');
+  eq(c.PV.who, 'سعد', 'and the same patient:');
+  eq(b._t.cart.labs.length, 0, 'without touching the cart:');
+
+  // عنصر حُذف بعد الإرسال يُستبعَد ولا ينهار السجل
+  c.labDel(c.DB.labs[0].id); c._els('cb-yes').onclick();
+  c.sentOpen(c.DB.sent[0].id);
+  eq(c.PV.ids.length, 1, 'deleted items are skipped:');
+
+  // القصّ على عشرة
+  for (let i = 0; i < 12; i++) { c.previewCart; c.logSent('labs', [c.DB.labs[0].id], 'ق' + i, ''); }
+  eq(c.DB.sent.length, 10, 'capped at ten:');
+  eq(b._t.sent.length, 10, 'in the db too:');
+
+  c.sentClear(); c._els('cb-yes').onclick();
+  eq(c.DB.sent.length, 0, 'cleared:');
+  eq(b._t.labs.length, 1, 'and no item was harmed:');
 });

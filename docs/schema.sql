@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 7   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 8   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -187,7 +187,21 @@ CREATE TABLE items (
 );
 
 -- ─────────────────────────────────────────────────────────────────────────────
---  ١١) الإعدادات — مخزن مفتاح/قيمة
+--  ١١) سجل الإرسالات — آخر عشر قوائم أُرسِلت
+--  لقطة تاريخية لا علاقة حيّة: المعرّفات نصّ JSON لا جدول ربط، فحذف عنصر
+--  لاحقًا لا يغيّر ما جرى — يُستبعَد عند الاسترجاع فقط.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE sent (
+    id        TEXT PRIMARY KEY,
+    kind      TEXT    NOT NULL,               -- القسم (sections.id)
+    title     TEXT,                           -- عنوان القائمة كما أُرسِلت
+    who       TEXT,                           -- اسم المريض إن كُتِب
+    item_ids  TEXT    NOT NULL,               -- JSON: المعرّفات بالترتيب المُرسَل
+    ts        INTEGER NOT NULL                -- وقت الإرسال
+);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+--  ١٢) الإعدادات — مخزن مفتاح/قيمة
 --  المفاتيح المستخدمة حاليًا:
 --    pin_hash      بصمة SHA-256 لرمز القفل (لا الرمز نفسه)
 --    out_meds      JSON: أسماء حقول العلاجات الظاهرة في الطباعة/الصورة
@@ -199,6 +213,9 @@ CREATE TABLE items (
 --    hdr_contact   ترويسة الطباعة: التواصل      (اختيارية)
 --    backup_at     وقت آخر نسخة احتياطية تلقائية (ميلي ثانية)
 --    cats_seeded   '1' بعد زرع التصنيفات المبدئية مرّة واحدة
+--    fields_out_done '1' بعد إدراج الحقول الإضافية القديمة في المرسلة
+--    dense         '1' ورقة مضغوطة (خط أصغر وهوامش أضيق)
+--    fmt           الصيغة المفضّلة للإرسال: pdf | img | print | copy
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE settings (
     key    TEXT PRIMARY KEY,
@@ -217,6 +234,7 @@ CREATE INDEX idx_groups_kind   ON groups(kind);
 CREATE INDEX idx_cats_kind     ON cats(kind);
 CREATE INDEX idx_fields_kind   ON fields(kind);
 CREATE INDEX idx_items_section ON items(section);
+CREATE INDEX idx_sent_ts       ON sent(ts);
 
 
 -- ============================================================================
@@ -262,6 +280,10 @@ CREATE INDEX idx_items_section ON items(section);
 --      CREATE TABLE IF NOT EXISTS items (…);
 --      ALTER TABLE <kind> ADD COLUMN extra TEXT;   -- للأربعة، إن لم يكن موجودًا
 --      -- الأقسام الأصلية تُسجَّل من الواجهة عند أول إقلاع (ensureSections)
+--
+--  الإصدار ٧ → ٨
+--      CREATE TABLE IF NOT EXISTS sent (…);          -- سجل الإرسالات
+--      CREATE INDEX IF NOT EXISTS idx_sent_ts ON sent(ts);
 --
 --  عند إضافة ترقية جديدة:
 --    ١) ارفع DB_VERSION

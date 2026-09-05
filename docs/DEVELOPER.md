@@ -53,7 +53,7 @@ DaliliApp/
 │   ├── DATABASE.md                      تفصيل قاعدة البيانات
 │   └── schema.sql                       المخطط الكامل كـSQL
 ├── tools/
-│   ├── test_store.js                    ٧١ اختبارًا — node tools/test_store.js
+│   ├── test_store.js                    ٧٧ اختبارًا — node tools/test_store.js
 │   └── ui_smoke.js                      تشغيل الواجهة في Chromium + لقطات
 ├── dist/                                ملف APK الجاهز
 └── gradlew / gradlew.bat                لا تحتاج Gradle مثبّتًا
@@ -119,8 +119,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 18       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "2.7"    // ما يراه المستخدم
+versionCode 19       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "2.8"    // ما يراه المستخدم
 ```
 
 ---
@@ -294,6 +294,31 @@ renderCatsPage(k)   صفحة الإدارة: إنشاء/تسمية/ترتيب/ح
 
 ---
 
+## ٥د. تسهيل العرض والإرسال
+
+```
+accBlock(title, inner, open, pick)  «☑️ تحديد الكل» في رأس المجموعة
+pickCat / pickFlag / toggleIds      تحديد تصنيف كامل أو رفعه عنه
+PV_TAB 'list' → pvListHtml          حذف وترتيب لهذا الإرسال وحده
+printCss(scope, dense)              مقاسان: عادي ومضغوط (DB.dense)
+FMTS + DB.fmt                       الصيغة المفضّلة تتصدّر شريط الإرسال
+PV.who + docBody(…, who) + outName  اسم المريض في الورقة واسم الملف
+logSent / renderSentPage / sentOpen سجل آخر عشرة إرسالات
+```
+
+**تعديل المعاينة لا يمسّ المصدر:** `pvDrop`/`pvMove` تعملان على `PV.ids`
+وحدها، فلا تتغيّر السلة ولا المجموعة المحفوظة. المعاينة نافذة على ما يخرج
+الآن لا محرّر بيانات — والهامش في الواجهة يقول ذلك صراحةً.
+
+**اسم المريض يُحدَّث بالـDOM لا بإعادة الرسم:** `render()` يكتب `innerHTML`
+من جديد فيفقد الحقل تركيزه وسط الكتابة؛ لذلك `pvWho` تحدّث سطر `.paper .sub`
+وحده.
+
+**السجل لقطة لا علاقة حيّة** (انظر [`DATABASE.md`](DATABASE.md)): عنصر
+حُذف بعد إرساله يُستبعَد عند الاسترجاع مع إشعار، ولا يُفسد السجل.
+
+---
+
 ## ٦. الطباعة والمشاركة
 
 > **`window.open` لا يعمل داخل WebView إطلاقًا.** هذا كان سبب رسالة «اسمح
@@ -462,7 +487,7 @@ node tools/ui_smoke.js      # يحتاج playwright
 node tools/test_store.js
 ```
 
-٧١ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
+٧٧ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`
 (جداول منفصلة، سلة مرتّبة، مجموعات).
 

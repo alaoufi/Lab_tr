@@ -10,7 +10,7 @@
 
 - **الكود:** `app/src/main/java/me/alaoufi/dalili/DaliliDb.java`
 - **المخطط الكامل كـSQL:** [`schema.sql`](schema.sql)
-- **إصدار المخطط الحالي:** `7`
+- **إصدار المخطط الحالي:** `8`
 
 ---
 
@@ -124,6 +124,17 @@ UPDATE <kind> SET category = ? WHERE category = ?
 التصنيف الفارغ يعيش في `cats` ولا يظهر في القسم — مكانه صفحة إدارة
 التصنيفات.
 
+### `sent` — سجل الإرسالات
+
+```sql
+sent(id, kind, title, who, item_ids, ts)
+```
+
+آخر عشر قوائم أُرسِلت، لتُعاد بضغطة بلا إعادة تحديد. **لقطة تاريخية لا
+علاقة حيّة:** العناصر تُحفَظ كقائمة معرّفات نصّية (JSON) لا كجدول ربط، فحذف
+عنصر لاحقًا لا يغيّر ما جرى — يُستبعَد عند الاسترجاع فقط، مع إشعار.
+`DaliliDb.addSent` يقصّ السجل على عشرة في نفس المعاملة.
+
 ### `settings` — مخزن مفتاح/قيمة
 
 | المفتاح | القيمة |
@@ -136,6 +147,9 @@ UPDATE <kind> SET category = ? WHERE category = ?
 | `hdr_name` / `hdr_title` / `hdr_contact` | ترويسة الطباعة الاختيارية — فارغة افتراضيًا فلا تظهر |
 | `backup_at` | وقت آخر نسخة احتياطية تلقائية |
 | `cats_seeded` | `'1'` بعد زرع التصنيفات المبدئية مرّة واحدة — فحذف تصنيف مزروع لا يعيده الإقلاع التالي |
+| `fields_out_done` | `'1'` بعد إدراج الحقول الإضافية المعرَّفة قبل التحديث في «الحقول المرسلة» |
+| `dense` | `'1'` ورقة مضغوطة — خط أصغر وهوامش أضيق فتدخل قائمة أطول في الصفحة |
+| `fmt` | الصيغة المفضّلة للإرسال (`pdf`/`img`/`print`/`copy`) — تتصدّر شريط المعاينة |
 
 ---
 
@@ -205,6 +219,8 @@ private static String flagCol(String kind)   { … }   // ما اسم عمود �
 | `saveField(json)` | `{id, kind, key, label, type}` | نجاح |
 | `deleteField(id)` | | نجاح |
 | `setFieldOrder(jsonIds)` | | نجاح |
+| `addSent(json)` | `{id, kind, title, who, ids[], ts}` — يقصّ على عشرة | نجاح |
+| `clearSent()` | إفراغ السجل؛ لا يمسّ عنصرًا | نجاح |
 | `saveCat(json)` | `{id, kind, name}` — إنشاء أو إعادة تسمية | نجاح |
 | `deleteCat(id)` | لا يمسّ العناصر | نجاح |
 | `moveCatItems(kind, from, to)` | نقل عناصر تصنيف؛ `to` فارغًا = «غير مصنّف» | نجاح |
@@ -240,6 +256,8 @@ upsert: function (kind, o) {
   "fields":  [ { "id": "…", "kind": "meds", "key": "f1", "label": "الشركة المصنّعة", "type": "text" } ],
   "sec_x":   [ { "id": "…", "name": "لقاح الإنفلونزا", "category": "…", "extra": {…}, "flag": 0 } ],
   "cats":    [ { "id": "…", "kind": "labs", "name": "كيمياء الدم" } ],
+  "sent":    [ { "id": "…", "kind": "labs", "title": "قائمة تحاليل", "who": "…",
+                 "ids": ["id2","id3"], "ts": 1730000000000 } ],
   "groups":  [ { "id": "…", "kind": "labs", "name": "…", "items": ["id2","id3"] } ],
   "settings": { "pin_hash": "…", "out_labs": "[\"code\",\"requirements\"]" },
   "pin_hash": "…"

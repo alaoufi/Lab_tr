@@ -23,7 +23,7 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 7;
+    private static final int DB_VERSION = 8;
 
     /**
      * الأقسام الأصلية الأربعة — وهي أيضًا أسماء جداولها.
@@ -112,6 +112,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         createSections(db);
         createFields(db);
         createItems(db);
+        createSent(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -225,6 +226,22 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_fields_kind ON fields(kind)");
     }
 
+    /**
+     * سجل الإرسالات: آخر ما أُرسِل فعلًا ليُعاد بضغطة بلا إعادة تحديد.
+     * العناصر تُحفَظ كقائمة معرّفات نصّية لا كجدول ربط — السجل لقطة تاريخية
+     * لا علاقة حيّة، فحذف عنصر لاحقًا يجب ألّا يغيّر ما جرى.
+     */
+    private void createSent(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS sent ("
+                + "id TEXT PRIMARY KEY,"
+                + "kind TEXT NOT NULL,"
+                + "title TEXT,"
+                + "who TEXT,"                // اسم المريض إن كُتِب
+                + "item_ids TEXT NOT NULL,"  // JSON: معرّفات بالترتيب المُرسَل
+                + "ts INTEGER NOT NULL)");
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_sent_ts ON sent(ts)");
+    }
+
     /** عناصر الأقسام التي ينشئها المستخدم — جدول واحد يفرّقه عمود section. */
     private void createItems(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS items ("
@@ -313,6 +330,9 @@ public class DaliliDb extends SQLiteOpenHelper {
             createItems(db);
             addExtraColumns(db);
         }
+        if (oldVersion < 8) {
+            createSent(db);      // سجل الإرسالات
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -339,6 +359,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
         out.put("cart", cart);
         out.put("cats", readCats(db));
+        out.put("sent", readSent(db));
         out.put("groups", readGroups(db));
         out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
@@ -510,6 +531,55 @@ public class DaliliDb extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+
+    /** آخر الإرسالات، الأحدث أولًا. */
+    private JSONArray readSent(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("sent", null, null, null, null, null, "ts DESC", "20");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("kind", str(c, "kind"));
+                o.put("title", str(c, "title"));
+                o.put("who", str(c, "who"));
+                o.put("ids", new JSONArray(str(c, "item_ids")));
+                o.put("ts", c.getLong(c.getColumnIndexOrThrow("ts")));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    /** يسجّل إرسالًا ويقصّ السجل على آخر عشرة. */
+    public void addSent(JSONObject o) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            writeSent(db, o);
+            db.execSQL("DELETE FROM sent WHERE id NOT IN "
+                    + "(SELECT id FROM sent ORDER BY ts DESC LIMIT 10)");
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
+    private void writeSent(SQLiteDatabase db, JSONObject o) {
+        String id = o.optString("id");
+        if (id.isEmpty()) return;
+        JSONArray ids = o.optJSONArray("ids");
+        ContentValues v = new ContentValues();
+        v.put("id", id);
+        v.put("kind", o.optString("kind", ""));
+        v.put("title", o.optString("title", ""));
+        v.put("who", o.optString("who", ""));
+        v.put("item_ids", ids == null ? "[]" : ids.toString());
+        v.put("ts", o.optLong("ts", System.currentTimeMillis()));
+        db.insertWithOnConflict("sent", null, v, SQLiteDatabase.CONFLICT_REPLACE);
+    }
+
+    public void clearSent() {
+        getWritableDatabase().delete("sent", null, null);
     }
 
     private JSONArray readCats(SQLiteDatabase db) throws Exception {
@@ -794,6 +864,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             db.delete("cats", null, null);
             db.delete("sections", null, null);
             db.delete("fields", null, null);
+            db.delete("sent", null, null);
             db.delete("groups", null, null);
             db.delete("group_items", null, null);
 
@@ -819,6 +890,11 @@ public class DaliliDb extends SQLiteOpenHelper {
             for (int i = 0; fields != null && i < fields.length(); i++) {
                 JSONObject o = fields.optJSONObject(i);
                 if (o != null) writeField(db, o, i + 1);
+            }
+            JSONArray sent = data.optJSONArray("sent");
+            for (int i = 0; sent != null && i < sent.length(); i++) {
+                JSONObject o = sent.optJSONObject(i);
+                if (o != null) writeSent(db, o);
             }
 
             JSONObject cart = data.optJSONObject("cart");
