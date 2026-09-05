@@ -25,6 +25,8 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.waitForTimeout(250);
   await p.fill('#rf-name', 'شراب الزنجبيل والعسل');
   await p.click('.seg:has-text("وقائية")');
+  await p.click('.more summary');            // الحقول الأقل استعمالًا مطويّة
+  await p.waitForTimeout(200);
   await p.fill('#rf-purpose', 'تهدئة الحلق والسعال الجاف');
   await p.fill('#rf-ingredients', 'زنجبيل طازج ٢ ملعقة، عسل ٣ ملاعق، ليمون نصف حبة');
   await p.fill('#rf-preparation', 'يُغلى الزنجبيل في كوب ماء ١٠ دقائق، يُصفّى ثم يُضاف العسل والليمون بعد أن يفتر');
@@ -68,13 +70,33 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.evaluate(() => closeModal());
   await p.waitForTimeout(200);
 
+  // تسهيل الإضافة: حفظ ومتابعة، ثم بحثٌ بلا نتيجة يضيف بالاسم
+  await p.evaluate(() => goPage('labs'));
+  await p.waitForTimeout(250);
+  await p.click('text=+ إضافة');
+  await p.waitForTimeout(300);
+  await p.selectOption('#lf-catsel', 'أمراض الدم');
+  for (const n of ['CBC', 'ESR']) {
+    await p.fill('#lf-name', n);
+    await p.click('text=💾 حفظ ومتابعة');
+    await p.waitForTimeout(350);
+  }
+  await p.screenshot({ path: 'n8-save-and-next.png', fullPage: true });
+  await p.evaluate(() => closeModal());
+  await p.waitForTimeout(250);
+  await p.fill('#srch', 'فيتامين د');
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n9-add-from-search.png', fullPage: true });
+  await p.click('text=أضِفه بهذا الاسم');
+  await p.waitForTimeout(350);
+
   // الأقسام والحقول الإضافية
   await p.evaluate(() => goPage('secs'));
   await p.waitForTimeout(300);
-  await p.screenshot({ path: 'n8-sections.png', fullPage: true });
+  await p.screenshot({ path: 'n10-sections.png', fullPage: true });
   await p.evaluate(() => goPage('fld:meds'));
   await p.waitForTimeout(300);
-  await p.screenshot({ path: 'n9-fields.png', fullPage: true });
+  await p.screenshot({ path: 'n11-fields.png', fullPage: true });
 
   console.log(errs.length ? errs.join('\n') : 'لا أخطاء في الكونسول ✅');
   await b.close();

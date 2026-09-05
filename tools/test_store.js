@@ -1544,3 +1544,113 @@ run('مخرجات قسم أنشأه المستخدم: عنوان صحيح وصو
   c.pvSend('copy');
   eq(A._clip.indexOf('النصائح') >= 0 && A._clip.indexOf('نظّف الجرح') >= 0, true, 'copied text:');
 });
+
+run('الإضافة: «حفظ ومتابعة» يُبقيك في النموذج ويقترح التصنيف', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('labs');
+
+  c.labForm();
+  c._els('lf-name').value = 'CBC';
+  c._els('lf-category').value = 'أمراض الدم';
+  c.labSave('', 1);                       // حفظ ومتابعة
+  eq(b._t.labs.length, 1, 'saved:');
+  eq(c._els('modal-bg').className.indexOf('on') >= 0, true, 'form stayed open:');
+  eq(c.LAST_CAT.labs, 'أمراض الدم', 'category remembered:');
+
+  // النموذج التالي يأتي بالتصنيف نفسه فلا يُعاد اختياره
+  eq(c._els('modal-body').innerHTML.indexOf('id="lf-category" value="أمراض الدم"') >= 0,
+    true, 'prefilled for the next one:');
+  c._els('lf-name').value = 'ESR';
+  c.labSave('', 1);
+  eq(b._t.labs.map(l => l.name), ['CBC', 'ESR'], 'second one in:');
+  eq(b._t.labs[1].category, 'أمراض الدم', 'same category without re-picking:');
+
+  // الحفظ العادي يغلق
+  c._els('lf-name').value = 'TSH';
+  c.labSave('');
+  eq(b._t.labs.length, 3, 'third saved:');
+  eq(c._els('modal-bg').className.indexOf('on') < 0, true, 'and the form closed:');
+
+  // «حفظ ومتابعة» لا يظهر عند التعديل
+  c.labForm(b._t.labs[0].id);
+  eq(c._els('modal-body').innerHTML.indexOf('حفظ ومتابعة') < 0, true, 'not offered while editing:');
+  c.labForm();
+  eq(c._els('modal-body').innerHTML.indexOf('حفظ ومتابعة') >= 0, true, 'but offered while adding:');
+});
+
+run('الإضافة: ⧉ تكرار عنصر يفتح نسخة قابلة للتعديل', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('imaging');
+  c.imgForm();
+  c._els('if-name').value = 'رنين للركبة اليمنى';
+  c._els('if-category').value = 'رنين مغناطيسي';
+  c._els('if-requirements').value = 'إحضار فحوصات الكلى';
+  c.imgSave('');
+  const src = b._t.imaging[0];
+
+  c.dupItem('imaging', src.id);
+  const dup = c._els('modal-body').innerHTML;
+  eq(b._t.imaging.length, 1, 'nothing saved yet — it is a draft:');
+  eq(dup.indexOf('value="رنين للركبة اليمنى"') >= 0, true, 'name copied:');
+  eq(dup.indexOf('id="if-category" value="رنين مغناطيسي"') >= 0, true, 'category copied:');
+  eq(dup.indexOf('إحضار فحوصات الكلى') >= 0, true, 'details copied:');
+  eq(dup.indexOf('حفظ ومتابعة') >= 0, true, 'and it is an add, not an edit:');
+
+  c._els('if-name').value = 'رنين للركبة اليسرى';
+  c.imgSave('');
+  eq(b._t.imaging.length, 2, 'saved as a new one:');
+  eq(b._t.imaging[1].id !== src.id, true, 'with its own id:');
+  eq(b._t.imaging[0].name, 'رنين للركبة اليمنى', 'original untouched:');
+
+  // النسخة تُستهلك مرّة واحدة فلا تتسرّب للنموذج التالي
+  c.imgForm();
+  eq(c._els('modal-body').innerHTML.indexOf('id="if-name" class="inp" value=""') >= 0,
+    true, 'a fresh form afterwards:');
+});
+
+run('الإضافة: بحثٌ بلا نتيجة يضيف بالاسم مباشرةً', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('meds');
+  c.medForm(); c._els('mf-trade_name').value = 'بنادول';
+  c._els('mf-category').value = 'مسكنات'; c.medSave('');
+
+  c._els('srch').value = 'أوجمنتين';
+  c.renderMeds();
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('لا نتيجة') >= 0, true, 'says there is no hit:');
+  eq(html.indexOf('أضِفه بهذا الاسم') >= 0, true, 'offers to add it:');
+  eq(html.indexOf('مسكنات') >= 0, true, 'and names the category it will land in:');
+
+  c.addNamed('meds');
+  eq(b._t.meds.length, 2, 'added:');
+  eq(b._t.meds[1].trade_name, 'أوجمنتين', 'with the searched name:');
+  eq(b._t.meds[1].category, 'مسكنات', 'in the last-used category:');
+  eq(c._els('srch').value, '', 'search cleared for the next one:');
+
+  // اسم التحليل يختلف عن اسم العلاج
+  c.goPage('labs');
+  c._els('srch').value = 'فيتامين د';
+  c.renderLabs();
+  c.addNamed('labs');
+  eq(b._t.labs[0].name, 'فيتامين د', 'labs use `name` not `trade_name`:');
+});
+
+run('الإضافة: الحقول قليلة الاستعمال مطويّة ولا تضيع قيمها', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('recipes');
+  c.recipeForm();
+  const html = c._els('modal-body').innerHTML;
+  eq(html.indexOf('المزيد من الحقول') >= 0, true, 'the fold exists:');
+  // الأساسية خارج الطيّة، والباقي داخلها
+  const fold = html.indexOf('<details class="more"');
+  eq(html.indexOf('rf-ingredients') < fold, true, 'ingredients stay visible:');
+  eq(html.indexOf('rf-precautions') > fold, true, 'precautions are folded:');
+
+  // القيم داخل الطيّة تُقرأ عند الحفظ كغيرها
+  c._els('rf-name').value = 'شراب الزنجبيل';
+  c._els('rf-ingredients').value = 'زنجبيل وعسل';
+  c._els('rf-precautions').value = 'يُتجنّب دون سنة';
+  c.recipeSave('');
+  eq(b._t.recipes[0].ingredients, 'زنجبيل وعسل', 'visible field saved:');
+  eq(b._t.recipes[0].precautions, 'يُتجنّب دون سنة', 'folded field saved too:');
+});

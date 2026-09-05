@@ -1000,14 +1000,95 @@ function ensureSections() {
     if (!Array.isArray(DB.cart[k])) DB.cart[k] = [];
   });
 }
-/** «+ إضافة» من الإعدادات — يفتح نموذج القسم أيًّا كان أصليًّا أو جديدًا. */
-window.quickAdd = function (kind) {
-  if (kind === 'meds') return medForm();
-  if (kind === 'labs') return labForm();
-  if (kind === 'imaging') return imgForm();
-  if (kind === 'recipes') return recipeForm();
-  secItemForm(kind);
+/* ── تسهيل الإضافة ──────────────────────────────────────────────
+   إدخال عشرة عناصر كان يعني فتح النموذج وإغلاقه عشر مرات، وإعادة اختيار
+   التصنيف في كل مرة. ثلاثة أشياء تختصر ذلك: «حفظ ومتابعة» يُبقيك في
+   النموذج، وآخر تصنيف يُقترح تلقائيًا، و«تكرار» ينسخ عنصرًا شبيهًا. */
+
+/** آخر تصنيف استُعمل في كل قسم — يُقترح في النموذج التالي وفي الإضافة السريعة. */
+var LAST_CAT = {};
+/** مصدر النسخ عند «تكرار عنصر» — يُستهلك أول ما يُفتح النموذج. */
+var DUP = null;
+
+/** يفتح نموذج القسم أيًّا كان أصليًّا أو منشأً. */
+function openForm(kind, id) {
+  if (kind === 'meds') return medForm(id);
+  if (kind === 'labs') return labForm(id);
+  if (kind === 'imaging') return imgForm(id);
+  if (kind === 'recipes') return recipeForm(id);
+  return secItemForm(kind, id);
+}
+window.quickAdd = function (kind) { openForm(kind); };
+
+/** القيم المبدئية لعنصر جديد: نسخة عنصر قائم، أو آخر تصنيف استُعمل. */
+function newItem(kind) {
+  if (DUP) { var d = DUP; DUP = null; return d; }
+  return { category: LAST_CAT[kind] || '' };
+}
+/** «⧉ تكرار»: يفتح النموذج مملوءًا بنسخة العنصر بلا معرّف، فتعدّل ما اختلف. */
+window.dupItem = function (kind, id) {
+  var o = coll(kind).find(function (x) { return x.id === id; });
+  if (!o) return;
+  DUP = {};
+  Object.keys(o).forEach(function (k) { if (k !== 'id') DUP[k] = o[k]; });
+  if (DUP.extra) {
+    var x = {}; Object.keys(DUP.extra).forEach(function (k) { x[k] = DUP.extra[k]; });
+    DUP.extra = x;
+  }
+  openForm(kind);
 };
+
+/** ذيل النموذج: «حفظ ومتابعة» يظهر عند الإضافة فقط لا عند التعديل. */
+function mft(saveFn, id) {
+  var call = saveFn + '(\'' + (id || '') + '\'';
+  return '<div class="mft"><button class="btn primary" onclick="' + call + ')">حفظ</button>'
+    + (id ? '' : '<button class="btn wa" onclick="' + call + ',1)">💾 حفظ ومتابعة</button>')
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>';
+}
+/** ما بعد الحفظ: إمّا نغلق، أو نُبقي المستخدم في نموذج جديد جاهز للتالي. */
+function afterSave(kind, again, id) {
+  if (again && !id) {
+    render();
+    openForm(kind);
+    toast('✅ حُفظ — أضِف التالي');
+    return;
+  }
+  closeModal();
+  toast('✅ تم الحفظ');
+  if (curPage() !== kind) goPage(kind); else render();
+}
+
+/** حقل الاسم يختلف في العلاجات وحدها. */
+function nameKey(kind) { return kind === 'meds' ? 'trade_name' : 'name'; }
+
+/** بحثٌ بلا نتيجة هو أسرع مدخل للإضافة: الاسم مكتوب أصلًا في خانة البحث. */
+function noHit(kind, q) {
+  var cat = LAST_CAT[kind];
+  return '<div class="empty"><div class="ei">🔎</div>'
+    + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
+    + '<button class="btn primary full" style="margin-top:11px" onclick="addNamed(\'' + kind + '\')">'
+    + '➕ أضِفه بهذا الاسم' + (cat ? ' إلى «' + esc(cat) + '»' : '') + '</button>'
+    + '<div class="es" style="margin-top:9px">أو «+ إضافة» لملء بقيّة الحقول</div></div>';
+}
+/** إضافة بالاسم وحده — تُكمَّل تفاصيله متى شئت. */
+window.addNamed = function (kind) {
+  var el = $('srch'), q = el ? String(el.value || '').trim() : '';
+  if (!q) return;
+  var rec = { id: uid(), category: LAST_CAT[kind] || '', extra: {} };
+  rec[nameKey(kind)] = q;
+  coll(kind).push(rec);
+  catEnsure(kind, rec.category);
+  Store.upsert(kind, rec);
+  if (el) el.value = '';          // القائمة تعود كاملة والحقل جاهز للتالي
+  render();
+  toast('✅ أُضيف «' + q + '»');
+};
+
+/** الحقول الأقل استعمالًا تُطوى فيبقى النموذج قصيرًا على الجوال. */
+function moreBlock(inner) {
+  return inner ? '<details class="more"><summary>المزيد من الحقول ▾</summary>'
+    + '<div class="more-b">' + inner + '</div></details>' : '';
+}
 
 function renderSectionsPage() {
   var html = '<button class="btn full primary" onclick="secNew()">➕ قسم جديد</button>'
@@ -1130,6 +1211,7 @@ function secRow(kind, o) {
     + (o.category ? '<div class="sub">' + esc(o.category) + '</div>' : '')
     + extraRow(kind, o) + '</div>'
     + '<button class="ic" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="secItemDel(\'' + kind + '\',\'' + o.id + '\')">🗑️</button>'
     + '</div></div>';
 }
@@ -1151,9 +1233,10 @@ function renderCustomSection(kind) {
     + '<button class="btn primary" onclick="secItemForm(\'' + kind + '\')">+ إضافة</button></div>';
   if (DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
   if (!list.length) {
-    h('page', html + emptyBox(L.icon, 'لا شيء في ' + L.title,
-      fieldsOf(kind).length ? 'اضغط «+ إضافة» لتبدأ'
-        : 'أضِف حقولًا لهذا القسم من ⚙️ الإعدادات ← إدارة الأقسام'));
+    h('page', html + (q ? noHit(kind, q)
+      : emptyBox(L.icon, 'لا شيء في ' + L.title,
+        fieldsOf(kind).length ? 'اضغط «+ إضافة» لتبدأ'
+          : 'أضِف حقولًا لهذا القسم من ⚙️ الإعدادات ← إدارة الأقسام')));
     return;
   }
   if (q) {
@@ -1170,7 +1253,7 @@ function renderCustomSection(kind) {
   h('page', html);
 }
 window.secItemForm = function (kind, id) {
-  var o = id ? (coll(kind).find(function (x) { return x.id === id; }) || {}) : {};
+  var o = id ? (coll(kind).find(function (x) { return x.id === id; }) || {}) : newItem(kind);
   var L = kindLbl(kind);
   var body = '<div class="f"><label>الاسم *</label>'
     + '<input id="cf-name" class="inp" value="' + esc(o.name || '') + '"></div>'
@@ -1178,10 +1261,11 @@ window.secItemForm = function (kind, id) {
     + extraFields('cf', kind, o)
     + '<label class="chk-row"><input type="checkbox" id="cf-flag" ' + (o.flag ? 'checked' : '') + '> ⭐ مفضّل</label>'
     + '<div class="mft"><button class="btn primary" onclick="secItemSave(\'' + kind + '\',\'' + (id || '') + '\')">حفظ</button>'
+    + (id ? '' : '<button class="btn wa" onclick="secItemSave(\'' + kind + '\',\'\',1)">💾 حفظ ومتابعة</button>')
     + '<button class="btn" onclick="closeModal()">إلغاء</button></div>';
   openModal((id ? '✏️ تعديل — ' : '+ إضافة — ') + L.title, body);
 };
-window.secItemSave = function (kind, id) {
+window.secItemSave = function (kind, id, again) {
   var body = {
     name: (($('cf-name') || {}).value || '').trim(),
     category: (($('cf-category') || {}).value || '').trim(),
@@ -1190,11 +1274,12 @@ window.secItemSave = function (kind, id) {
   };
   if (!body.name) return toast('الاسم مطلوب', 'er');
   catEnsure(kind, body.category);
+  LAST_CAT[kind] = body.category;
   var rec;
   if (id) { rec = coll(kind).find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); coll(kind).push(body); rec = body; }
-  Store.upsert(kind, rec); closeModal(); toast('✅ تم الحفظ');
-  if (curPage() !== kind) goPage(kind); else render();
+  Store.upsert(kind, rec);
+  afterSave(kind, again, id);
 };
 window.secItemDel = function (kind, id) {
   confirmBox('حذف هذا العنصر؟', function () {
@@ -1561,16 +1646,17 @@ window.catMove = function (kind, id, dir) {
 };
 
 /* ════════════════════════ 💊 العلاجات ════════════════════════ */
+/* العمود الثالث: حقل نصّ طويل؟ — والرابع: يُطوى ضمن «المزيد»؟ */
 var MED_FLD = [
   ['trade_name', 'الاسم التجاري', false],
-  ['scientific_name', 'الاسم العلمي', false],
   ['category', 'التصنيف', false],
-  ['concentration', 'التركيز', false],
   ['dosage', 'الجرعات', false],
-  ['duration', 'مدة الاستخدام', false],
+  ['scientific_name', 'الاسم العلمي', false, 1],
+  ['concentration', 'التركيز', false, 1],
+  ['duration', 'مدة الاستخدام', false, 1],
   ['uses', 'الاستخدامات', true],
-  ['cautions', 'المحاذير', true],
-  ['notes', 'ملاحظات', true]
+  ['cautions', 'المحاذير', true, 1],
+  ['notes', 'ملاحظات', true, 1]
 ];
 
 function medRow(m) {
@@ -1585,6 +1671,7 @@ function medRow(m) {
     + extraRow('meds', m)
     + '</div>'
     + '<button class="ic" onclick="medForm(\'' + m.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="dupItem(\'meds\',\'' + m.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="medDel(\'' + m.id + '\')">🗑️</button>'
     + '</div></div>';
 }
@@ -1600,7 +1687,11 @@ function renderMeds() {
     + '<button class="btn" onclick="goPage(\'grp:meds\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="medForm()">+ إضافة</button></div>';
   if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
-  if (!list.length) { h('page', html + emptyBox('💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')); return; }
+  if (!list.length) {
+    h('page', html + (q ? noHit('meds', q)
+      : emptyBox('💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+    return;
+  }
 
   if (q) {
     html += list.map(medRow).join('');
@@ -1655,32 +1746,34 @@ window.toggleCart = function (kind, id) {
 window.clearCart = function (kind) { DB.cart[kind] = []; Store.setCart(kind); render(); };
 
 window.medForm = function (id) {
-  var m = id ? (DB.meds.find(function (x) { return x.id === id; }) || {}) : {};
-  var body = MED_FLD.map(function (f) {
+  var m = id ? (DB.meds.find(function (x) { return x.id === id; }) || {}) : newItem('meds');
+  function fld(f) {
     var key = f[0], lbl = f[1], area = f[2];
-    var v = esc(m[key] || '');
     if (key === 'category') return catField('mf', 'meds', m.category);
     if (area) return taField('mf-' + key, lbl, m[key] || '');
     return '<div class="f"><label>' + lbl + (key === 'trade_name' ? ' *' : '') + '</label>'
-      + '<input id="mf-' + key + '" class="inp" value="' + v + '"></div>';
-  }).join('');
+      + '<input id="mf-' + key + '" class="inp" value="' + esc(m[key] || '') + '"></div>';
+  }
+  var body = MED_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
   body += extraFields('mf', 'meds', m);
+  body += moreBlock(MED_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
   body += '<label class="chk-row"><input type="checkbox" id="mf-default" ' + (m.default_include ? 'checked' : '') + '> ⭐ محدَّد افتراضيًا</label>';
-  body += '<div class="mft"><button class="btn primary" onclick="medSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+  body += mft('medSave', id);
   openModal(id ? '✏️ تعديل علاج' : '+ إضافة علاج', body);
 };
-window.medSave = function (id) {
+window.medSave = function (id, again) {
   var body = {};
   MED_FLD.forEach(function (f) { var el = $('mf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.default_include = ($('mf-default') || {}).checked ? 1 : 0;
   body.extra = readExtra('mf', 'meds');
   if (!body.trade_name) return toast('الاسم التجاري مطلوب', 'er');
   catEnsure('meds', body.category);
+  LAST_CAT.meds = body.category;
   var rec;
   if (id) { rec = DB.meds.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.meds.push(body); rec = body; }
-  Store.upsert('meds', rec); closeModal(); toast('✅ تم الحفظ');
-  if (curPage() === 'home') goPage('meds'); else render();
+  Store.upsert('meds', rec);
+  afterSave('meds', again, id);
 };
 window.medDel = function (id) {
   confirmBox('حذف هذا العلاج؟', function () {
@@ -1704,6 +1797,7 @@ function labRow(t) {
     + extraRow('labs', t)
     + '</div>'
     + '<button class="ic" onclick="labForm(\'' + t.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="dupItem(\'labs\',\'' + t.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="labDel(\'' + t.id + '\')">🗑️</button>'
     + '</div></div>';
 }
@@ -1720,7 +1814,11 @@ function renderLabs() {
   var list = DB.labs.filter(function (t) {
     return !q || ((t.code || '') + ' ' + t.name + ' ' + (t.category || '') + ' ' + (t.purpose || '')).toLowerCase().indexOf(q) >= 0;
   });
-  if (!list.length) { h('page', html + emptyBox('🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')); return; }
+  if (!list.length) {
+    h('page', html + (q ? noHit('labs', q)
+      : emptyBox('🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+    return;
+  }
 
   if (q) {
     html += list.map(labRow).join('');
@@ -1740,19 +1838,19 @@ function accBlock(title, inner, open) {
   return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title) + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
 }
 window.labForm = function (id) {
-  var t = id ? (DB.labs.find(function (x) { return x.id === id; }) || {}) : {};
+  var t = id ? (DB.labs.find(function (x) { return x.id === id; }) || {}) : newItem('labs');
   var body = catField('lf', 'labs', t.category)
     + '<div class="f"><label>اسم التحليل *</label><input id="lf-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: صورة دم كاملة"></div>'
     + '<div class="f"><label>رمز التحليل (المصطلح)</label><input id="lf-code" class="inp" dir="ltr" value="' + esc(t.code || '') + '" placeholder="مثال: CBC"></div>'
-    + taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
     + taField('lf-requirements', 'متطلبات التحليل', t.requirements, 'مثال: صيام ٨–١٢ ساعة')
-    + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي')
     + extraFields('lf', 'labs', t)
+    + moreBlock(taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
+      + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي'))
     + '<label class="chk-row"><input type="checkbox" id="lf-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ تحليل شائع</label>'
-    + '<div class="mft"><button class="btn primary" onclick="labSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+    + mft('labSave', id);
   openModal(id ? '✏️ تعديل تحليل' : '+ إضافة تحليل', body);
 };
-window.labSave = function (id) {
+window.labSave = function (id, again) {
   var body = {
     category: ($('lf-category') || {}).value.trim(),
     code: ($('lf-code') || {}).value.trim(),
@@ -1765,11 +1863,12 @@ window.labSave = function (id) {
   };
   if (!body.name) return toast('اسم التحليل مطلوب', 'er');
   catEnsure('labs', body.category);
+  LAST_CAT.labs = body.category;
   var rec;
   if (id) { rec = DB.labs.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.labs.push(body); rec = body; }
-  Store.upsert('labs', rec); closeModal(); toast('✅ تم الحفظ');
-  if (curPage() === 'home') goPage('labs'); else render();
+  Store.upsert('labs', rec);
+  afterSave('labs', again, id);
 };
 window.labDel = function (id) {
   confirmBox('حذف هذا التحليل؟', function () {
@@ -1795,6 +1894,7 @@ function imgRow(t) {
     + extraRow('imaging', t)
     + '</div>'
     + '<button class="ic" onclick="imgForm(\'' + t.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="dupItem(\'imaging\',\'' + t.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="imgDel(\'' + t.id + '\')">🗑️</button>'
     + '</div></div>';
 }
@@ -1810,7 +1910,11 @@ function renderImaging() {
     + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="imgForm()">+ إضافة</button></div>';
   if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
-  if (!list.length) { h('page', html + emptyBox('📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')); return; }
+  if (!list.length) {
+    h('page', html + (q ? noHit('imaging', q)
+      : emptyBox('📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+    return;
+  }
 
   if (q) {
     html += list.map(imgRow).join('');
@@ -1825,19 +1929,19 @@ function renderImaging() {
   h('page', html);
 }
 window.imgForm = function (id) {
-  var t = id ? (DB.imaging.find(function (x) { return x.id === id; }) || {}) : {};
+  var t = id ? (DB.imaging.find(function (x) { return x.id === id; }) || {}) : newItem('imaging');
   var body = catField('if', 'imaging', t.category)
     + '<div class="f"><label>اسم الفحص *</label><input id="if-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: رنين مغناطيسي للعمود القطني"></div>'
     + '<div class="f"><label>المنطقة أو العضو</label><input id="if-region" class="inp" value="' + esc(t.region || '') + '" placeholder="مثال: العمود القطني"></div>'
-    + taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
     + taField('if-requirements', 'التحضير المطلوب', t.requirements, 'مثال: صيام ٦ ساعات، إحضار فحوصات الكلى')
-    + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب')
     + extraFields('if', 'imaging', t)
+    + moreBlock(taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
+      + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب'))
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
-    + '<div class="mft"><button class="btn primary" onclick="imgSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+    + mft('imgSave', id);
   openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
 };
-window.imgSave = function (id) {
+window.imgSave = function (id, again) {
   var body = {
     category: ($('if-category') || {}).value.trim(),
     name: ($('if-name') || {}).value.trim(),
@@ -1850,11 +1954,12 @@ window.imgSave = function (id) {
   };
   if (!body.name) return toast('اسم الفحص مطلوب', 'er');
   catEnsure('imaging', body.category);
+  LAST_CAT.imaging = body.category;
   var rec;
   if (id) { rec = DB.imaging.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.imaging.push(body); rec = body; }
-  Store.upsert('imaging', rec); closeModal(); toast('✅ تم الحفظ');
-  if (curPage() !== 'imaging') goPage('imaging'); else render();
+  Store.upsert('imaging', rec);
+  afterSave('imaging', again, id);
 };
 window.imgDel = function (id) {
   confirmBox('حذف هذا الفحص؟', function () {
@@ -1866,18 +1971,19 @@ window.imgDel = function (id) {
 
 /* ════════════════════════ 🌿 الوصفات العلاجية ════════════════════════ */
 var RX_TYPES = ['علاجية', 'وقائية', 'غذائية'];
+/* العمود الرابع: يُطوى ضمن «المزيد»؟ — الوصفة أطول نموذج في التطبيق. */
 var RX_FLD = [
   ['category', 'التصنيف', 'cat'],
   ['name', 'اسم الوصفة', 'text'],
   ['type', 'نوع الوصفة', 'type'],
-  ['purpose', 'الهدف', 'area'],
   ['ingredients', 'المواد المستخدمة', 'area'],
   ['preparation', 'طريقة الإعداد', 'area'],
-  ['usage', 'الاستخدام', 'area'],
   ['dose', 'الجرعة', 'text'],
-  ['duration', 'مدة الاستخدام', 'text'],
-  ['effects', 'الأعراض المتوقعة', 'area'],
-  ['precautions', 'الاحتياطات', 'area']
+  ['purpose', 'الهدف', 'area', 1],
+  ['usage', 'الاستخدام', 'area', 1],
+  ['duration', 'مدة الاستخدام', 'text', 1],
+  ['effects', 'الأعراض المتوقعة', 'area', 1],
+  ['precautions', 'الاحتياطات', 'area', 1]
 ];
 
 function recipeRow(r) {
@@ -1894,6 +2000,7 @@ function recipeRow(r) {
     + extraRow('recipes', r)
     + '</div>'
     + '<button class="ic" onclick="recipeForm(\'' + r.id + '\')">✏️</button>'
+    + '<button class="ic" onclick="dupItem(\'recipes\',\'' + r.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="recipeDel(\'' + r.id + '\')">🗑️</button>'
     + '</div></div>';
 }
@@ -1909,7 +2016,11 @@ function renderRecipes() {
     + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
   if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
-  if (!list.length) { h('page', html + emptyBox('🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')); return; }
+  if (!list.length) {
+    h('page', html + (q ? noHit('recipes', q)
+      : emptyBox('🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')));
+    return;
+  }
 
   if (q) {
     html += list.map(recipeRow).join('');
@@ -1924,8 +2035,8 @@ function renderRecipes() {
   h('page', html);
 }
 window.recipeForm = function (id) {
-  var r = id ? (DB.recipes.find(function (x) { return x.id === id; }) || {}) : {};
-  var body = RX_FLD.map(function (f) {
+  var r = id ? (DB.recipes.find(function (x) { return x.id === id; }) || {}) : newItem('recipes');
+  function fld(f) {
     var key = f[0], lbl = f[1], kind = f[2], v = esc(r[key] || '');
     if (kind === 'cat') return catField('rf', 'recipes', r.category);
     if (kind === 'type') {
@@ -1940,10 +2051,12 @@ window.recipeForm = function (id) {
     if (kind === 'area') return taField('rf-' + key, lbl, r[key] || '');
     return '<div class="f"><label>' + lbl + (key === 'name' ? ' *' : '') + '</label>'
       + '<input id="rf-' + key + '" class="inp" value="' + v + '"></div>';
-  }).join('');
+  }
+  var body = RX_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
   body += extraFields('rf', 'recipes', r);
+  body += moreBlock(RX_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
   body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
-  body += '<div class="mft"><button class="btn primary" onclick="recipeSave(\'' + (id || '') + '\')">حفظ</button><button class="btn" onclick="closeModal()">إلغاء</button></div>';
+  body += mft('recipeSave', id);
   openModal(id ? '✏️ تعديل وصفة' : '+ إضافة وصفة', body);
 };
 /** اختيار النوع بأزرار بدل قائمة منسدلة — أوضح على الجوال. */
@@ -1953,18 +2066,19 @@ window.rxPickType = function (btn) {
   btn.className = 'seg on';
   var hidden = $('rf-type'); if (hidden) hidden.value = btn.getAttribute('data-t');
 };
-window.recipeSave = function (id) {
+window.recipeSave = function (id, again) {
   var body = {};
   RX_FLD.forEach(function (f) { var el = $('rf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.is_favorite = ($('rf-fav') || {}).checked ? 1 : 0;
   body.extra = readExtra('rf', 'recipes');
   if (!body.name) return toast('اسم الوصفة مطلوب', 'er');
   catEnsure('recipes', body.category);
+  LAST_CAT.recipes = body.category;
   var rec;
   if (id) { rec = DB.recipes.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.recipes.push(body); rec = body; }
-  Store.upsert('recipes', rec); closeModal(); toast('✅ تم الحفظ');
-  if (curPage() !== 'recipes') goPage('recipes'); else render();
+  Store.upsert('recipes', rec);
+  afterSave('recipes', again, id);
 };
 window.recipeDel = function (id) {
   confirmBox('حذف هذه الوصفة؟', function () {
