@@ -25,7 +25,7 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.waitForTimeout(250);
   await p.fill('#rf-name', 'شراب الزنجبيل والعسل');
   await p.click('.seg:has-text("وقائية")');
-  await p.click('.more summary');            // الحقول الأقل استعمالًا مطويّة
+  await p.click('.more:not(.addf) summary');  // الحقول الأقل استعمالًا مطويّة
   await p.waitForTimeout(200);
   await p.fill('#rf-purpose', 'تهدئة الحلق والسعال الجاف');
   await p.fill('#rf-ingredients', 'زنجبيل طازج ٢ ملعقة، عسل ٣ ملاعق، ليمون نصف حبة');

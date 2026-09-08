@@ -1301,6 +1301,7 @@ window.secItemForm = function (kind, id) {
     + catField('cf', kind, o.category)
     + imgField('cf', o.img)
     + extraFields('cf', kind, o)
+    + addFieldPanel('cf', kind)
     + '<label class="chk-row"><input type="checkbox" id="cf-flag" ' + (o.flag ? 'checked' : '') + '> ⭐ مفضّل</label>'
     + '<div class="mft"><button class="btn primary" onclick="secItemSave(\'' + kind + '\',\'' + (id || '') + '\')">حفظ</button>'
     + (id ? '' : '<button class="btn wa" onclick="secItemSave(\'' + kind + '\',\'\',1)">💾 حفظ ومتابعة</button>')
@@ -1359,8 +1360,10 @@ function fieldKey() { return 'f' + uid(); }
 function renderFieldsPage(kind) {
   var L = kindLbl(kind), list = fieldsOf(kind);
   var html = '<button class="btn full primary" onclick="fldNew(\'' + kind + '\')">➕ حقل جديد</button>'
-    + '<div class="hint">حقول تضيفها لبيانات ' + esc(L.title) + '. تظهر في نموذج'
-    + ' العنصر، وتقدر تختارها في «الحقول المرسلة» لتُطبع وتُرسَل.</div>';
+    + '<button class="btn full" onclick="goPage(\'cat:' + kind + '\')">🏷️ تصنيفات ' + esc(L.title) + '</button>'
+    + '<div class="hint">حقول تضيفها لبيانات ' + esc(L.title) + ': تظهر في نموذج العنصر'
+    + ' وعلى بطاقته وفي الإرسال. وتقدر تضيف حقلًا وأنت داخل النموذج نفسه من'
+    + ' «➕ إضافة حقل لهذا القسم».</div>';
 
   if (!list.length) {
     h('page', html + emptyBox('🧩', 'لا حقول إضافية', 'الحقول الأصلية للقسم موجودة دائمًا'));
@@ -1498,15 +1501,58 @@ window.imgSel = function (pfx) {
 };
 
 /** حقول المستخدم داخل نموذج العنصر — تُقرأ وتُكتب في o.extra. */
+function oneExtra(pfx, f, val) {
+  var id = pfx + '-x-' + f.key;
+  if (f.type === 'area') return taField(id, f.label, val || '');
+  return '<div class="f"><label>' + esc(f.label) + '</label>'
+    + '<input id="' + id + '" class="inp" value="' + esc(val || '') + '"></div>';
+}
 function extraFields(pfx, kind, o) {
   var x = (o && o.extra) || {};
-  return fieldsOf(kind).map(function (f) {
-    var id = pfx + '-x-' + f.key;
-    if (f.type === 'area') return taField(id, f.label, x[f.key] || '');
-    return '<div class="f"><label>' + esc(f.label) + '</label>'
-      + '<input id="' + id + '" class="inp" value="' + esc(x[f.key] || '') + '"></div>';
-  }).join('');
+  return '<div id="' + pfx + '-xf">'
+    + fieldsOf(kind).map(function (f) { return oneExtra(pfx, f, x[f.key]); }).join('')
+    + '</div>';
 }
+
+/**
+ * إضافة حقل من داخل النموذج نفسه — وأنت تُدخل عنصرًا فتحتاج حقلًا ليس
+ * موجودًا. اللوحة تُدرَج في الصفحة لا في مودال آخر، والحقل الجديد يُحقَن
+ * في مكانه مباشرةً، فلا يضيع شيء ممّا كتبته حتى الآن.
+ */
+function addFieldPanel(pfx, kind) {
+  return '<details class="more addf"><summary>➕ إضافة حقل لهذا القسم</summary>'
+    + '<div class="more-b">'
+    + '<div class="f"><label>اسم الحقل</label>'
+    + '<input id="' + pfx + '-nf" class="inp" placeholder="مثال: الشركة المصنّعة"></div>'
+    + '<div class="f"><label>نوعه</label><div class="segs">'
+    + '<button type="button" class="seg on" data-t="text" onclick="fldPickType(this)">سطر واحد</button>'
+    + '<button type="button" class="seg" data-t="area" onclick="fldPickType(this)">نصّ طويل</button>'
+    + '</div><input type="hidden" id="' + pfx + '-nt" value="text"></div>'
+    + '<button type="button" class="btn primary full" onclick="fldInline(\'' + kind + '\',\'' + pfx + '\')">'
+    + 'أضِف الحقل الآن</button>'
+    + '<div class="es">يُضاف للقسم كله ويظهر في الإرسال، ويبقى ما كتبته هنا كما هو.</div>'
+    + '</div></details>';
+}
+window.fldInline = function (kind, pfx) {
+  var lbl = (($(pfx + '-nf') || {}).value || '').trim();
+  if (!lbl) return toast('اسم الحقل مطلوب', 'er');
+  var f = { id: uid(), kind: kind, key: fieldKey(), label: lbl,
+            type: (($(pfx + '-nt') || {}).value) || 'text' };
+  DB.fields.push(f); Store.saveField(f);
+  DB.out[kind] = (DB.out[kind] || []).concat('x:' + f.key);
+  Store.setOut(kind);
+  var nf = $(pfx + '-nf'); if (nf) nf.value = '';   // جاهزة للتالي أيًّا كان ما يلي
+  // نحقن الحقل بدل إعادة رسم النموذج، حفاظًا على ما أدخله المستخدم
+  try {
+    var box = $(pfx + '-xf');
+    if (box) {
+      box.insertAdjacentHTML('beforeend', oneExtra(pfx, f, ''));
+      var el = $(pfx + '-x-' + f.key);
+      if (el) { grow(el); el.focus(); }
+    }
+  } catch (e) { /* بيئة بلا DOM كامل */ }
+  toast('✅ أُضيف «' + lbl + '»');
+};
 function readExtra(pfx, kind) {
   var out = {};
   fieldsOf(kind).forEach(function (f) {
@@ -1779,7 +1825,10 @@ window.catNewInput = function (pfx) {
 function renderCatsPage(kind) {
   var L = kindLbl(kind), cats = catsRaw(kind);
   var orphans = catNames(kind).filter(function (n) { return !catByName(kind, n); });
-  var html = '<button class="btn full primary" onclick="catNew(\'' + kind + '\')">➕ تصنيف جديد</button>';
+  var nf = fieldsOf(kind).length;
+  var html = '<button class="btn full primary" onclick="catNew(\'' + kind + '\')">➕ تصنيف جديد</button>'
+    + '<button class="btn full" onclick="goPage(\'fld:' + kind + '\')">🧩 حقول ' + esc(L.title)
+    + (nf ? ' (' + nf + ')' : '') + ' — أضِف حقلًا لبياناتها</button>';
 
   if (!cats.length && !orphans.length) {
     h('page', html + emptyBox('🏷️', 'لا توجد تصنيفات', 'أنشئ تصنيفًا ثم أسنِد إليه عناصرك'));
@@ -1995,6 +2044,7 @@ window.medForm = function (id) {
   var body = MED_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
   body += imgField('mf', m.img) + extraFields('mf', 'meds', m);
   body += moreBlock(MED_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
+  body += addFieldPanel('mf', 'meds');
   body += '<label class="chk-row"><input type="checkbox" id="mf-default" ' + (m.default_include ? 'checked' : '') + '> ⭐ محدَّد افتراضيًا</label>';
   body += mft('medSave', id);
   openModal(id ? '✏️ تعديل علاج' : '+ إضافة علاج', body);
@@ -2114,6 +2164,7 @@ window.labForm = function (id) {
     + imgField('lf', t.img) + extraFields('lf', 'labs', t)
     + moreBlock(taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
       + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي'))
+    + addFieldPanel('lf', 'labs')
     + '<label class="chk-row"><input type="checkbox" id="lf-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ تحليل شائع</label>'
     + mft('labSave', id);
   openModal(id ? '✏️ تعديل تحليل' : '+ إضافة تحليل', body);
@@ -2208,6 +2259,7 @@ window.imgForm = function (id) {
     + imgField('if', t.img) + extraFields('if', 'imaging', t)
     + moreBlock(taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
       + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب'))
+    + addFieldPanel('if', 'imaging')
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
     + mft('imgSave', id);
   openModal(id ? '✏️ تعديل فحص' : '+ إضافة فحص/أشعة', body);
@@ -2329,6 +2381,7 @@ window.recipeForm = function (id) {
   var body = RX_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
   body += imgField('rf', r.img) + extraFields('rf', 'recipes', r);
   body += moreBlock(RX_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
+  body += addFieldPanel('rf', 'recipes');
   body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
   body += mft('recipeSave', id);
   openModal(id ? '✏️ تعديل وصفة' : '+ إضافة وصفة', body);

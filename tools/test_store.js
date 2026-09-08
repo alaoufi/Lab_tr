@@ -142,7 +142,8 @@ function makeCtx(bridge, legacyRaw) {
   const els = {};
   const el = id => els[id] || (els[id] = {
     id, value: '', checked: false, className: '', innerHTML: '', textContent: '',
-    style: {}, scrollHeight: 0, focus() {}
+    style: {}, scrollHeight: 0, focus() {},
+    insertAdjacentHTML(where, html) { this.innerHTML += html; }
   });
   const store = legacyRaw ? { clinic_tool_v1: legacyRaw } : {};
   const win = {
@@ -1939,4 +1940,49 @@ run('الصور: الرمز فريد ولا يتغيّر، والمكتبة تد
   c2.applyData(backup); c2.Store.replaceAll();
   eq(b2._t.images[0].code, 'arf', 'restored:');
   eq(c2.imgData('arf').indexOf('data:image/jpeg') === 0, true, 'with its data:');
+});
+
+run('الحقول: إضافة حقل من داخل النموذج بلا فقد ما كُتب', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('meds');
+  c.medForm();
+  eq(c._els('modal-body').innerHTML.indexOf('إضافة حقل لهذا القسم') >= 0, true,
+    'the panel is right there in the form:');
+
+  // المستخدم يملأ ثم يحتاج حقلًا ليس موجودًا
+  c._els('mf-trade_name').value = 'أوجمنتين';
+  c._els('mf-nf').value = 'الشركة المصنّعة';
+  c._els('mf-nt').value = 'text';
+  c.fldInline('meds', 'mf');
+
+  eq(b._t.fields.length, 1, 'field created:');
+  const key = b._t.fields[0].key;
+  eq(c.DB.out.meds.indexOf('x:' + key) >= 0, true, 'and offered in the output at once:');
+  eq(c._els('mf-trade_name').value, 'أوجمنتين', 'what was typed survived:');
+  eq(c._els('mf-nf').value, '', 'the panel cleared for the next one:');
+  eq(c._els('mf-xf').innerHTML.indexOf('mf-x-' + key) >= 0, true,
+    'and the field was injected into the open form:');
+
+  // الحقل الجديد قابل للتعبئة والحفظ فورًا
+  c._els('mf-x-' + key).value = 'GSK';
+  c.medSave('');
+  eq(b._t.meds[0].trade_name, 'أوجمنتين', 'item saved:');
+  eq(b._t.meds[0].extra[key], 'GSK', 'with the brand-new field filled:');
+
+  // بلا اسم لا يُنشأ شيء
+  c.medForm();
+  c._els('mf-nf').value = '   ';
+  c.fldInline('meds', 'mf');
+  eq(b._t.fields.length, 1, 'blank name refused:');
+});
+
+run('الحقول: الوصول إليها من صفحة التصنيفات وبالعكس', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('cat:labs');
+  const cats = c._els('page').innerHTML;
+  eq(cats.indexOf("goPage('fld:labs')") >= 0, true, 'fields reachable from categories:');
+  eq(cats.indexOf('أضِف حقلًا لبياناتها') >= 0, true, 'and it says what it does:');
+
+  c.goPage('fld:labs');
+  eq(c._els('page').innerHTML.indexOf("goPage('cat:labs')") >= 0, true, 'and back again:');
 });
