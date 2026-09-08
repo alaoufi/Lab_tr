@@ -138,6 +138,29 @@ public class DbBridge {
         }
     }
 
+    /** حفظ صورة في المكتبة — {id, code, name, data}. البيانات data URL. */
+    @JavascriptInterface
+    public boolean saveImage(String json) {
+        try {
+            db.saveImage(new JSONObject(json));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "saveImage failed", e);
+            return false;
+        }
+    }
+
+    @JavascriptInterface
+    public boolean deleteImage(String id) {
+        try {
+            db.deleteImage(id);
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "deleteImage failed", e);
+            return false;
+        }
+    }
+
     /** تسجيل إرسال — {id, kind, title, who, ids[], ts}. يُقصّ على آخر عشرة. */
     @JavascriptInterface
     public boolean addSent(String json) {

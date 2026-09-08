@@ -23,7 +23,7 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
-    private static final int DB_VERSION = 8;
+    private static final int DB_VERSION = 9;
 
     /**
      * الأقسام الأصلية الأربعة — وهي أيضًا أسماء جداولها.
@@ -37,19 +37,19 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private static final String[] MED_TEXT_COLS = {
             "trade_name", "scientific_name", "category", "concentration",
-            "dosage", "duration", "uses", "cautions", "notes"
+            "dosage", "duration", "uses", "cautions", "notes", "img"
     };
     private static final String[] LAB_TEXT_COLS = {
-            "category", "code", "name", "purpose", "requirements", "prohibitions"
+            "category", "code", "name", "purpose", "requirements", "prohibitions", "img"
     };
     /** الأشعة والفحوصات: تصوير ومناظير وتخطيط — نفس بنية التحاليل مع «المنطقة». */
     private static final String[] IMAGING_TEXT_COLS = {
-            "category", "name", "region", "purpose", "requirements", "prohibitions"
+            "category", "name", "region", "purpose", "requirements", "prohibitions", "img"
     };
     /** الوصفات: اسمها ونوعها (علاجية/وقائية/غذائية) وتفاصيل تحضيرها واستخدامها. */
     private static final String[] RECIPE_TEXT_COLS = {
             "category", "name", "type", "purpose", "ingredients", "preparation",
-            "usage", "dose", "duration", "effects", "precautions"
+            "usage", "dose", "duration", "effects", "precautions", "img"
     };
 
     public DaliliDb(Context context) {
@@ -113,6 +113,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         createFields(db);
         createItems(db);
         createSent(db);
+        createImages(db);
         // سلة التحديد: الترتيب مهم لأنه ترتيب الطباعة/الصورة المُرسَلة
         db.execSQL("CREATE TABLE cart ("
                 + "kind TEXT NOT NULL,"
@@ -123,6 +124,11 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX idx_meds_name ON meds(trade_name)");
         db.execSQL("CREATE INDEX idx_meds_category ON meds(category)");
         db.execSQL("CREATE INDEX idx_labs_category ON labs(category)");
+        // الأعمدة التي أضافتها الترقيات تُضاف هنا بنفس الدوال، فلا يفترق
+        // التثبيت الجديد عن المُرقّى. غيابُ هذا كان يجعل كل حفظ يفشل على
+        // جهاز مثبَّت حديثًا: لا عمود extra، فينهار INSERT وUPDATE معًا.
+        addExtraColumns(db);
+        addImgColumns(db);
     }
 
     private void createImaging(SQLiteDatabase db) {
@@ -242,6 +248,39 @@ public class DaliliDb extends SQLiteOpenHelper {
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_sent_ts ON sent(ts)");
     }
 
+    /**
+     * مكتبة الصور: الصورة تُحفَظ نصًّا (data URL) لا ملفًّا على القرص.
+     *
+     * <p>هكذا تعمل في كل المخارج بلا استثناء ولا صلاحية: الواجهة، وعارض
+     * الطباعة (WebView منفصل لا يرى ملفات التطبيق)، ولوحة الصورة المُرسَلة،
+     * والنسخة الاحتياطية تحملها معها فتعود مع البيانات على أي جهاز.
+     * الواجهة تصغّر الصورة قبل الحفظ فيبقى الحجم معقولًا.
+     *
+     * <p>{@code code} هو ما يكتبه المستخدم داخل النصّ بين قوسين — {arf} —
+     * فتظهر الصورة مكانه. لذلك هو فريد ولا يتغيّر بعد الإنشاء.
+     */
+    private void createImages(SQLiteDatabase db) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS images ("
+                + "id TEXT PRIMARY KEY,"
+                + "code TEXT NOT NULL,"
+                + "name TEXT,"
+                + "data TEXT NOT NULL,"
+                + "sort_order INTEGER NOT NULL DEFAULT 0)");
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_images_code ON images(code)");
+    }
+
+    /** عمود صورة العنصر (رمز من المكتبة) على الأقسام الأصلية وعلى items. */
+    private void addImgColumns(SQLiteDatabase db) {
+        for (String kind : KINDS) {
+            if (!hasColumn(db, kind, "img")) {
+                db.execSQL("ALTER TABLE " + kind + " ADD COLUMN img TEXT");
+            }
+        }
+        if (!hasColumn(db, "items", "img")) {
+            db.execSQL("ALTER TABLE items ADD COLUMN img TEXT");
+        }
+    }
+
     /** عناصر الأقسام التي ينشئها المستخدم — جدول واحد يفرّقه عمود section. */
     private void createItems(SQLiteDatabase db) {
         db.execSQL("CREATE TABLE IF NOT EXISTS items ("
@@ -333,6 +372,10 @@ public class DaliliDb extends SQLiteOpenHelper {
         if (oldVersion < 8) {
             createSent(db);      // سجل الإرسالات
         }
+        if (oldVersion < 9) {
+            createImages(db);    // مكتبة الصور
+            addImgColumns(db);   // صورة العنصر (رمز من المكتبة)
+        }
     }
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
@@ -360,6 +403,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         out.put("cart", cart);
         out.put("cats", readCats(db));
         out.put("sent", readSent(db));
+        out.put("images", readImages(db));
         out.put("groups", readGroups(db));
         out.put("settings", readSettings(db));
         out.put("pin_hash", getSetting(db, "pin_hash"));
@@ -437,6 +481,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("id", str(c, "id"));
                 o.put("name", str(c, "name"));
                 o.put("category", str(c, "category"));
+                o.put("img", str(c, "img"));
                 o.put("flag", c.getInt(c.getColumnIndexOrThrow("flag")));
                 o.put("extra", parseExtra(str(c, "extra")));
                 arr.put(o);
@@ -531,6 +576,45 @@ public class DaliliDb extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+
+    private JSONArray readImages(SQLiteDatabase db) throws Exception {
+        JSONArray arr = new JSONArray();
+        Cursor c = db.query("images", null, null, null, null, null, "sort_order ASC");
+        try {
+            while (c.moveToNext()) {
+                JSONObject o = new JSONObject();
+                o.put("id", str(c, "id"));
+                o.put("code", str(c, "code"));
+                o.put("name", str(c, "name"));
+                o.put("data", str(c, "data"));
+                arr.put(o);
+            }
+        } finally { c.close(); }
+        return arr;
+    }
+
+    public void saveImage(JSONObject o) {
+        writeImage(getWritableDatabase(), o, -1);
+    }
+
+    private void writeImage(SQLiteDatabase db, JSONObject o, int order) {
+        String id = o.optString("id");
+        if (id.isEmpty()) return;
+        ContentValues v = new ContentValues();
+        v.put("code", o.optString("code", ""));
+        v.put("name", o.optString("name", ""));
+        v.put("data", o.optString("data", ""));
+        if (order >= 0) v.put("sort_order", order);
+        if (db.update("images", v, "id=?", new String[]{id}) == 0) {
+            v.put("id", id);
+            if (order < 0) v.put("sort_order", nextSortOrder(db, "images"));
+            db.insert("images", null, v);
+        }
+    }
+
+    public void deleteImage(String id) {
+        getWritableDatabase().delete("images", "id=?", new String[]{id});
     }
 
     /** آخر الإرسالات، الأحدث أولًا. */
@@ -747,6 +831,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         v.put("section", section);
         v.put("name", o.optString("name", ""));
         v.put("category", o.optString("category", ""));
+        v.put("img", o.optString("img", ""));
         v.put("flag", o.optInt("flag", 0));
         v.put("extra", extraStr(o));
         return v;
@@ -865,6 +950,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             db.delete("sections", null, null);
             db.delete("fields", null, null);
             db.delete("sent", null, null);
+            db.delete("images", null, null);
             db.delete("groups", null, null);
             db.delete("group_items", null, null);
 
@@ -895,6 +981,11 @@ public class DaliliDb extends SQLiteOpenHelper {
             for (int i = 0; sent != null && i < sent.length(); i++) {
                 JSONObject o = sent.optJSONObject(i);
                 if (o != null) writeSent(db, o);
+            }
+            JSONArray images = data.optJSONArray("images");
+            for (int i = 0; images != null && i < images.length(); i++) {
+                JSONObject o = images.optJSONObject(i);
+                if (o != null) writeImage(db, o, i + 1);
             }
 
             JSONObject cart = data.optJSONObject("cart");

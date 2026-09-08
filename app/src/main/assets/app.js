@@ -13,7 +13,7 @@ var BUILTIN = ['meds', 'labs', 'imaging', 'recipes'];
 var KINDS = BUILTIN.slice();
 var DB = { pin_hash: null, meds: [], labs: [], imaging: [], recipes: [],
            cart: { meds: [], labs: [], imaging: [], recipes: [] },
-           cats: [], groups: [], sections: [], fields: [], sent: [], out: null };
+           cats: [], groups: [], sections: [], fields: [], sent: [], images: [], out: null };
 /* DB.out يُملأ في applyData — انظر OUT_DEF أدناه */
 
 /* الحقول التي يمكن إظهارها في الطباعة/الصورة المُرسَلة. اسم العلاج واسم
@@ -135,6 +135,7 @@ function applyData(data) {
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
+  DB.images = Array.isArray(data.images) ? data.images : [];
   DB.groups = Array.isArray(data.groups) ? data.groups : [];
   // ترويسة الطباعة اختيارية بالكامل — تبقى فارغة ما لم يملأها المستخدم،
   // وأي سطر فارغ لا يظهر في الورقة أصلًا.
@@ -154,7 +155,7 @@ function blobSave() {
 function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
-            sections: DB.sections, fields: DB.fields, sent: DB.sent,
+            sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
   return o;
@@ -252,6 +253,14 @@ var Store = {
   setFmt: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('fmt', DB.fmt) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  saveImage: function (im) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.saveImage(JSON.stringify(im)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  dropImage: function (id) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.deleteImage(id) || dbFail(); } catch (e) { return dbFail(); }
   },
   addSent: function (rec) {
     if (!NDB) { blobSave(); return true; }
@@ -461,6 +470,7 @@ function pageMeta(p) {
   if (PAGES[p]) return PAGES[p];
   if (p === 'secs') return { icon: '🗂️', title: 'إدارة الأقسام' };
   if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
+  if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
   }
@@ -561,6 +571,7 @@ function renderSettings() {
     + '<div class="settings-lbl">الأقسام</div>'
     + '<div class="muted" style="margin-bottom:9px">سمِّ الأقسام ورتّبها، وأضِف أقسامًا جديدة، ولكل قسم تصنيفاته وحقوله الإضافية.</div>'
     + '<button class="btn full primary" onclick="goPage(\'secs\')">🗂️ إدارة الأقسام (' + DB.sections.length + ')</button>'
+    + '<button class="btn full" onclick="goPage(\'imgs\')">🖼️ مكتبة الصور (' + DB.images.length + ')</button>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">إضافة سريعة</div>'
@@ -945,6 +956,7 @@ function render() {
   else if (p === 'settings') renderSettings();
   else if (p === 'secs') renderSectionsPage();
   else if (p === 'sent') renderSentPage();
+  else if (p === 'imgs') renderImagesPage();
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
@@ -1236,6 +1248,7 @@ function secRow(kind, o) {
     + '<div class="name">' + esc(o.name) + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
     + (o.category ? '<div class="sub">' + esc(o.category) + '</div>' : '')
     + extraRow(kind, o) + '</div>'
+    + thumb(o)
     + '<button class="ic" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">✏️</button>'
     + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="secItemDel(\'' + kind + '\',\'' + o.id + '\')">🗑️</button>'
@@ -1286,6 +1299,7 @@ window.secItemForm = function (kind, id) {
   var body = '<div class="f"><label>الاسم *</label>'
     + '<input id="cf-name" class="inp" value="' + esc(o.name || '') + '"></div>'
     + catField('cf', kind, o.category)
+    + imgField('cf', o.img)
     + extraFields('cf', kind, o)
     + '<label class="chk-row"><input type="checkbox" id="cf-flag" ' + (o.flag ? 'checked' : '') + '> ⭐ مفضّل</label>'
     + '<div class="mft"><button class="btn primary" onclick="secItemSave(\'' + kind + '\',\'' + (id || '') + '\')">حفظ</button>'
@@ -1298,6 +1312,7 @@ window.secItemSave = function (kind, id, again) {
     name: (($('cf-name') || {}).value || '').trim(),
     category: (($('cf-category') || {}).value || '').trim(),
     extra: readExtra('cf', kind),
+    img: (($('cf-img') || {}).value || '').trim(),
     flag: ($('cf-flag') || {}).checked ? 1 : 0
   };
   if (!body.name) return toast('الاسم مطلوب', 'er');
@@ -1324,6 +1339,11 @@ window.secItemDel = function (kind, id) {
 
 function fieldsOf(kind) {
   return DB.fields.filter(function (f) { return f.kind === kind; });
+}
+/** مصغّرة صورة العنصر على بطاقته. */
+function thumb(o) {
+  return (o && o.img && imgByCode(o.img))
+    ? '<img class="cardpic" src="' + imgData(o.img) + '" alt="">' : '';
 }
 /** قيم الحقول الإضافية كما تظهر على بطاقة العنصر داخل القائمة. */
 function extraRow(kind, o) {
@@ -1448,6 +1468,35 @@ function backfillFieldOut() {
   Store.setFieldsOutDone();
 }
 
+/** اختيار صورة العنصر من المكتبة — قائمة منسدلة ومعاينة صغيرة. */
+function imgField(pfx, cur) {
+  cur = cur || '';
+  if (!DB.images.length) {
+    return '<div class="f"><label>الصورة</label>'
+      + '<div class="es">لا صور في المكتبة بعد — أضِفها من ⚙️ الإعدادات ← مكتبة الصور.</div>'
+      + '<input type="hidden" id="' + pfx + '-img" value=""></div>';
+  }
+  return '<div class="f"><label>الصورة</label>'
+    + '<select id="' + pfx + '-imgsel" class="inp sel" onchange="imgSel(\'' + pfx + '\')">'
+    + '<option value=""' + (cur ? '' : ' selected') + '>— بلا صورة —</option>'
+    + DB.images.map(function (im) {
+      return '<option value="' + esc(im.code) + '"' + (cur === im.code ? ' selected' : '') + '>'
+        + esc(im.name || im.code) + '</option>';
+    }).join('')
+    + '</select>'
+    + '<div id="' + pfx + '-imgprev" class="imgprev sm"' + (cur ? '' : ' style="display:none"') + '>'
+    + (cur ? '<img src="' + imgData(cur) + '" alt="">' : '') + '</div>'
+    + '<input type="hidden" id="' + pfx + '-img" value="' + esc(cur) + '"></div>';
+}
+window.imgSel = function (pfx) {
+  var sel = $(pfx + '-imgsel'), hid = $(pfx + '-img'), pv = $(pfx + '-imgprev');
+  if (!sel || !hid) return;
+  hid.value = sel.value;
+  if (!pv) return;
+  if (sel.value) { pv.innerHTML = '<img src="' + imgData(sel.value) + '" alt="">'; pv.style.display = ''; }
+  else { pv.innerHTML = ''; pv.style.display = 'none'; }
+};
+
 /** حقول المستخدم داخل نموذج العنصر — تُقرأ وتُكتب في o.extra. */
 function extraFields(pfx, kind, o) {
   var x = (o && o.extra) || {};
@@ -1466,6 +1515,165 @@ function readExtra(pfx, kind) {
     if (v) out[f.key] = v;
   });
   return out;
+}
+
+/* ════════════════════════ 🖼️ مكتبة الصور ════════════════════════
+   صورة واحدة تُغني عن فقرة: رسم موضع الحقن، أو شكل الحبّة، أو خطوات
+   الضماد. لكل صورة رمز تكتبه داخل أي نصّ بين قوسين — {arf} — فتظهر
+   الصورة مكانها في المعاينة والورقة والـPDF والطباعة والصورة المُرسَلة.
+
+   تُحفَظ نصًّا (data URL) لا ملفًّا: عارض الطباعة WebView منفصل لا يرى
+   ملفات التطبيق، ولوحة الصورة تحتاجها في نفس اللحظة، والنسخة الاحتياطية
+   تحملها معها. والصورة تُصغَّر قبل الحفظ فلا تنتفخ القاعدة. */
+
+var IMG_MAX = 900;        // أطول ضلع بعد التصغير
+var IMG_Q = 0.72;         // جودة JPEG — كافية لصورة توضيحية
+
+function imgByCode(code) {
+  return DB.images.find(function (x) { return x.code === code; });
+}
+function imgData(code) {
+  var im = imgByCode(code);
+  return im ? im.data : '';
+}
+/** الرمز: حروف وأرقام وشرطة فقط، فلا يلتبس بنصّ عادي بين قوسين. */
+function cleanCode(v) {
+  return String(v || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+}
+
+/** يصغّر الصورة المختارة ويعيدها data URL — بلا رفع ولا شبكة. */
+function shrinkImage(file, cb) {
+  var fr = new FileReader();
+  fr.onload = function () {
+    var im = new Image();
+    im.onload = function () {
+      var w = im.naturalWidth, h = im.naturalHeight;
+      var k = Math.min(1, IMG_MAX / Math.max(w, h));
+      var c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(w * k));
+      c.height = Math.max(1, Math.round(h * k));
+      var x = c.getContext('2d');
+      x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);   // شفافية PNG تصير بيضاء لا سوداء
+      x.drawImage(im, 0, 0, c.width, c.height);
+      try { cb(c.toDataURL('image/jpeg', IMG_Q)); }
+      catch (e) { cb(''); }
+    };
+    im.onerror = function () { cb(''); };
+    im.src = fr.result;
+  };
+  fr.onerror = function () { cb(''); };
+  fr.readAsDataURL(file);
+}
+
+window.imgPickFile = function (input) {
+  var file = input.files && input.files[0];
+  input.value = '';
+  if (!file) return;
+  toast('⏳ يجري تجهيز الصورة…');
+  shrinkImage(file, function (data) {
+    if (!data) return toast('تعذّرت قراءة الصورة', 'er');
+    imgForm2('', data);
+  });
+};
+/** نموذج الصورة — الرمز يُختار مرّة ولا يتغيّر حتى لا تنكسر {الرموز} في النصوص. */
+function imgForm2(id, data) {
+  var im = id ? DB.images.find(function (x) { return x.id === id; }) : null;
+  var src = im ? im.data : data;
+  openModal(im ? '✏️ تعديل الصورة' : '🖼️ صورة جديدة',
+    '<div class="imgprev"><img src="' + src + '" alt=""></div>'
+    + '<div class="f"><label>الرمز' + (im ? '' : ' *') + '</label>'
+    + (im ? '<div class="code-fix">{' + esc(im.code) + '}</div>'
+      : '<input id="im-code" class="inp" dir="ltr" placeholder="arf">')
+    + '<div class="es" style="margin-top:5px">تكتبه داخل أي نصّ هكذا: '
+    + '<b dir="ltr">{' + esc(im ? im.code : 'arf') + '}</b> فتظهر الصورة مكانه'
+    + (im ? ' — الرمز لا يتغيّر حتى لا تنكسر النصوص التي تستعمله.' : '.') + '</div></div>'
+    + '<div class="f"><label>الاسم</label>'
+    + '<input id="im-name" class="inp" value="' + esc(im ? im.name : '') + '" placeholder="مثال: موضع الحقن"></div>'
+    + '<input type="hidden" id="im-data" value="' + esc(src) + '">'
+    + '<div class="mft"><button class="btn primary" onclick="imgSave2(\'' + (id || '') + '\')">حفظ</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+}
+window.imgEdit = function (id) { imgForm2(id, ''); };
+window.imgSave2 = function (id) {
+  var name = (($('im-name') || {}).value || '').trim();
+  if (id) {
+    var im = DB.images.find(function (x) { return x.id === id; });
+    if (!im) return;
+    im.name = name; Store.saveImage(im);
+    closeModal(); render(); toast('✅ حُفظت');
+    return;
+  }
+  var code = cleanCode(($('im-code') || {}).value);
+  if (!code) return toast('الرمز مطلوب — حروف إنجليزية وأرقام', 'er');
+  if (imgByCode(code)) return toast('الرمز مستعمل', 'er');
+  var rec = { id: uid(), code: code, name: name,
+              data: (($('im-data') || {}).value || '') };
+  if (!rec.data) return toast('لا توجد صورة', 'er');
+  DB.images.push(rec); Store.saveImage(rec);
+  closeModal(); render(); toast('✅ أُضيفت — استعملها بـ{' + code + '}');
+};
+window.imgDel2 = function (id) {
+  var im = DB.images.find(function (x) { return x.id === id; });
+  if (!im) return;
+  confirmBox('حذف صورة «' + (im.name || im.code) + '»؟ ما يشير إليها بـ{'
+    + im.code + '} سيظهر كما هو نصًّا.', function () {
+    DB.images = DB.images.filter(function (x) { return x.id !== id; });
+    Store.dropImage(id);
+    closeModal(); render(); toast('🗑️ حُذفت');
+  });
+};
+
+function renderImagesPage() {
+  var html = '<label class="btn full primary" style="display:block;text-align:center;cursor:pointer">'
+    + '🖼️ إضافة صورة من الجهاز'
+    + '<input type="file" accept="image/*" onchange="imgPickFile(this)" style="display:none"></label>'
+    + '<div class="hint">لكل صورة رمز تكتبه داخل أي نصّ — مثل <b dir="ltr">{arf}</b> —'
+    + ' فتظهر الصورة مكانه في المعاينة والطباعة والـPDF والصورة المُرسَلة.</div>';
+
+  if (!DB.images.length) {
+    h('page', html + emptyBox('🖼️', 'المكتبة فارغة', 'أضِف صورة ثم استعمل رمزها في نصوصك'));
+    return;
+  }
+  html += '<div class="imgrid">' + DB.images.map(function (im) {
+    return '<div class="imgcard">'
+      + '<img src="' + im.data + '" alt="" onclick="imgEdit(\'' + im.id + '\')">'
+      + '<div class="imgcode" dir="ltr">{' + esc(im.code) + '}</div>'
+      + (im.name ? '<div class="imgname">' + esc(im.name) + '</div>' : '')
+      + '<div class="imgact">'
+      + '<button class="ic" onclick="imgEdit(\'' + im.id + '\')">✏️</button>'
+      + '<button class="ic" onclick="imgDel2(\'' + im.id + '\')">🗑️</button>'
+      + '</div></div>';
+  }).join('') + '</div>';
+  h('page', html);
+}
+
+/* ── الرمز داخل النصّ ── */
+var IMG_RE = /\{([a-z0-9_-]{1,32})\}/gi;
+
+/** يقسّم النصّ إلى مقاطع: نصّ عادي، ورموز صور موجودة فعلًا في المكتبة. */
+function segsOf(text) {
+  var out = [], last = 0, m;
+  IMG_RE.lastIndex = 0;
+  while ((m = IMG_RE.exec(String(text))) !== null) {
+    if (!imgByCode(m[1].toLowerCase())) continue;      // رمز غير معروف يبقى نصًّا
+    if (m.index > last) out.push({ t: 'x', v: String(text).slice(last, m.index) });
+    out.push({ t: 'img', code: m[1].toLowerCase() });
+    last = m.index + m[0].length;
+  }
+  if (last < String(text).length) out.push({ t: 'x', v: String(text).slice(last) });
+  return out.length ? out : [{ t: 'x', v: String(text) }];
+}
+/** هل في النصّ رمز صورة معروف؟ */
+function hasImgRef(text) {
+  return segsOf(text).some(function (g) { return g.t === 'img'; });
+}
+/** النصّ بعد استبدال الرموز بصورها — للمخارج التي تفهم HTML. */
+function textHtml(v) {
+  return segsOf(v).map(function (g) {
+    return g.t === 'img'
+      ? '<img class="rx-pic" src="' + imgData(g.code) + '" alt="">'
+      : esc(g.v);
+  }).join('');
 }
 
 /* ════════════════════════ 🏷️ التصنيفات ════════════════════════
@@ -1698,6 +1906,7 @@ function medRow(m) {
     + (m.dosage ? '<div class="req">💊 ' + esc(m.dosage) + '</div>' : '')
     + extraRow('meds', m)
     + '</div>'
+    + thumb(m)
     + '<button class="ic" onclick="medForm(\'' + m.id + '\')">✏️</button>'
     + '<button class="ic" onclick="dupItem(\'meds\',\'' + m.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="medDel(\'' + m.id + '\')">🗑️</button>'
@@ -1784,7 +1993,7 @@ window.medForm = function (id) {
       + '<input id="mf-' + key + '" class="inp" value="' + esc(m[key] || '') + '"></div>';
   }
   var body = MED_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
-  body += extraFields('mf', 'meds', m);
+  body += imgField('mf', m.img) + extraFields('mf', 'meds', m);
   body += moreBlock(MED_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
   body += '<label class="chk-row"><input type="checkbox" id="mf-default" ' + (m.default_include ? 'checked' : '') + '> ⭐ محدَّد افتراضيًا</label>';
   body += mft('medSave', id);
@@ -1795,6 +2004,7 @@ window.medSave = function (id, again) {
   MED_FLD.forEach(function (f) { var el = $('mf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.default_include = ($('mf-default') || {}).checked ? 1 : 0;
   body.extra = readExtra('mf', 'meds');
+  body.img = (($('mf-img') || {}).value || '').trim();
   if (!body.trade_name) return toast('الاسم التجاري مطلوب', 'er');
   catEnsure('meds', body.category);
   LAST_CAT.meds = body.category;
@@ -1825,6 +2035,7 @@ function labRow(t) {
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
     + extraRow('labs', t)
     + '</div>'
+    + thumb(t)
     + '<button class="ic" onclick="labForm(\'' + t.id + '\')">✏️</button>'
     + '<button class="ic" onclick="dupItem(\'labs\',\'' + t.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="labDel(\'' + t.id + '\')">🗑️</button>'
@@ -1900,7 +2111,7 @@ window.labForm = function (id) {
     + '<div class="f"><label>اسم التحليل *</label><input id="lf-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: صورة دم كاملة"></div>'
     + '<div class="f"><label>رمز التحليل (المصطلح)</label><input id="lf-code" class="inp" dir="ltr" value="' + esc(t.code || '') + '" placeholder="مثال: CBC"></div>'
     + taField('lf-requirements', 'متطلبات التحليل', t.requirements, 'مثال: صيام ٨–١٢ ساعة')
-    + extraFields('lf', 'labs', t)
+    + imgField('lf', t.img) + extraFields('lf', 'labs', t)
     + moreBlock(taField('lf-purpose', 'الهدف من التحليل', t.purpose, 'مثال: تقييم فقر الدم والالتهابات')
       + taField('lf-prohibitions', 'ممنوعات التحليل', t.prohibitions, 'مثال: لا يُجرى بعد بدء المضاد الحيوي'))
     + '<label class="chk-row"><input type="checkbox" id="lf-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ تحليل شائع</label>'
@@ -1916,6 +2127,7 @@ window.labSave = function (id, again) {
     requirements: ($('lf-requirements') || {}).value.trim(),
     prohibitions: ($('lf-prohibitions') || {}).value.trim(),
     is_common: ($('lf-common') || {}).checked ? 1 : 0,
+    img: (($('lf-img') || {}).value || '').trim(),
     extra: readExtra('lf', 'labs')
   };
   if (!body.name) return toast('اسم التحليل مطلوب', 'er');
@@ -1950,6 +2162,7 @@ function imgRow(t) {
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
     + extraRow('imaging', t)
     + '</div>'
+    + thumb(t)
     + '<button class="ic" onclick="imgForm(\'' + t.id + '\')">✏️</button>'
     + '<button class="ic" onclick="dupItem(\'imaging\',\'' + t.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="imgDel(\'' + t.id + '\')">🗑️</button>'
@@ -1992,7 +2205,7 @@ window.imgForm = function (id) {
     + '<div class="f"><label>اسم الفحص *</label><input id="if-name" class="inp" value="' + esc(t.name || '') + '" placeholder="مثال: رنين مغناطيسي للعمود القطني"></div>'
     + '<div class="f"><label>المنطقة أو العضو</label><input id="if-region" class="inp" value="' + esc(t.region || '') + '" placeholder="مثال: العمود القطني"></div>'
     + taField('if-requirements', 'التحضير المطلوب', t.requirements, 'مثال: صيام ٦ ساعات، إحضار فحوصات الكلى')
-    + extraFields('if', 'imaging', t)
+    + imgField('if', t.img) + extraFields('if', 'imaging', t)
     + moreBlock(taField('if-purpose', 'الهدف من الفحص', t.purpose, 'مثال: تقييم الانزلاق الغضروفي')
       + taField('if-prohibitions', 'موانع الإجراء', t.prohibitions, 'مثال: الحمل، منظّم ضربات القلب'))
     + '<label class="chk-row"><input type="checkbox" id="if-common" ' + (t.is_common ? 'checked' : '') + '> ⭐ فحص شائع</label>'
@@ -2008,6 +2221,7 @@ window.imgSave = function (id, again) {
     requirements: ($('if-requirements') || {}).value.trim(),
     prohibitions: ($('if-prohibitions') || {}).value.trim(),
     is_common: ($('if-common') || {}).checked ? 1 : 0,
+    img: (($('if-img') || {}).value || '').trim(),
     extra: readExtra('if', 'imaging')
   };
   if (!body.name) return toast('اسم الفحص مطلوب', 'er');
@@ -2057,6 +2271,7 @@ function recipeRow(r) {
     + (r.precautions ? '<div class="ban">⛔ ' + esc(r.precautions) + '</div>' : '')
     + extraRow('recipes', r)
     + '</div>'
+    + thumb(r)
     + '<button class="ic" onclick="recipeForm(\'' + r.id + '\')">✏️</button>'
     + '<button class="ic" onclick="dupItem(\'recipes\',\'' + r.id + '\')" title="تكرار">⧉</button>'
     + '<button class="ic" onclick="recipeDel(\'' + r.id + '\')">🗑️</button>'
@@ -2112,7 +2327,7 @@ window.recipeForm = function (id) {
       + '<input id="rf-' + key + '" class="inp" value="' + v + '"></div>';
   }
   var body = RX_FLD.filter(function (f) { return !f[3]; }).map(fld).join('');
-  body += extraFields('rf', 'recipes', r);
+  body += imgField('rf', r.img) + extraFields('rf', 'recipes', r);
   body += moreBlock(RX_FLD.filter(function (f) { return f[3]; }).map(fld).join(''));
   body += '<label class="chk-row"><input type="checkbox" id="rf-fav" ' + (r.is_favorite ? 'checked' : '') + '> ⭐ وصفة مفضّلة</label>';
   body += mft('recipeSave', id);
@@ -2130,6 +2345,7 @@ window.recipeSave = function (id, again) {
   RX_FLD.forEach(function (f) { var el = $('rf-' + f[0]); body[f[0]] = el ? el.value.trim() : ''; });
   body.is_favorite = ($('rf-fav') || {}).checked ? 1 : 0;
   body.extra = readExtra('rf', 'recipes');
+  body.img = (($('rf-img') || {}).value || '').trim();
   if (!body.name) return toast('اسم الوصفة مطلوب', 'er');
   catEnsure('recipes', body.category);
   LAST_CAT.recipes = body.category;
@@ -2342,19 +2558,30 @@ function outLines(kind, o) {
   return lines;
 }
 function lineText(x) { return x.l + ': ' + x.v; }
+/** النصّ العادي لا يحمل صورًا، فيُذكَر اسمها بدل رمزها ليبقى المعنى. */
+function plainText(v) {
+  return segsOf(v).map(function (g) {
+    if (g.t !== 'img') return g.v;
+    var im = imgByCode(g.code);
+    return '[صورة: ' + (im.name || im.code) + ']';
+  }).join('');
+}
 function rowsFor(kind, ids) {
   var src = coll(kind);
   return ids.map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
-    return o ? { title: outTitle(kind, o, i), lines: outLines(kind, o) } : null;
+    return o ? { title: outTitle(kind, o, i), lines: outLines(kind, o),
+                 img: (o.img && imgByCode(o.img)) ? o.img : '' } : null;
   }).filter(Boolean);
 }
 function cartRows(kind) { return rowsFor(kind, DB.cart[kind]); }
 function itemsHtml(kind, ids) {
   return rowsFor(kind, ids).map(function (r) {
     return '<div class="rx-item"><div class="rx-name">' + esc(r.title) + '</div>'
+      + (r.img ? '<img class="rx-pic" src="' + imgData(r.img) + '" alt="">' : '')
       + r.lines.map(function (x) {
-        return '<div class="rx-f"><span class="rx-l">' + esc(x.l) + ':</span> ' + esc(x.v) + '</div>';
+        // نصّ الحقل يمرّ بـtextHtml لا esc: الرمز {code} يصير صورةً مكانه
+        return '<div class="rx-f"><span class="rx-l">' + esc(x.l) + ':</span> ' + textHtml(x.v) + '</div>';
       }).join('') + '</div>';
   }).join('');
 }
@@ -2396,6 +2623,8 @@ function printCss(scope, dense) {
     + s + '.rx-name{font-weight:bold;font-size:' + F.name + ';color:#0f766e;margin-bottom:1pt;line-height:1.3}'
     + s + '.rx-f{font-size:' + F.line + ';margin:0.5pt 0;line-height:' + F.lh + ';white-space:pre-wrap}'
     + s + '.rx-l{color:#475569;font-weight:bold}'
+    + s + '.rx-pic{display:block;max-width:' + (dense ? '38mm' : '52mm')
+    + ';max-height:' + (dense ? '30mm' : '42mm') + ';margin:2pt 0;border:0.4pt solid #cbd5e1;border-radius:3pt}'
     + s + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
     + s + '.lh-n{font-weight:bold;font-size:13pt;color:#0f766e}'
     + s + '.lh-t{font-size:9.5pt;color:#334155;margin-top:1pt}'
@@ -2472,7 +2701,36 @@ function cartTitle(kind, withIcon) {
   var L = kindLbl(kind), t = CART_TITLE[kind] || L.title;
   return withIcon ? L.icon + ' ' + t : t;
 }
-function buildCanvas(kind, ids, title) {
+/** رموز الصور المستعملة في قائمة: صورة العنصر وما داخل نصوصه. */
+function imgsUsed(kind, ids) {
+  var out = [];
+  rowsFor(kind, ids).forEach(function (r) {
+    if (r.img && out.indexOf(r.img) < 0) out.push(r.img);
+    r.lines.forEach(function (x) {
+      segsOf(x.v).forEach(function (g) {
+        if (g.t === 'img' && out.indexOf(g.code) < 0) out.push(g.code);
+      });
+    });
+  });
+  return out;
+}
+/**
+ * تحميل الصور قبل رسم اللوحة. `drawImage` تحتاج صورة محمَّلة، وقياس
+ * الارتفاع يحتاج أبعادها — فلا مفرّ من انتظارها قبل البناء.
+ */
+function loadImgs(codes, cb) {
+  var out = {}, left = codes.length;
+  if (!left) return cb(out);
+  codes.forEach(function (code) {
+    var im = new Image();
+    im.onload = function () { out[code] = im; if (!--left) cb(out); };
+    im.onerror = function () { if (!--left) cb(out); };
+    im.src = imgData(code);
+  });
+}
+
+function buildCanvas(kind, ids, title, pics) {
+  pics = pics || {};
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
   var TITLE_F = 'bold 23px Tahoma, Arial, sans-serif';
   var LINE_F = '16.5px Tahoma, Arial, sans-serif';
@@ -2482,15 +2740,34 @@ function buildCanvas(kind, ids, title) {
   var ctx = c.getContext('2d');
 
   // قياس أولًا لمعرفة الارتفاع المطلوب، ثم تحديد أبعاد اللوحة ورسمها
+  // سطر الصورة يحمل أبعادها المصغَّرة؛ وسطر النصّ نصٌّ عادي كما كان
+  function picLine(code) {
+    var im = pics[code];
+    if (!im || !im.naturalWidth) return null;
+    var w = Math.min(MAXW, im.naturalWidth, 320);
+    var h = Math.round(im.naturalHeight * (w / im.naturalWidth));
+    return { im: im, w: Math.round(w), h: h };
+  }
   var rows = rowsFor(kind, ids).map(function (r) {
     ctx.font = TITLE_F;
     var titleLines = wrapText(ctx, r.title, MAXW);
     ctx.font = LINE_F;
-    var lines = [];
-    r.lines.forEach(function (x) { lines = lines.concat(wrapBlock(ctx, lineText(x), MAXW)); });
+    var lines = [], hh = 0;
+    var top = r.img ? picLine(r.img) : null;
+    if (top) hh += top.h + 8;
+    r.lines.forEach(function (x) {
+      segsOf(lineText(x)).forEach(function (g) {
+        if (g.t === 'img') {
+          var pl = picLine(g.code);
+          if (pl) { lines.push(pl); hh += pl.h + 8; }
+          return;
+        }
+        wrapBlock(ctx, g.v, MAXW).forEach(function (l) { lines.push(l); hh += LINE_H; });
+      });
+    });
     return {
-      titleLines: titleLines, lines: lines,
-      h: 18 + titleLines.length * TITLE_H + lines.length * LINE_H
+      titleLines: titleLines, lines: lines, top: top,
+      h: 18 + titleLines.length * TITLE_H + hh
     };
   });
 
@@ -2518,8 +2795,16 @@ function buildCanvas(kind, ids, title) {
     var ty = y + 24;
     ctx.fillStyle = '#0f172a'; ctx.font = TITLE_F;
     r.titleLines.forEach(function (t) { ctx.fillText(t, W - PAD - 11, ty); ty += TITLE_H; });
+    if (r.top) {
+      ctx.drawImage(r.top.im, W - PAD - 11 - r.top.w, ty - 8, r.top.w, r.top.h);
+      ty += r.top.h + 8;
+    }
     ctx.fillStyle = '#0f766e'; ctx.font = LINE_F;
-    r.lines.forEach(function (l) { ctx.fillText(l, W - PAD - 11, ty); ty += LINE_H; });
+    r.lines.forEach(function (l) {
+      if (typeof l === 'string') { ctx.fillText(l, W - PAD - 11, ty); ty += LINE_H; return; }
+      ctx.drawImage(l.im, W - PAD - 11 - l.w, ty - 8, l.w, l.h);
+      ty += l.h + 8;
+    });
     y += r.h;
   });
   return c;
@@ -2547,7 +2832,7 @@ function listText(kind, ids, title, who) {
   rowsFor(kind, ids).forEach(function (r) {
     lines.push(r.title);
     r.lines.forEach(function (x) {
-      var segs = String(x.v).split('\n');
+      var segs = plainText(x.v).split('\n');
       lines.push('   • ' + x.l + ': ' + segs[0]);
       for (var i = 1; i < segs.length; i++) lines.push('     ' + segs[i]);
     });
@@ -2570,8 +2855,14 @@ window.shareList = function (kind, ids, title, imgTitle, who) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
   var name = outName(title || kindLbl(kind).title, who);
   if (who) imgTitle = (imgTitle || (kindLbl(kind).icon + ' ' + title)) + ' — ' + who;
-  var canvas = buildCanvas(kind, ids, imgTitle || (kindLbl(kind).icon + ' ' + name));
+  var head = imgTitle || (kindLbl(kind).icon + ' ' + name);
   var fname = name.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
+  loadImgs(imgsUsed(kind, ids), function (pics) {
+    sendCanvas(buildCanvas(kind, ids, head, pics), fname);
+  });
+};
+/** إرسال اللوحة: جسر أندرويد، أو مشاركة الويب، أو تنزيل — كما كان. */
+function sendCanvas(canvas, fname) {
 
   // داخل التطبيق الأصلي (APK): جسر Android يستقبل الصورة ويطلق مشاركة نظامية حقيقية
   // (WebView لا يطبّق Web Share API إطلاقًا، بخلاف المتصفح/PWA)
@@ -2593,7 +2884,7 @@ window.shareList = function (kind, ids, title, imgTitle, who) {
     document.body.appendChild(a); a.click(); a.remove();
     toast('نزّلت الصورة — أرفقها يدويًا في واتساب');
   }, 'image/png');
-};
+}
 
 /* ── المعاينة قبل الإرسال ──
    صفحة واحدة تجمع كل مخارج القائمة: تعرض ما سيُرسَل فعلًا — الورقة (نفس
@@ -2654,14 +2945,27 @@ window.pvDense = function () {
   toast(DB.dense ? '🗜️ ورقة مضغوطة' : '📄 ورقة عادية');
 };
 
-/** صورة المعاينة = نفس اللوحة المُرسَلة، مصغَّرة داخل الصفحة. */
+/**
+ * صورة المعاينة = نفس اللوحة المُرسَلة. تُبنى بعد تحميل صورها فنعرض مكانها
+ * لحظةً ثم نحقنها — لأن الرسم يحتاج صورًا محمَّلة وأبعادها.
+ */
 function pvImgHtml() {
+  return '<div class="pvimg" id="pv-img"><div class="es">⏳ يجري تجهيز الصورة…</div></div>';
+}
+function pvImgFill() {
+  if (!PV) return;
   try {
-    var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''));
-    return '<div class="pvimg"><img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '"></div>';
-  } catch (e) {
-    return emptyBox('🖼️', 'تعذّر توليد الصورة', 'جرّب الورقة أو الإرسال مباشرة');
-  }
+    loadImgs(imgsUsed(PV.kind, PV.ids), function (pics) {
+      var box = $('pv-img');
+      if (!box || PV_TAB !== 'img') return;
+      try {
+        var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''), pics);
+        box.innerHTML = '<img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '">';
+      } catch (e) {
+        box.innerHTML = '<div class="es">تعذّر توليد الصورة — جرّب الورقة أو الإرسال مباشرة</div>';
+      }
+    });
+  } catch (e) { /* بيئة بلا لوحة رسم */ }
 }
 
 function renderPreview() {
@@ -2697,6 +3001,7 @@ function renderPreview() {
         + ' onclick="pvSend(\'' + f[0] + '\')">' + f[1] + '</button>';
     }).join('') + '</div>';
   h('page', html);
+  if (PV_TAB === 'img') pvImgFill();
 }
 
 /**

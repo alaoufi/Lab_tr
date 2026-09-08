@@ -92,7 +92,16 @@ public class MainActivity extends ComponentActivity {
             public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 filePickerCallback = callback;
                 try {
-                    filePickerLauncher.launch("application/json");
+                    // النوع يأتي من سمة accept في الحقل نفسه: نسخة احتياطية
+                    // (JSON) أو صورة للمكتبة — فمنتقٍ واحد يخدم الاثنين.
+                    String[] accept = params == null ? null : params.getAcceptTypes();
+                    String mime = "application/json";
+                    if (accept != null) {
+                        for (String a : accept) {
+                            if (a != null && a.startsWith("image/")) { mime = "image/*"; break; }
+                        }
+                    }
+                    filePickerLauncher.launch(mime);
                 } catch (Exception e) {
                     filePickerCallback = null;
                     return false;

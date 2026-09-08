@@ -11,7 +11,7 @@ const vm = require('vm');
 // جسر وهمي يحاكي دلالات DaliliDb (جداول منفصلة + سلة مرتّبة)
 function makeBridge() {
   const t = { meds: [], labs: [], imaging: [], recipes: [], groups: [], cats: [],
-              sections: [], fields: [], items: [], sent: [],
+              sections: [], fields: [], items: [], sent: [], images: [],
               cart: { meds: [], labs: [], imaging: [], recipes: [] }, settings: {} };
   // عناصر الأقسام التي ينشئها المستخدم تعيش في items كما في DaliliDb
   const isCustom = k => !['meds', 'labs', 'imaging', 'recipes'].includes(k);
@@ -32,7 +32,8 @@ function makeBridge() {
     loadAll: () => {
       const out = { meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
         groups: t.groups, cats: t.cats, sections: t.sections, fields: t.fields,
-        sent: t.sent, cart: t.cart, settings: t.settings, pin_hash: t.settings.pin_hash };
+        sent: t.sent, images: t.images, cart: t.cart, settings: t.settings,
+        pin_hash: t.settings.pin_hash };
       t.sections.filter(s => isCustom(s.id)).forEach(s => { out[s.id] = rows(s.id); });
       return JSON.stringify(out);
     },
@@ -73,6 +74,13 @@ function makeBridge() {
       return true;
     },
     clearSent: () => { t.sent = []; return true; },
+    saveImage: j => {
+      const im = JSON.parse(j);
+      const i = t.images.findIndex(x => x.id === im.id);
+      if (i >= 0) t.images[i] = Object.assign({}, t.images[i], im); else t.images.push(im);
+      return true;
+    },
+    deleteImage: id => { t.images = t.images.filter(x => x.id !== id); return true; },
     saveSection: j => {
       const sec = JSON.parse(j);
       const i = t.sections.findIndex(x => x.id === sec.id);
@@ -117,6 +125,7 @@ function makeBridge() {
       t.meds = d.meds || []; t.labs = d.labs || []; t.imaging = d.imaging || [];
       t.recipes = d.recipes || []; t.groups = d.groups || []; t.cats = d.cats || [];
       t.sections = d.sections || []; t.fields = d.fields || []; t.sent = d.sent || [];
+      t.images = d.images || [];
       t.items = [];
       t.sections.filter(s => isCustom(s.id)).forEach(s => {
         (d[s.id] || []).forEach(o => t.items.push(Object.assign({}, o, { section: s.id })));
@@ -1106,8 +1115,10 @@ run('المعاينة: تبويب الصورة ثم الإرسال بأي صيغ
   c.pvTab('img');
   const html = c._els('page').innerHTML;
   eq(html.indexOf('class="pvimg"') >= 0, true, 'image tab rendered:');
-  eq(html.indexOf('data:image/png;base64,') >= 0, true, 'the canvas itself is shown:');
   eq(html.indexOf('class="paper"') < 0, true, 'paper hidden on the image tab:');
+  // اللوحة تُبنى بعد تحميل صورها ثم تُحقن في مكانها
+  eq(c._els('pv-img').innerHTML.indexOf('data:image/png;base64,') >= 0, true,
+    'the canvas itself is injected:');
 
   c.pvSend('img');
   eq(A._imgs.length, 1, 'image sent:');
@@ -1816,4 +1827,116 @@ run('الإرسال: السجل يحفظ آخر عشرة ويعيدها بضغط
   c.sentClear(); c._els('cb-yes').onclick();
   eq(c.DB.sent.length, 0, 'cleared:');
   eq(b._t.labs.length, 1, 'and no item was harmed:');
+});
+
+// صورة صغيرة صالحة (١×١ بكسل) للاختبارات
+const PIX = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAP//////////'
+  + '////////////////////////////////////////////////////2wBDAf//////////////'
+  + '////////////////////////////////////////////////////wAARCAABAAEDASIAAhEB'
+  + 'AxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAn/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFAEBAA'
+  + 'AAAAAAAAAAAAAAAAAAAP/EABQRAQAAAAAAAAAAAAAAAAAAAAD/2gAMAwEAAhEDEQA/AKAAAf/Z';
+
+function addPic(c, code, name) {
+  const rec = { id: c.uid(), code, name: name || '', data: PIX };
+  c.DB.images.push(rec); c.Store.saveImage(rec);
+  return rec;
+}
+
+run('الصور: رمز داخل النصّ يصير صورة في الورقة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  addPic(c, 'arf', 'موضع الحقن');
+  eq(b._t.images.length, 1, 'stored in the library:');
+
+  c.goPage('recipes');
+  c._els('rf-name').value = 'ضمادة الجرح';
+  c._els('rf-ingredients').value = 'نظّف الجرح {arf} ثم ضع الشاش';
+  c.recipeSave('');
+  c.DB.out.recipes = ['ingredients'];
+
+  const html = c.itemsHtml('recipes', [b._t.recipes[0].id]);
+  eq(html.indexOf('class="rx-pic"') >= 0, true, 'the code became an image:');
+  eq(html.indexOf('{arf}') < 0, true, 'and the code itself is gone:');
+  eq(html.indexOf('نظّف الجرح') >= 0 && html.indexOf('ثم ضع الشاش') >= 0, true,
+    'the text around it survives:');
+
+  // رمز غير معروف يبقى نصًّا كما كتبه المستخدم
+  c._els('rf-name').value = 'أخرى';
+  c._els('rf-ingredients').value = 'شيء {غير} موجود {zzz}';
+  c.recipeSave('');
+  const h2 = c.itemsHtml('recipes', [b._t.recipes[1].id]);
+  eq(h2.indexOf('{zzz}') >= 0, true, 'unknown code left as text:');
+  eq(h2.indexOf('class="rx-pic"') < 0, true, 'and no image invented:');
+});
+
+run('الصور: صورة العنصر تُختار من المكتبة وتظهر في الورقة والبطاقة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  addPic(c, 'pill', 'شكل الحبّة');
+
+  c.goPage('meds');
+  c.medForm();
+  eq(c._els('modal-body').innerHTML.indexOf('id="mf-imgsel"') >= 0, true, 'picker offered:');
+  c._els('mf-trade_name').value = 'بنادول';
+  c._els('mf-img').value = 'pill';
+  c.medSave('');
+  eq(b._t.meds[0].img, 'pill', 'stored on the item:');
+
+  eq(c._els('page').innerHTML.indexOf('class="cardpic"') >= 0, true, 'thumbnail on the card:');
+  eq(c.itemsHtml('meds', [b._t.meds[0].id]).indexOf('class="rx-pic"') >= 0, true, 'in the paper:');
+
+  // صورة محذوفة لا تكسر شيئًا
+  c.imgDel2(c.DB.images[0].id); c._els('cb-yes').onclick();
+  eq(c.itemsHtml('meds', [b._t.meds[0].id]).indexOf('class="rx-pic"') < 0, true,
+    'a deleted picture simply disappears:');
+  eq(b._t.meds[0].trade_name, 'بنادول', 'and the item is untouched:');
+});
+
+run('الصور: النصّ المنسوخ يذكر اسم الصورة بدل رمزها', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  addPic(c, 'arf', 'موضع الحقن');
+  c.goPage('recipes');
+  c._els('rf-name').value = 'الحقن';
+  c._els('rf-ingredients').value = 'احقن هنا {arf} ببطء';
+  c.recipeSave('');
+  c.DB.out.recipes = ['ingredients'];
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart('recipes', b._t.recipes[0].id);
+  c.previewCart('recipes'); c.pvSend('copy');
+  eq(A._clip.indexOf('[صورة: موضع الحقن]') >= 0, true, 'named in plain text:');
+  eq(A._clip.indexOf('{arf}') < 0, true, 'not the raw code:');
+});
+
+run('الصور: الرمز فريد ولا يتغيّر، والمكتبة تدخل النسخة الاحتياطية', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.goPage('imgs');
+
+  // إنشاء عبر النموذج
+  c.imgForm2('', PIX);
+  c._els('im-code').value = 'ARF!!'; c._els('im-name').value = 'موضع الحقن';
+  c._els('im-data').value = PIX;
+  c.imgSave2('');
+  eq(b._t.images[0].code, 'arf', 'code normalised to safe characters:');
+
+  // الرمز مستعمل
+  c.imgForm2('', PIX);
+  c._els('im-code').value = 'arf'; c._els('im-data').value = PIX;
+  c.imgSave2('');
+  eq(b._t.images.length, 1, 'duplicate code refused:');
+  eq(c._els('toast').textContent, 'الرمز مستعمل');
+
+  // التعديل يغيّر الاسم لا الرمز
+  c.imgEdit(b._t.images[0].id);
+  eq(c._els('modal-body').innerHTML.indexOf('id="im-code"') < 0, true, 'code not editable:');
+  c._els('im-name').value = 'موضع الإبرة';
+  c.imgSave2(b._t.images[0].id);
+  eq(b._t.images[0].name, 'موضع الإبرة', 'name changed:');
+  eq(b._t.images[0].code, 'arf', 'code kept so {arf} keeps working:');
+
+  // النسخة الاحتياطية
+  const backup = JSON.parse(JSON.stringify(c.DB));
+  eq(backup.images.length, 1, 'in the backup:');
+  const b2 = makeBridge(); const c2 = load(b2); c2.Store.load();
+  c2.applyData(backup); c2.Store.replaceAll();
+  eq(b2._t.images[0].code, 'arf', 'restored:');
+  eq(c2.imgData('arf').indexOf('data:image/jpeg') === 0, true, 'with its data:');
 });
