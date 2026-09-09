@@ -380,33 +380,49 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     /* ─────────────── قراءة كل شيء دفعة واحدة (عند الإقلاع) ─────────────── */
 
+    /* كلّ جدول يُقرأ على حدة: عطبٌ في واحد يُسجَّل في {@code errors} ويمضي الباقي.
+       بيانات ناقصة تُرى وتُنقذ، خيرٌ من شاشةٍ فارغة توحي بأنّ كل شيء ضاع. */
     public JSONObject loadAll() throws Exception {
         SQLiteDatabase db = getReadableDatabase();
         JSONObject out = new JSONObject();
         JSONObject cart = new JSONObject();
+        JSONArray errs = new JSONArray();
         for (String kind : KINDS) {
-            out.put(kind, readItems(db, kind));
-            cart.put(kind, readCart(db, kind));
+            try { out.put(kind, readItems(db, kind)); }
+            catch (Exception e) { out.put(kind, new JSONArray()); errs.put(kind + ": " + e); }
+            try { cart.put(kind, readCart(db, kind)); }
+            catch (Exception e) { cart.put(kind, new JSONArray()); }
         }
-        JSONArray sections = readSections(db);
+        JSONArray sections = new JSONArray();
+        try { sections = readSections(db); }
+        catch (Exception e) { errs.put("sections: " + e); }
         out.put("sections", sections);
-        out.put("fields", readFields(db));
+        try { out.put("fields", readFields(db)); }
+        catch (Exception e) { out.put("fields", new JSONArray()); errs.put("fields: " + e); }
         // أقسام المستخدم: عناصرها في items، وتصل للواجهة بنفس شكل الأصلية
         for (int i = 0; i < sections.length(); i++) {
             JSONObject sec = sections.optJSONObject(i);
             String id = sec == null ? "" : sec.optString("id");
-            if (isCustomKind(id)) {
-                out.put(id, readCustomItems(db, id));
-                cart.put(id, readCart(db, id));
-            }
+            if (!isCustomKind(id)) continue;
+            try { out.put(id, readCustomItems(db, id)); }
+            catch (Exception e) { out.put(id, new JSONArray()); errs.put(id + ": " + e); }
+            try { cart.put(id, readCart(db, id)); }
+            catch (Exception e) { cart.put(id, new JSONArray()); }
         }
         out.put("cart", cart);
-        out.put("cats", readCats(db));
-        out.put("sent", readSent(db));
-        out.put("images", readImages(db));
-        out.put("groups", readGroups(db));
-        out.put("settings", readSettings(db));
-        out.put("pin_hash", getSetting(db, "pin_hash"));
+        try { out.put("cats", readCats(db)); }
+        catch (Exception e) { out.put("cats", new JSONArray()); errs.put("cats: " + e); }
+        try { out.put("sent", readSent(db)); }
+        catch (Exception e) { out.put("sent", new JSONArray()); }
+        try { out.put("images", readImages(db)); }
+        catch (Exception e) { out.put("images", new JSONArray()); errs.put("images: " + e); }
+        try { out.put("groups", readGroups(db)); }
+        catch (Exception e) { out.put("groups", new JSONArray()); errs.put("groups: " + e); }
+        try { out.put("settings", readSettings(db)); }
+        catch (Exception e) { out.put("settings", new JSONObject()); }
+        try { out.put("pin_hash", getSetting(db, "pin_hash")); }
+        catch (Exception e) { out.put("pin_hash", ""); }
+        out.put("errors", errs);
         return out;
     }
 
@@ -416,10 +432,10 @@ public class DaliliDb extends SQLiteOpenHelper {
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
-                o.put("id", c.getString(c.getColumnIndexOrThrow("id")));
+                o.put("id", str(c, "id"));
                 for (String col : textCols(kind)) o.put(col, str(c, col));
                 String flag = flagCol(kind);
-                o.put(flag, c.getInt(c.getColumnIndexOrThrow(flag)));
+                o.put(flag, num(c, flag));
                 o.put("extra", parseExtra(str(c, "extra")));
                 arr.put(o);
             }
@@ -446,7 +462,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("id", str(c, "id"));
                 o.put("title", str(c, "title"));
                 o.put("icon", str(c, "icon"));
-                o.put("builtin", c.getInt(c.getColumnIndexOrThrow("builtin")));
+                o.put("builtin", num(c, "builtin"));
                 arr.put(o);
             }
         } finally { c.close(); }
@@ -482,7 +498,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("name", str(c, "name"));
                 o.put("category", str(c, "category"));
                 o.put("img", str(c, "img"));
-                o.put("flag", c.getInt(c.getColumnIndexOrThrow("flag")));
+                o.put("flag", num(c, "flag"));
                 o.put("extra", parseExtra(str(c, "extra")));
                 arr.put(o);
             }
@@ -629,7 +645,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("title", str(c, "title"));
                 o.put("who", str(c, "who"));
                 o.put("ids", new JSONArray(str(c, "item_ids")));
-                o.put("ts", c.getLong(c.getColumnIndexOrThrow("ts")));
+                o.put("ts", lng(c, "ts"));
                 arr.put(o);
             }
         } finally { c.close(); }
@@ -739,7 +755,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         try {
             while (c.moveToNext()) {
                 JSONObject g = new JSONObject();
-                String id = c.getString(c.getColumnIndexOrThrow("id"));
+                String id = str(c, "id");
                 g.put("id", id);
                 g.put("kind", str(c, "kind"));
                 g.put("name", str(c, "name"));
@@ -804,9 +820,25 @@ public class DaliliDb extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /* عمودٌ ناقص يعني نصًّا فارغًا لا استثناءً: قاعدةٌ أقدم من المتوقَّع تُقرأ
+       ناقصةً ويظهر ما فيها، بدل أن يسقط الصفّ كلّه ويبدو للمستخدم أنّه حُذف. */
     private static String str(Cursor c, String col) {
-        String v = c.getString(c.getColumnIndexOrThrow(col));
+        int i = c.getColumnIndex(col);
+        if (i < 0) return "";
+        String v = c.getString(i);
         return v == null ? "" : v;
+    }
+
+    /** عدد من عمودٍ قد لا يكون موجودًا — نفس المبدأ: نقصٌ لا انهيار. */
+    private static int num(Cursor c, String col) {
+        int i = c.getColumnIndex(col);
+        return i < 0 ? 0 : c.getInt(i);
+    }
+
+    /** رقم طويل من عمودٍ قد لا يكون موجودًا. */
+    private static long lng(Cursor c, String col) {
+        int i = c.getColumnIndex(col);
+        return i < 0 ? 0L : c.getLong(i);
     }
 
     /* ─────────────── كتابة ─────────────── */
@@ -1043,11 +1075,20 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
     }
 
-    /** هل القاعدة فارغة تمامًا؟ (تُستخدم لترحيل بيانات localStorage القديمة مرّة واحدة) */
+    /** هل القاعدة فارغة تمامًا؟ (تُستخدم لترحيل بيانات localStorage القديمة مرّة واحدة)
+     *  تعدّ أيضًا أقسام المستخدم وعناصرها وصوره: من بياناته في قسمٍ أنشأه هو
+     *  ليس «فارغًا»، وأي شكٍّ يعود «غير فارغة» فلا يُستبدل شيء بالخطأ. */
     public boolean isEmpty() {
-        SQLiteDatabase db = getReadableDatabase();
-        Cursor c = db.rawQuery("SELECT (SELECT COUNT(*) FROM meds)+(SELECT COUNT(*) FROM labs)"
-                + "+(SELECT COUNT(*) FROM imaging)+(SELECT COUNT(*) FROM recipes)", null);
-        try { return !c.moveToFirst() || c.getInt(0) == 0; } finally { c.close(); }
+        try {
+            SQLiteDatabase db = getReadableDatabase();
+            Cursor c = db.rawQuery("SELECT (SELECT COUNT(*) FROM meds)+(SELECT COUNT(*) FROM labs)"
+                    + "+(SELECT COUNT(*) FROM imaging)+(SELECT COUNT(*) FROM recipes)"
+                    + "+(SELECT COUNT(*) FROM items)+(SELECT COUNT(*) FROM images)"
+                    + "+(SELECT COUNT(*) FROM cats)+(SELECT COUNT(*) FROM groups)"
+                    + "+(SELECT COUNT(*) FROM sections WHERE builtin=0)", null);
+            try { return c.moveToFirst() && c.getInt(0) == 0; } finally { c.close(); }
+        } catch (Exception e) {
+            return false;   // لا نعرف ⇒ لا نلمس
+        }
     }
 }

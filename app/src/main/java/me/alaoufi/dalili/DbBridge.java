@@ -32,14 +32,23 @@ public class DbBridge {
         return DaliliDb.isKind(kind) || DaliliDb.isCustomKind(kind);
     }
 
-    /** كل البيانات دفعة واحدة عند الإقلاع: {pin_hash, meds, labs, cart}. */
+    /** كل البيانات دفعة واحدة عند الإقلاع: {pin_hash, meds, labs, cart}.
+     *  عند تعذّر القراءة يعود {load_failed:true} — لا نصًّا فارغًا: الواجهة
+     *  يجب أن تفرّق بين «لا بيانات» و«لم أستطع القراءة» فلا تكتب فوق شيء. */
     @JavascriptInterface
     public String loadAll() {
         try {
             return db.loadAll().toString();
         } catch (Exception e) {
             Log.e(TAG, "loadAll failed", e);
-            return "";
+            try {
+                JSONObject o = new JSONObject();
+                o.put("load_failed", true);
+                o.put("message", String.valueOf(e));
+                return o.toString();
+            } catch (Exception ignored) {
+                return "{\"load_failed\":true}";
+            }
         }
     }
 

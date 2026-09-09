@@ -8,8 +8,11 @@
 const { chromium } = require('playwright');
 const path = require('path');
 const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets', 'index.html');
+/* متصفّح مثبَّت خارج playwright؟ مرّر مساره في PW_CHROME. */
+const LAUNCH = { args: ['--allow-file-access-from-files'] };
+if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
 (async () => {
-  const b = await chromium.launch({ args: ['--allow-file-access-from-files'] });
+  const b = await chromium.launch(LAUNCH);
   const p = await b.newPage({ viewport: { width: 412, height: 950 }, deviceScaleFactor: 2 });
   const errs = [];
   p.on('pageerror', e => errs.push('PAGEERROR: ' + e.message));
@@ -97,6 +100,15 @@ const APP = 'file://' + path.join(__dirname, '..', 'app', 'src', 'main', 'assets
   await p.evaluate(() => goPage('fld:meds'));
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n11-fields.png', fullPage: true });
+
+  // شاشة الإنقاذ — تُرسَم كما تُرسَم حين تتعذّر قراءة القاعدة
+  await p.evaluate(() => {
+    Store.ok = false;
+    Store.errors = ['recipes: no such column: extra'];
+    showRecovery();
+  });
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n12-recovery.png', fullPage: true });
 
   console.log(errs.length ? errs.join('\n') : 'لا أخطاء في الكونسول ✅');
   await b.close();

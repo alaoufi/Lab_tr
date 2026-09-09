@@ -134,8 +134,22 @@ function makeBridge() {
       if (d.pin_hash) t.settings.pin_hash = d.pin_hash;
       return true;
     },
-    isEmpty: () => t.meds.length + t.labs.length + t.imaging.length + t.recipes.length === 0
+    // كما في DaliliDb.isEmpty: تعدّ كذلك عناصر أقسام المستخدم وصوره وتصنيفاته
+    isEmpty: () => t.meds.length + t.labs.length + t.imaging.length + t.recipes.length
+      + t.items.length + t.images.length + t.cats.length + t.groups.length
+      + t.sections.filter(s => !s.builtin).length === 0
   };
+}
+
+/** جسر تفشل قراءته — كما تفعل DbBridge حين يتعذّر فتح القاعدة أو قراءتها. */
+function brokenBridge(mode) {
+  const b = makeBridge();
+  b.loadAll = () => {
+    if (mode === 'throw') throw new Error('no such column: extra');
+    if (mode === 'empty') return '';
+    return JSON.stringify({ load_failed: true, message: 'no such column: extra' });
+  };
+  return b;
 }
 
 function makeCtx(bridge, legacyRaw) {
@@ -976,7 +990,8 @@ run('مكان النسخ الاحتياطية: عرض وتغيير وعودة و
   eq(html.indexOf('يُحذف مع إلغاء تثبيت') < 0, true, 'warning gone:');
   eq(html.indexOf('العودة لمجلد التطبيق') >= 0, true, 'reset offered:');
 
-  // مشاركة نسخة
+  // مشاركة نسخة — لا تُكتب نسخة إلا وفيها بيانات
+  c.DB.labs.push({ id: 'x1', name: 'CBC' });
   c.autoBackup(true);
   const name = JSON.parse(A.listBackups())[0].name;
   c.backupShare(name);
@@ -1985,4 +2000,144 @@ run('الحقول: الوصول إليها من صفحة التصنيفات وب
 
   c.goPage('fld:labs');
   eq(c._els('page').innerHTML.indexOf("goPage('cat:labs')") >= 0, true, 'and back again:');
+});
+
+/* ── تأمين البيانات: قراءةٌ فاشلة لا يجوز أن تصير حذفًا ────────────── */
+
+run('الأمان: قراءة فاشلة لا تكتب حرفًا ولا تزرع تصنيفات', () => {
+  ['throw', 'empty', 'flag'].forEach(mode => {
+    const b = brokenBridge(mode);
+    // بياناتٌ قائمة في القاعدة: يجب أن تبقى كما هي بعد إقلاعٍ فاشل
+    b._t.labs.push({ id: 'L1', name: 'CBC', category: 'أمراض الدم' });
+    b._t.sections.push({ id: 'sec1', title: 'نصائح', icon: '💡', builtin: 0 });
+    b._t.items.push({ id: 'i1', section: 'sec1', name: 'اشرب ماءً' });
+    b._t.cats.push({ id: 'c1', kind: 'labs', name: 'أمراض الدم' });
+    const before = JSON.stringify(b._t);
+
+    const c = load(b);
+    c.boot();
+
+    eq(c.Store.ok, false, mode + ': the failure is recognised:');
+    eq(JSON.stringify(b._t), before, mode + ': not one byte was written:');
+    eq(c._els('lock').className.indexOf('on') >= 0, true, mode + ': recovery screen shown:');
+    eq(c._els('app').className.indexOf('on') < 0, true, mode + ': the app itself stays shut:');
+    const html = c._els('lock').innerHTML;
+    eq(html.indexOf('لم تُحذف') >= 0, true, mode + ': it says the data is not gone:');
+    eq(html.indexOf('إعادة المحاولة') >= 0, true, mode + ': retry offered:');
+  });
+});
+
+run('الأمان: درع الكتابة يردّ كل محاولة بعد قراءة فاشلة', () => {
+  const b = brokenBridge('flag');
+  b._t.labs.push({ id: 'L1', name: 'CBC' });
+  const before = JSON.stringify(b._t);
+  const c = load(b);
+  c.boot();
+
+  eq(c.Store.saveCat({ id: 'z', kind: 'labs', name: 'جديد' }), false, 'saveCat refused:');
+  eq(c.Store.upsert('labs', { id: 'z', name: 'x' }), false, 'upsert refused:');
+  eq(c.Store.replaceAll(), false, 'replaceAll refused:');
+  eq(c.Store.dropSection('sec1'), false, 'dropSection refused:');
+  eq(JSON.stringify(b._t), before, 'the database is untouched:');
+});
+
+run('الأمان: الاستعادة من شاشة الإنقاذ تفتح الدرع وتُدخل التطبيق', () => {
+  // نبني نسخة احتياطية من جلسة سليمة، ثم نُقلع على قاعدة معطوبة
+  const good = makeBridge(); const g = load(good); g.Store.load(); g.showApp();
+  const A = androidStub(); g.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', g);
+  g.DB.labs.push({ id: 'L1', name: 'CBC', category: 'أمراض الدم' });
+  g.secNew(); g._els('sf-title').value = 'نصائح'; g._els('sf-icon').value = '💡';
+  g.secCreate();
+  const k = g.DB.sections[4].id;
+  g.secItemForm(k); g._els('cf-name').value = 'اشرب ماءً'; g.secItemSave(k, '');
+  const backupName = g.autoBackup(true);
+  eq(!!backupName, true, 'a backup exists to restore from:');
+
+  const b = brokenBridge('flag');
+  const c = load(b);
+  c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  eq(c._els('lock').innerHTML.indexOf('recoverFrom') >= 0, true, 'the backup is offered:');
+
+  c.recoverFrom(backupName);
+  c._els('cb-yes').onclick();
+  eq(c.Store.ok, true, 'the shield is opened by the user’s own choice:');
+  eq(b._t.labs.length, 1, 'the lab came back:');
+  eq(b._t.items.length, 1, 'and the item of the created section too:');
+  eq(c._els('app').className.indexOf('on') >= 0, true, 'and the app is in:');
+});
+
+run('الأمان: نسخة احتياطية فارغة لا تُكتب ولا تُزيح نسخةً صالحة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+
+  eq(c.autoBackup(true), false, 'nothing to save, nothing written:');
+  eq(JSON.parse(A.listBackups()).length, 0, 'no empty file left behind:');
+
+  c.DB.images.push({ id: 'm1', code: 'arf', name: 'صورة', data: 'data:,' });
+  eq(!!c.autoBackup(true), true, 'a library of images alone is data enough:');
+});
+
+run('الأمان: نسخة قبل حذف قسم كامل', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+
+  c.secNew(); c._els('sf-title').value = 'نصائح'; c._els('sf-icon').value = '💡';
+  c.secCreate();
+  const id = c.DB.sections[4].id;
+  c.secItemForm(id); c._els('cf-name').value = 'اشرب ماءً'; c.secItemSave(id, '');
+
+  c.secDel(id); c._els('cb-yes').onclick();
+  eq(b._t.sections.filter(s => !s.builtin).length, 0, 'the section is gone as asked:');
+  const files = JSON.parse(A.listBackups());
+  eq(files.length, 1, 'but a safety copy was taken first:');
+  eq(JSON.parse(A.readBackup(files[0].name))[id].length, 1, 'and it still holds the item:');
+});
+
+run('الأمان: الترحيل القديم لا يستبدل قاعدةً فيها بيانات المستخدم', () => {
+  const legacy = JSON.stringify({ meds: [{ id: 'old', trade_name: 'قديم' }], labs: [] });
+  const b = makeBridge();
+  // بيانات المستخدم كلها في قسمٍ أنشأه هو — الجداول الأربعة فارغة
+  b._t.sections.push({ id: 'sec1', title: 'نصائح', icon: '💡', builtin: 0 });
+  b._t.items.push({ id: 'i1', section: 'sec1', name: 'اشرب ماءً' });
+  const c = load(b, legacy);
+  c.boot();
+
+  eq(b._t.items.length, 1, 'the created section kept its item:');
+  eq(b._t.meds.length, 0, 'and the legacy blob did not replace it:');
+});
+
+run('الأمان: عطبٌ في جدولٍ واحد لا يُخفي بقيّة البيانات', () => {
+  const b = makeBridge();
+  b._t.labs.push({ id: 'L1', name: 'CBC' });
+  const inner = b.loadAll;
+  // كما تفعل DaliliDb: الجدول المعطوب يعود فارغًا ويُسجَّل في errors
+  b.loadAll = () => {
+    const d = JSON.parse(inner());
+    d.images = []; d.errors = ['images: no such column: data'];
+    return JSON.stringify(d);
+  };
+  const c = load(b); c.boot();
+
+  eq(c.Store.ok, true, 'a partial fault is not a total failure:');
+  eq(c._els('app').className.indexOf('on') >= 0, true, 'the app opens on what did load:');
+  eq(c.DB.labs.length, 1, 'and shows it:');
+  eq(c.Store.errors.length, 1, 'while the fault is remembered, not swallowed:');
+});
+
+run('الأمان: تصنيفات تكرّرت بأثر عطبٍ سابق تُنظَّف مرّة', () => {
+  const b = makeBridge();
+  b._t.labs.push({ id: 'L1', name: 'CBC', category: 'أمراض الدم' });
+  b._t.cats.push({ id: 'c1', kind: 'labs', name: 'أمراض الدم' });
+  b._t.cats.push({ id: 'c2', kind: 'labs', name: 'أمراض الدم' });
+  b._t.cats.push({ id: 'c3', kind: 'labs', name: 'كيمياء الدم' });
+  const c = load(b); c.boot();
+
+  eq(b._t.cats.length, 2, 'the duplicate row is gone:');
+  eq(b._t.cats.map(x => x.id).sort(), ['c1', 'c3'], 'the first of each name stays:');
+  eq(b._t.labs[0].category, 'أمراض الدم', 'and not one item lost its category:');
 });

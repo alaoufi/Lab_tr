@@ -165,13 +165,44 @@ function snapshot() {
 var Store = {
   native: !!NDB,
 
+  /* هل نجحت آخر قراءة؟ الفرق بين «لا بيانات» و«لم أستطع القراءة» هو الفرق
+     بين شاشةٍ فارغة تُصلَح، وكتابةٍ فوق بياناتٍ لم نرها فتضيع فعلًا. */
+  ok: true,
+  errors: [],
+
   load: function () {
+    Store.ok = true;
+    Store.errors = [];
     if (!NDB) {
-      try { applyData(JSON.parse(localStorage.getItem(KEY) || 'null')); }
-      catch (e) { /* بيانات تالفة — نبدأ فارغين بأمان */ }
+      var raw = null;
+      try { raw = localStorage.getItem(KEY); }
+      catch (e) { Store.ok = false; Store.errors = ['تعذّر الوصول للتخزين المحلي']; }
+      if (Store.ok) {
+        try { applyData(JSON.parse(raw || 'null')); }
+        catch (e) { Store.ok = false; Store.errors = ['بيانات تالفة: ' + e]; }
+      }
+      if (!Store.ok) applyData(null);
       return;
     }
-    try { applyData(JSON.parse(NDB.loadAll() || 'null')); } catch (e) { /* تجاهل */ }
+    var txt = '', d = null;
+    try { txt = NDB.loadAll() || ''; }
+    catch (e) { Store.ok = false; Store.errors = ['تعذّر نداء قاعدة البيانات: ' + e]; }
+    if (Store.ok) {
+      try { d = JSON.parse(txt || 'null'); }
+      catch (e) { Store.ok = false; Store.errors = ['ردٌّ غير مفهوم من قاعدة البيانات']; }
+    }
+    // نصٌّ فارغ من الجسر = فشلٌ صامت في إصدارٍ سابق؛ نعامله فشلًا لا فراغًا
+    if (Store.ok && !txt) { Store.ok = false; Store.errors = ['قاعدة البيانات لم تُجب']; }
+    if (Store.ok && d && d.load_failed) {
+      Store.ok = false;
+      Store.errors = [d.message || 'تعذّرت قراءة قاعدة البيانات'];
+    }
+    // أعطابٌ جزئية: الباقي وصل، ونُعلم المستخدم بما نقص بدل أن نبتلعه
+    if (Store.ok && d && Array.isArray(d.errors) && d.errors.length) {
+      Store.errors = d.errors.slice();
+    }
+    if (!Store.ok) { applyData(null); return; }
+    applyData(d);
     migrateLegacy();
   },
 
@@ -300,19 +331,44 @@ var Store = {
   }
 };
 
+/* درعُ الكتابة: ما دامت القراءة فاشلة لا تمرّ أي كتابة — مهما كان مصدرها.
+   هكذا لا يستطيع إقلاعٌ فاشل أن يزرع تصنيفات فوق تصنيفات المستخدم ولا أن
+   يستبدل قاعدةً كاملة ظنًّا أنّها فارغة. الاستعادة من نسخة احتياطية تفتح
+   الدرع صراحةً لأنها قرار المستخدم نفسه. */
+(function () {
+  Object.keys(Store).forEach(function (k) {
+    if (typeof Store[k] !== 'function' || k === 'load') return;
+    var fn = Store[k];
+    Store[k] = function () {
+      if (!Store.ok) return false;
+      return fn.apply(Store, arguments);
+    };
+  });
+}());
+
 /* ترحيل بيانات الإصدارات السابقة (localStorage) إلى قاعدة البيانات — مرّة
    واحدة فقط، وبشرط أن تكون القاعدة فارغة حتى لا يُطمس شيء. */
 function migrateLegacy() {
+  if (!Store.ok) return;          // قراءة فاشلة ⇒ لا نعرف ما في القاعدة
   var raw;
   try { raw = localStorage.getItem(KEY); } catch (e) { return; }
   if (!raw) return;
   try {
+    // شرطان لا شرط: القاعدة تقول إنّها فارغة، وما بين أيدينا فارغ فعلًا.
     if (!NDB.isEmpty()) { localStorage.removeItem(KEY); return; }
+    if (liveCount()) { localStorage.removeItem(KEY); return; }
     var old = JSON.parse(raw);
     if (!old || (!Array.isArray(old.meds) && !Array.isArray(old.labs))) return;
     applyData(old);
     if (NDB.replaceAll(JSON.stringify(snapshot()))) localStorage.removeItem(KEY);
   } catch (e) { /* ترحيل فاشل — تبقى النسخة القديمة مكانها بلا ضرر */ }
+}
+
+/** كل ما يُعدّ «بيانات المستخدم» — يقرّر إن كان الاستبدال آمنًا أو خسارة. */
+function liveCount() {
+  var n = KINDS.reduce(function (a, k) { return a + (DB[k] ? DB[k].length : 0); }, 0);
+  return n + DB.cats.length + DB.images.length + DB.groups.length
+    + DB.sections.filter(function (s) { return !s.builtin; }).length;
 }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -341,16 +397,12 @@ function stampNow() {
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
     + '-' + p(d.getHours()) + p(d.getMinutes());
 }
-function dataCount() {
-  return KINDS.reduce(function (a, k) { return a + DB[k].length; }, 0);
-}
-/** يكتب نسخة الآن. force من زر يدوي، وإلا فبشرط مرور المدة ووجود بيانات. */
+/** يكتب نسخة الآن. force من زر يدوي، وإلا فبشرط مرور المدة ووجود بيانات.
+    نسخةٌ فارغة أسوأ من لا نسخة: لو كُتبت لأزاحت أقدم نسخةٍ صالحة من الخمس. */
 window.autoBackup = function (force) {
   if (!AB) return false;
-  if (!force) {
-    if (!dataCount()) return false;
-    if (Date.now() - (DB.backup_at || 0) < BACKUP_EVERY) return false;
-  }
+  if (!liveCount()) return false;
+  if (!force && Date.now() - (DB.backup_at || 0) < BACKUP_EVERY) return false;
   try {
     var name = AB.writeBackup(JSON.stringify(snapshot()), stampNow());
     if (!name) return false;
@@ -364,6 +416,7 @@ function backupList() {
   try { return JSON.parse(AB.listBackups() || '[]'); } catch (e) { return []; }
 }
 window.backupNow = function () {
+  if (!liveCount()) return toast('لا بيانات لحفظها بعد', 'er');
   var name = autoBackup(true);
   if (name) { render(); toast('✅ حُفظت نسخة: ' + name); }
   else toast('تعذّر حفظ النسخة', 'er');
@@ -397,17 +450,25 @@ window.backupDelete = function (name) {
 };
 window.backupRestore = function (name) {
   confirmBox('استعادة «' + name + '» ستستبدل كل بياناتك الحالية. متابعة؟', function () {
-    var raw = AB ? AB.readBackup(name) : '';
-    var data;
-    try { data = JSON.parse(raw); } catch (e) { data = null; }
-    if (!data) { closeModal(); return toast('الملف غير صالح', 'er'); }
-    applyData(data);
-    Store.replaceAll();
-    KINDS.forEach(function (k) { Store.setOut(k); });
-    Store.setHeader();
-    closeModal(); goHome(); toast('✅ تمت الاستعادة');
+    doRestore(name);
   });
 };
+/** الاستعادة الفعلية: نسخةُ أمانٍ لما هو قائم أولًا، ثم الاستبدال.
+    تفتح درع الكتابة لأن المستخدم اختار الاستبدال صراحةً — وهي المخرج
+    الوحيد حين تتعذّر قراءة القاعدة. */
+function doRestore(name) {
+  var raw = AB ? AB.readBackup(name) : '';
+  var data;
+  try { data = JSON.parse(raw); } catch (e) { data = null; }
+  if (!data) { closeModal(); return toast('الملف غير صالح', 'er'); }
+  autoBackup(true);                 // لا يكتب شيئًا إن لم يكن ثمّة ما يُحفَظ
+  Store.ok = true;
+  applyData(data);
+  Store.replaceAll();
+  KINDS.forEach(function (k) { Store.setOut(k); });
+  Store.setHeader();
+  closeModal(); goHome(); toast('✅ تمت الاستعادة');
+}
 
 /* ── قفل PIN محلي (SHA-256 عبر Web Crypto المدمجة — بلا مكتبات) ── */
 async function sha256(text) {
@@ -492,11 +553,71 @@ function pageMeta(p) {
 
 async function boot() {
   Store.load();
+  // قراءةٌ فاشلة: لا زرعَ ولا ترقيةَ ولا نسخة — شاشةُ إنقاذٍ وحسب. أي كتابة
+  // هنا تكتب فوق بياناتٍ لم نرها، وهذا بالضبط ما يبدو للمستخدم «حذفًا».
+  if (!Store.ok) return showRecovery();
+  dedupeCats();
   seedCats();
   backfillFieldOut();
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
+  // عطبٌ جزئي: الباقي ظهر، لكن السكوت عمّا نقص هو ما يجعله يبدو حذفًا
+  if (Store.errors.length) {
+    setTimeout(function () {
+      toast('⚠️ تعذّرت قراءة جزء من البيانات — راجِع النسخ الاحتياطية', 'er');
+    }, 800);
+  }
+}
+
+/**
+ * شاشة الإنقاذ: تظهر حين تتعذّر قراءة القاعدة. تقول الحقيقة — البيانات لم
+ * تُحذف، القراءة هي التي فشلت — وتعرض مخرجين: إعادة المحاولة، أو استعادة
+ * إحدى النسخ التلقائية. ولا تكتب حرفًا واحدًا في القاعدة قبل أن يختار.
+ */
+function showRecovery() {
+  $('lock').className = 'scr on'; $('app').className = 'scr';
+  var list = backupList();
+  h('lock', '<div class="lockbox rec">'
+    + '<div class="lockicon">🛟</div>'
+    + '<div class="lt">تعذّرت قراءة قاعدة البيانات</div>'
+    + '<div class="rec-note">بياناتك <b>لم تُحذف</b> — التطبيق لم يستطع قراءتها هذه المرة،'
+    + ' ولن يكتب فوقها شيئًا. جرّب إعادة المحاولة أولًا.</div>'
+    + '<button class="btn primary" style="width:100%" onclick="location.reload()">🔄 إعادة المحاولة</button>'
+    + (list.length
+        ? '<div class="rec-h">أو استعِد نسخة احتياطية:</div>'
+          + list.map(function (b) {
+              return '<button class="btn" style="width:100%;margin-top:6px" onclick="recoverFrom(\''
+                + esc(b.name) + '\')">↩️ '
+                + esc(b.name.replace(/^dalili-|\.json$/g, '')) + '</button>';
+            }).join('')
+        : '<div class="rec-h">لا توجد نسخ احتياطية في هذا الجهاز.</div>')
+    + '<details class="rec-d"><summary>تفاصيل تقنية</summary><div class="rec-e">'
+    + esc(Store.errors.join('\n') || 'غير معروف') + '</div></details>'
+    + '</div>');
+}
+/** الاستعادة من شاشة الإنقاذ — بتأكيدٍ صريح ثم دخولٌ للتطبيق. */
+window.recoverFrom = function (name) {
+  confirmBox('استعادة «' + name + '» ستحلّ محلّ ما في قاعدة البيانات الآن. متابعة؟', function () {
+    doRestore(name);
+    if (Store.ok) showApp();
+  });
+};
+
+/**
+ * تنظيفٌ لطيف لأثر عطبٍ سابق: إقلاعٌ فشلت قراءته كان يزرع التصنيفات
+ * الافتراضية من جديد فوق تصنيفات المستخدم، فتتكرّر بالاسم نفسه. العناصر
+ * مرتبطة بالاسم لا بالمعرّف، فحذف الصفّ المكرّر لا يمسّ عنصرًا واحدًا.
+ */
+function dedupeCats() {
+  var seen = {}, dups = [];
+  DB.cats.forEach(function (c) {
+    var key = c.kind + '' + (c.name || '').trim();
+    if (seen[key]) dups.push(c); else seen[key] = 1;
+  });
+  if (!dups.length) return;
+  DB.cats = DB.cats.filter(function (c) { return dups.indexOf(c) < 0; });
+  dups.forEach(function (c) { Store.dropCat(c.id); });
 }
 
 function showLock() {
@@ -823,6 +944,7 @@ window.importBackup = function (input) {
       if (!data || !KINDS.some(function (k) { return Array.isArray(data[k]); })) throw new Error('bad');
       confirmBox('استيراد هذه النسخة سيستبدل بياناتك الحالية. متابعة؟', function () {
         var keep = DB.pin_hash;
+        autoBackup(true);          // نسخة أمانٍ للقائم قبل أن يحلّ محلّه غيره
         applyData(data);
         DB.pin_hash = data.pin_hash || keep;
         // السلة تشير لمعرّفات قد تكون اختفت في النسخة المستوردة
@@ -1216,6 +1338,7 @@ window.secDel = function (id) {
   confirmBox('حذف قسم «' + s.title + '»؟'
     + (n ? ' سيُحذف معه ' + countWord(n, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
       + ' وتصنيفاته ومجموعاته.' : ''), function () {
+    autoBackup(true);   // أكثر حذفٍ كلفةً في التطبيق — نسخةُ أمانٍ قبله
     DB.sections = DB.sections.filter(function (x) { return x.id !== id; });
     DB.cats = DB.cats.filter(function (c) { return c.kind !== id; });
     DB.fields = DB.fields.filter(function (f) { return f.kind !== id; });
