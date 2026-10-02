@@ -774,7 +774,9 @@ run('المجموعات: الدرج الجانبي يصل إليها من أي �
   c.openDrawer();
   const dw = c._els('dw-body').innerHTML;
   eq(dw.indexOf('متابعة سكري') >= 0, true, 'the group is listed in the drawer:');
-  eq(dw.indexOf('اضغط للإرسال') >= 0, true, 'and says what a tap does:');
+  eq(dw.indexOf('📤 إرسال') >= 0, true, 'with a send button spelled out:');
+  eq(dw.indexOf('➕ إضافة عنصر') >= 0, true, 'and one to add an item:');
+  eq(dw.indexOf('👁️ عرض') >= 0, true, 'and one to look inside:');
   eq(c._els('dw').className.indexOf('on') >= 0, true, 'the drawer is open:');
 
   // ضغطة واحدة = شاشة الإرسال
@@ -2318,4 +2320,93 @@ run('الصدق: قسمٌ فارغ فعلًا يبقى فارغًا بلا ته�
   eq(html.indexOf('ليس فارغًا') < 0, true, 'with no alarm:');
   c.goHome();
   eq(c._els('page').innerHTML.indexOf('تعذّرت قراءة') < 0, true, 'and no banner on the home page:');
+});
+
+/* ── إضافة عنصر للمجموعة: ثلاثة طرق، ولا طريق مسدود ───────────────── */
+
+run('المجموعة: منتقٍ فارغ يقود لإنشاء عنصر لا لطريق مسدود', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+
+  // القسم فارغ تمامًا — المنتقي كان يعرض «لا نتائج» وحسب
+  c.groupPick();
+  const html = c._els('gp-list').innerHTML;
+  eq(html.indexOf('لا نتائج') < 0, true, 'no bare dead end:');
+  eq(html.indexOf('groupAddNew') >= 0, true, 'it offers to create one instead:');
+  eq(html.indexOf('المجموعة تُجمَّع من عناصر القسم') >= 0, true, 'and explains why it is empty:');
+});
+
+run('المجموعة: «أنشئ عنصرًا وأضِفه» يحفظ العنصر ويدخله المجموعة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+
+  c.groupPick();
+  c.groupAddNew();                       // يفتح نموذج القسم
+  c._els('lf-name').value = 'CBC';
+  c.labSave('');
+
+  eq(b._t.labs.length, 1, 'the item itself was saved to the section:');
+  eq(b._t.groups[0].items.length, 1, 'and joined the group:');
+  eq(b._t.groups[0].items[0], b._t.labs[0].id, 'the very one:');
+  eq(c.curPage().indexOf('grp:labs:') === 0, true, 'and we are back in the group, not the section:');
+});
+
+run('المجموعة: بحثٌ بلا نتيجة يُنشئ بالاسم ويضيف', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedLabs(c, b, ['CBC']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+
+  c.groupPick();
+  c._els('gp-q').value = 'فيتامين د';
+  c.groupPickRender();
+  eq(c._els('gp-list').innerHTML.indexOf('groupAddNamed') >= 0, true, 'offers to create it by that name:');
+
+  c.groupAddNamed();
+  eq(b._t.labs.length, 2, 'created:');
+  eq(b._t.labs[1].name, 'فيتامين د', 'with the name typed:');
+  eq(b._t.groups[0].items.length, 1, 'and added to the group:');
+  eq(ids.length, 1, '(the pre-existing one untouched)');
+});
+
+run('المجموعة: الإضافة لا تكرّر عنصرًا موجودًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+  eq(b._t.groups[0].items.length, 2, 'two in:');
+
+  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd();
+  eq(b._t.groups[0].items.length, 2, 'adding the same one again changes nothing:');
+});
+
+run('المجموعة: «إضافة عنصر» و«عرض» تعملان من القائمة مباشرةً', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedLabs(c, b, ['CBC']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+  const gid = c.DB.groups[0].id;
+
+  c.goPage('meds');                      // من صفحة بعيدة
+  c.groupOpen(gid);
+  eq(c.curPage(), 'grp:labs:' + gid, '«عرض» opens the group:');
+
+  c.goPage('meds');
+  c.groupAddTo(gid);
+  eq(c.curPage(), 'grp:labs:' + gid, '«إضافة عنصر» goes to the group:');
+  eq(c._els('modal-bg').className.indexOf('on') >= 0, true, 'and opens the picker right away:');
+  eq(c._els('gp-list').innerHTML.indexOf('CBC') >= 0, true, 'with the section items ready:');
+});
+
+run('المجموعة: «إرسال» معطّل ما دامت فارغة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+  c.goBack();
+  const html = c._els('page').innerHTML;
+  eq(/📤 إرسال<\/button>/.test(html.replace(/\s+disabled/g, '')), true, 'the button is there:');
+  eq(html.indexOf('disabled>📤 إرسال') >= 0, true, 'but disabled while there is nothing to send:');
 });

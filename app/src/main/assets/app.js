@@ -1295,15 +1295,19 @@ function mft(saveFn, id) {
 }
 /** ما بعد الحفظ: إمّا نغلق، أو نُبقي المستخدم في نموذج جديد جاهز للتالي. */
 function afterSave(kind, again, id) {
+  var caught = grpCatch(kind);    // عنصرٌ أُنشئ لأجل مجموعة يدخلها فورًا
   if (again && !id) {
     render();
     openForm(kind);
-    toast('✅ حُفظ — أضِف التالي');
+    if (!caught) toast('✅ حُفظ — أضِف التالي');
     return;
   }
   closeModal();
-  toast('✅ تم الحفظ');
-  if (curPage() !== kind) goPage(kind); else render();
+  if (!caught) toast('✅ تم الحفظ');
+  // العودة لصفحة المجموعة لا لصفحة القسم حين كان الإنشاء لأجلها
+  var back = GRP_CATCH ? 'grp:' + GRP_CATCH.kind + ':' + GRP_CATCH.id : kind;
+  GRP_CATCH = null;
+  if (curPage() !== back) goPage(back); else render();
 }
 
 /** حقل الاسم يختلف في العلاجات وحدها. */
@@ -2720,23 +2724,48 @@ function renderGroupsPage(kind) {
       'اختر ما تطلبه عادةً ثم احفظه مجموعة باسم تختاره — تُعيد إرسالها لاحقًا بضغطة'));
     return;
   }
-  // الضغط على الاسم يذهب للإرسال مباشرةً — هو ما تُفتح المجموعة لأجله.
-  // ✏️ للتحرير، والسهمان يرفعان الأكثر استعمالًا إلى أعلى القائمة.
-  html += gs.map(function (g, i) {
-    var L = kindLbl(g.kind);
-    return '<div class="card"><div class="row">'
-      + '<div class="grow" onclick="groupPreview(\'' + g.id + '\')">'
-      + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + L.icon + ' ' + countWord(liveIds(g.kind, g.items).length, L.one, L.two, L.few, L.many)
-      + ' · اضغط للإرسال</div></div>'
-      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
-      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
-      + (i === gs.length - 1 ? ' disabled' : '') + '>▼</button>'
-      + '<button class="ic" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">✏️</button>'
-      + '</div></div>';
-  }).join('');
+  html += gs.map(function (g, i) { return groupCard(g, i, gs.length); }).join('');
   h('page', html);
 }
+
+/**
+ * بطاقة المجموعة بإجراءاتها الثلاثة مكتوبةً لا مرموزة.
+ *
+ * كانت الإجراءات مخبّأة: الضغط على الاسم يرسل، وقلمٌ صغير يحرّر، ولا سبيل
+ * لإضافة عنصر إلا بالدخول ثم البحث عن زر. والثلاثة التي يحتاجها المستخدم
+ * فعلًا — أضِف، اعرض، أرسِل — تستحق أن تُقرأ لا أن تُخمَّن.
+ */
+function groupCard(g, i, n) {
+  var L = kindLbl(g.kind);
+  var live = liveIds(g.kind, g.items).length;
+  return '<div class="card gcard">'
+    + '<div class="row">'
+    + '<div class="grow"><div class="name">📁 ' + esc(g.name) + '</div>'
+    + '<div class="sub">' + L.icon + ' ' + countWord(live, L.one, L.two, L.few, L.many) + '</div></div>'
+    + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
+    + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
+    + (i === n - 1 ? ' disabled' : '') + '>▼</button>'
+    + '</div>'
+    + '<div class="gacts">'
+    + '<button class="btn sm" onclick="groupAddTo(\'' + g.id + '\')">➕ إضافة عنصر</button>'
+    + '<button class="btn sm" onclick="groupOpen(\'' + g.id + '\')">👁️ عرض</button>'
+    + '<button class="btn wa sm" onclick="groupPreview(\'' + g.id + '\')"'
+    + (live ? '' : ' disabled') + '>📤 إرسال</button>'
+    + '</div></div>';
+}
+/** «عرض»: يفتح المجموعة لترى ما فيها وترتّبه وتحذف منه. */
+window.groupOpen = function (id) {
+  var g = findGroup(id); if (!g) return;
+  closeDrawer();
+  goPage('grp:' + g.kind + ':' + g.id);
+};
+/** «إضافة عنصر»: يفتح المجموعة ثم منتقيها مباشرةً — من أي قائمة كنت. */
+window.groupAddTo = function (id) {
+  var g = findGroup(id); if (!g) return;
+  closeDrawer();
+  goPage('grp:' + g.kind + ':' + g.id);
+  groupPick();
+};
 /** ترتيب المجموعات: التبديل يقع في DB.groups كاملةً فيثبت عبر الأقسام. */
 window.groupMove = function (id, dir) {
   var i = DB.groups.findIndex(function (g) { return g.id === id; });
@@ -2805,18 +2834,7 @@ function renderDrawer() {
       + ' مجموعةً باسم تختاره، فترسلها من هنا بضغطة.</div>');
     return;
   }
-  h('dw-body', html + gs.map(function (g, i) {
-    var L = kindLbl(g.kind);
-    return '<div class="card"><div class="row">'
-      + '<div class="grow" onclick="drawerSend(\'' + g.id + '\')">'
-      + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + L.icon + ' ' + countWord(liveIds(g.kind, g.items).length, L.one, L.two, L.few, L.many)
-      + ' · اضغط للإرسال</div></div>'
-      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
-      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
-      + (i === gs.length - 1 ? ' disabled' : '') + '>▼</button>'
-      + '</div></div>';
-  }).join('')
+  h('dw-body', html + gs.map(function (g, i) { return groupCard(g, i, gs.length); }).join('')
     + '<button class="btn full" onclick="closeDrawer();goPage(\'grp:all\')">🗂️ إدارة المجموعات</button>');
 }
 window.drawerSend = function (id) { closeDrawer(); groupPreview(id); };
@@ -2942,7 +2960,30 @@ window.groupPickRender = function () {
   var list = coll(kind).filter(function (o) {
     return !q || norm(itemLabel(kind, o) + ' ' + (o.category || o.type || '')).indexOf(q) >= 0;
   });
-  if (!list.length) { h('gp-list', emptyBox('🔎', 'لا نتائج', '')); return; }
+  if (!list.length) {
+    // «لا نتائج» وحدها طريقٌ مسدود: إمّا القسم فارغ أصلًا، أو تعذّرت
+    // قراءته، أو الاسم المكتوب جديد — ولكلٍّ مخرجه هنا بلا مغادرة المودال.
+    var L = kindLbl(kind);
+    if (kindFailed(kind)) {
+      h('gp-list', '<div class="rec-note">⚠️ <b>عناصر ' + esc(L.title)
+        + ' لم تُقرأ هذه المرة</b> — ليست محذوفة. افحص قاعدة البيانات قبل أن تضيف شيئًا.</div>'
+        + '<button class="btn full primary" onclick="closeModal();goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>');
+      return;
+    }
+    if (q) {
+      h('gp-list', '<div class="empty"><div class="ei">🔎</div>'
+        + '<div class="et">لا نتيجة لـ«' + esc(($('gp-q') || {}).value) + '»</div>'
+        + '<button class="btn primary full" style="margin-top:11px" onclick="groupAddNamed()">'
+        + '➕ أنشئه وأضِفه للمجموعة</button></div>');
+      return;
+    }
+    h('gp-list', '<div class="empty"><div class="ei">' + L.icon + '</div>'
+      + '<div class="et">لا ' + esc(L.title) + ' محفوظة بعد</div>'
+      + '<div class="es">المجموعة تُجمَّع من عناصر القسم، فابدأ بإنشاء عنصر.</div>'
+      + '<button class="btn primary full" style="margin-top:11px" onclick="groupAddNew()">'
+      + '➕ أنشئ عنصرًا جديدًا وأضِفه</button></div>');
+    return;
+  }
   h('gp-list', list.map(function (o) {
     var have = cur.items.indexOf(o.id) >= 0;
     return '<label class="lib-i' + (have ? ' have' : '') + '">'
@@ -2959,9 +3000,52 @@ window.groupPickAdd = function () {
   var add = Object.keys(GPICK);
   if (!add.length) return toast('لم تحدد شيئًا بعد', 'er');
   GPICK = {}; closeModal();
-  grpEdit(function (g) { g.items = g.items.concat(add); });
-  toast('✅ أُضيفت وحُفظت');
+  grpAddItems(add);
 };
+/** يضيف معرّفات للمجموعة المفتوحة ويحفظ — بلا تكرار. */
+function grpAddItems(ids) {
+  grpEdit(function (g) {
+    ids.forEach(function (id) { if (g.items.indexOf(id) < 0) g.items.push(id); });
+  });
+  toast('✅ أُضيفت وحُفظت');
+}
+/** «أنشئه وأضِفه»: عنصر بالاسم المكتوب في خانة البحث، ثم يدخل المجموعة. */
+window.groupAddNamed = function () {
+  var kind = GRP.kind;
+  var q = String((($('gp-q') || {}).value) || '').trim();
+  if (!q) return;
+  var rec = { id: uid(), category: LAST_CAT[kind] || '', extra: {} };
+  rec[nameKey(kind)] = q;
+  coll(kind).push(rec);
+  catEnsure(kind, rec.category);
+  Store.upsert(kind, rec);
+  closeModal();
+  grpAddItems([rec.id]);
+};
+/**
+ * «أنشئ عنصرًا جديدًا وأضِفه»: يفتح نموذج القسم كاملًا، وما يُحفَظ منه
+ * يدخل المجموعة تلقائيًا. بلا هذا كان على من قسمُه فارغ أن يغادر المجموعة،
+ * ينشئ عنصرًا، ثم يعود — وهو ما جعل «إضافة عناصر» تبدو معطّلة.
+ */
+var GRP_CATCH = null;
+window.groupAddNew = function () {
+  if (!GRP) return;
+  GRP_CATCH = { id: GRP.id, kind: GRP.kind, before: coll(GRP.kind).map(function (o) { return o.id; }) };
+  closeModal();
+  openForm(GRP.kind);
+};
+/** يُنادى بعد كل حفظ: ما استُحدث أثناء انتظار المجموعة يدخلها. */
+function grpCatch(kind) {
+  if (!GRP_CATCH || GRP_CATCH.kind !== kind) return false;
+  var fresh = coll(kind).filter(function (o) { return GRP_CATCH.before.indexOf(o.id) < 0; });
+  GRP_CATCH.before = coll(kind).map(function (o) { return o.id; });
+  if (!fresh.length) return false;
+  var g = findGroup(GRP_CATCH.id); if (!g) return false;
+  fresh.forEach(function (o) { if (g.items.indexOf(o.id) < 0) g.items.push(o.id); });
+  Store.saveGroup(g);
+  toast('✅ حُفظ وأُضيف إلى «' + g.name + '»');
+  return true;
+}
 
 /* ════════════════════════ طباعة/PDF + مشاركة واتساب ════════════════════════ */
 /* الاسم دائمًا في السطر الأول؛ الرمز (للتحاليل) والاسم العلمي (للعلاجات)
