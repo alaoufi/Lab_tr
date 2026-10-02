@@ -2410,3 +2410,70 @@ run('المجموعة: «إرسال» معطّل ما دامت فارغة', () =
   eq(/📤 إرسال<\/button>/.test(html.replace(/\s+disabled/g, '')), true, 'the button is there:');
   eq(html.indexOf('disabled>📤 إرسال') >= 0, true, 'but disabled while there is nothing to send:');
 });
+
+/* ── الإضافة مباشرةً من المكتبة الجاهزة إلى المجموعة ──────────────── */
+
+run('المكتبة ← المجموعة: استيراد وإضافة في خطوة واحدة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+  eq(c.DB.labs.length, 0, 'the section starts empty:');
+
+  c.groupPick();
+  eq(c._els('modal-body').innerHTML.indexOf('📚 المكتبة الجاهزة') >= 0, true, 'a library tab is offered:');
+  eq(c._els('gp-list').innerHTML.indexOf('gpTab') >= 0, true, 'and the empty state points at it too:');
+
+  c.gpTab('lib');
+  const list = c._els('gp-list').innerHTML;
+  eq(list.indexOf('gpLibToggle') >= 0, true, 'the library is listed:');
+  eq(list.indexOf('والمجموعة معًا') >= 0, true, 'and says where the picks will land:');
+
+  c.gpLibToggle(0); c.gpLibToggle(1);
+  c.groupPickAdd();
+
+  eq(c.DB.labs.length, 2, 'both were imported into the section:');
+  eq(b._t.labs.length, 2, 'and persisted:');
+  eq(b._t.groups[0].items.length, 2, 'and both joined the group:');
+  eq(b._t.cats.filter(x => x.kind === 'labs').length > 0, true, 'their categories were registered too:');
+
+  // وبعد إعادة التشغيل
+  const c2 = load(b); c2.Store.load();
+  eq(c2.DB.groups[0].items.length, 2, 'and it all survives a restart:');
+});
+
+run('المكتبة ← المجموعة: ما عندي لا يُستنسخ', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  // استورد واحدًا من المكتبة بالطريق المعتاد أولًا
+  c.goPage('lib:labs'); c.libToggle(0); c.libAdd();
+  eq(c.DB.labs.length, 1, 'one imported the usual way:');
+  const existingId = c.DB.labs[0].id;
+
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'عامة'; c.groupCreate('labs');
+  c.groupPick(); c.gpTab('lib');
+  c.gpLibToggle(0); c.gpLibToggle(1);     // الأول عنده، الثاني لا
+  c.groupPickAdd();
+
+  eq(c.DB.labs.length, 2, 'only the genuinely new one was added to the section:');
+  eq(b._t.groups[0].items.length, 2, 'but both are in the group:');
+  eq(b._t.groups[0].items.indexOf(existingId) >= 0, true, 'the existing one by its own id, not a copy:');
+});
+
+run('المكتبة ← المجموعة: ممنوعة ما دامت قراءة القسم معطوبة', () => {
+  const b = makeBridge();
+  b._t.labs.push({ id: 'L1', code: 'FBS', name: 'سكر الدم صائم' });
+  b._t.groups.push({ id: 'g1', kind: 'labs', name: 'عامة', items: [] });
+  const inner = b.loadAll;
+  b.loadAll = () => {
+    const d = JSON.parse(inner());
+    d.labs = []; d.errors = ['labs: no such column: sort_order'];
+    return JSON.stringify(d);
+  };
+  const c = load(b); c.boot();
+  c.goPage('grp:labs:g1');
+  c.groupPick();
+  const html = c._els('gp-list').innerHTML;
+  eq(html.indexOf('لم تُقرأ هذه المرة') >= 0, true, 'it refuses and explains:');
+  eq(html.indexOf('gpLibToggle') < 0, true, 'and offers no library import over unread data:');
+  eq(b._t.labs.length, 1, 'nothing was duplicated:');
+});

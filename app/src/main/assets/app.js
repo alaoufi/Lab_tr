@@ -2945,43 +2945,69 @@ window.groupDelete = function () {
 
 /* منتقي العناصر: نفس فكرة المكتبة — بحث وقائمة تأشير، والموجود مقفل */
 var GPICK = {};
+/** تبويب المنتقي: عناصري، أم المكتبة الجاهزة المدمجة في التطبيق. */
+var GP_TAB = 'mine';
 window.groupPick = function () {
-  GPICK = {};
+  if (!GRP) return;
+  GPICK = {}; LIB_SEL = {}; GP_TAB = 'mine';
+  LIB_KIND = GRP.kind; libSyncMine();
+  var hasLib = ((window.LIBRARY || {})[GRP.kind] || []).length > 0;
   openModal('➕ إضافة إلى ' + GRP.name,
-    '<div class="lib-bar">'
+    (hasLib ? '<div class="pvtabs">'
+      + '<button class="pvt on" id="gp-t-mine" onclick="gpTab(\'mine\')">📋 عندي</button>'
+      + '<button class="pvt" id="gp-t-lib" onclick="gpTab(\'lib\')">📚 المكتبة الجاهزة</button>'
+      + '</div>' : '')
+    + '<div class="lib-bar">'
     + '<button class="btn primary full" style="margin:0" onclick="groupPickAdd()">➕ إضافة المحدد: <span id="gp-n">0</span></button>'
     + '<input id="gp-q" class="srch-inp" style="width:100%;margin-top:8px" placeholder="🔎 ابحث…" oninput="groupPickRender()">'
     + '</div><div id="gp-list"></div>');
   groupPickRender();
 };
+window.gpTab = function (t) {
+  GP_TAB = t;
+  var a = $('gp-t-mine'), b = $('gp-t-lib'), q = $('gp-q');
+  if (a) a.className = 'pvt' + (t === 'mine' ? ' on' : '');
+  if (b) b.className = 'pvt' + (t === 'lib' ? ' on' : '');
+  if (q) q.value = '';
+  groupPickRender();
+};
 window.groupPickRender = function () {
   var cur = findGroup(GRP.id) || { items: [] };
   var kind = GRP.kind, q = norm(($('gp-q') || {}).value);
+
+  // تعذّرت قراءة القسم ⇒ لا إضافة من أي تبويب: ما لم نقرأه قد يكون موجودًا،
+  // والإضافة فوقه تصنع نسخًا مكرّرة لعناصر لم تختفِ أصلًا.
+  if (kindFailed(kind)) {
+    h('gp-list', '<div class="rec-note">⚠️ <b>عناصر ' + esc(kindLbl(kind).title)
+      + ' لم تُقرأ هذه المرة</b> — ليست محذوفة. افحص قاعدة البيانات قبل أن تضيف شيئًا.</div>'
+      + '<button class="btn full primary" onclick="closeModal();goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>');
+    return;
+  }
+
+  if (GP_TAB === 'lib') return gpLibRender(q, cur);
+
   var list = coll(kind).filter(function (o) {
     return !q || norm(itemLabel(kind, o) + ' ' + (o.category || o.type || '')).indexOf(q) >= 0;
   });
   if (!list.length) {
-    // «لا نتائج» وحدها طريقٌ مسدود: إمّا القسم فارغ أصلًا، أو تعذّرت
-    // قراءته، أو الاسم المكتوب جديد — ولكلٍّ مخرجه هنا بلا مغادرة المودال.
+    // «لا نتائج» وحدها طريقٌ مسدود: إمّا القسم فارغ أصلًا أو الاسم جديد —
+    // ولكلٍّ مخرجه هنا، ومعهما المكتبة الجاهزة، بلا مغادرة المودال.
     var L = kindLbl(kind);
-    if (kindFailed(kind)) {
-      h('gp-list', '<div class="rec-note">⚠️ <b>عناصر ' + esc(L.title)
-        + ' لم تُقرأ هذه المرة</b> — ليست محذوفة. افحص قاعدة البيانات قبل أن تضيف شيئًا.</div>'
-        + '<button class="btn full primary" onclick="closeModal();goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>');
-      return;
-    }
+    var toLib = ((window.LIBRARY || {})[kind] || []).length
+      ? '<button class="btn full" style="margin-top:8px" onclick="gpTab(\'lib\')">'
+        + '📚 أو اختر من المكتبة الجاهزة</button>' : '';
     if (q) {
       h('gp-list', '<div class="empty"><div class="ei">🔎</div>'
         + '<div class="et">لا نتيجة لـ«' + esc(($('gp-q') || {}).value) + '»</div>'
         + '<button class="btn primary full" style="margin-top:11px" onclick="groupAddNamed()">'
-        + '➕ أنشئه وأضِفه للمجموعة</button></div>');
+        + '➕ أنشئه وأضِفه للمجموعة</button>' + toLib + '</div>');
       return;
     }
     h('gp-list', '<div class="empty"><div class="ei">' + L.icon + '</div>'
       + '<div class="et">لا ' + esc(L.title) + ' محفوظة بعد</div>'
       + '<div class="es">المجموعة تُجمَّع من عناصر القسم، فابدأ بإنشاء عنصر.</div>'
       + '<button class="btn primary full" style="margin-top:11px" onclick="groupAddNew()">'
-      + '➕ أنشئ عنصرًا جديدًا وأضِفه</button></div>');
+      + '➕ أنشئ عنصرًا جديدًا وأضِفه</button>' + toLib + '</div>');
     return;
   }
   h('gp-list', list.map(function (o) {
@@ -2997,10 +3023,80 @@ window.groupPickToggle = function (id) {
   var e = $('gp-n'); if (e) e.textContent = Object.keys(GPICK).length;
 };
 window.groupPickAdd = function () {
+  if (GP_TAB === 'lib') return groupLibAdd();
   var add = Object.keys(GPICK);
   if (!add.length) return toast('لم تحدد شيئًا بعد', 'er');
   GPICK = {}; closeModal();
   grpAddItems(add);
+};
+
+/* ── المكتبة الجاهزة من داخل المجموعة ───────────────────────────────
+   المجموعة تُجمَّع من عناصر القسم، وكان على من قسمُه فارغ أن يغادرها إلى
+   الإعدادات ← المكتبة، يستورد، ثم يعود ويبحث. تبويبٌ هنا يختصر الثلاثة:
+   ما تختاره يُستورَد للقسم ويدخل المجموعة في خطوة واحدة. */
+function gpLibRender(q, cur) {
+  var kind = GRP.kind, lib = (window.LIBRARY || {})[kind] || [];
+  LIB_KIND = kind;
+  var hits = [];
+  lib.forEach(function (o, i) { if (!q || libHay(o).indexOf(q) >= 0) hits.push(i); });
+  if (!hits.length) {
+    h('gp-list', emptyBox('🔎', 'لا نتائج في المكتبة', 'جرّب كلمة أخرى'));
+    return;
+  }
+  // الموجود عندي أصلًا ليس ممنوعًا: يُضاف للمجموعة بمعرّفه بلا نسخة ثانية
+  h('gp-list', '<div class="muted" style="margin:0 0 8px">'
+    + hits.length + ' من ' + lib.length + ' في المكتبة. ما تختاره يدخل'
+    + ' «' + esc(kindLbl(kind).title) + '» والمجموعة معًا.</div>'
+    + hits.map(function (i) {
+        var o = lib[i];
+        var mine = libMineOf(kind, o);
+        var inGrp = mine && cur.items.indexOf(mine.id) >= 0;
+        var nm = kind === 'meds' ? o.trade_name
+          : kind === 'imaging' ? (o.region ? o.name + ' (' + o.region + ')' : o.name)
+          : (o.code ? o.code + ' — ' + o.name : o.name);
+        return '<label class="lib-i' + (inGrp ? ' have' : '') + '">'
+          + '<input type="checkbox"' + (inGrp ? ' disabled' : '')
+          + (LIB_SEL[i] ? ' checked' : '') + ' onchange="gpLibToggle(' + i + ')">'
+          + '<span><span class="lib-t">' + esc(nm) + '</span>'
+          + '<span class="lib-s"><br>' + esc(o.category || '')
+          + (mine ? ' • عندك مسبقًا' : '') + '</span></span></label>';
+      }).join(''));
+}
+/** العنصر المقابل في بيانات المستخدم، إن كان قد استورده من قبل. */
+function libMineOf(kind, src) {
+  var key = libKey(kind, src);
+  return coll(kind).find(function (o) { return libKey(kind, o) === key; });
+}
+window.gpLibToggle = function (i) {
+  if (LIB_SEL[i]) delete LIB_SEL[i]; else LIB_SEL[i] = 1;
+  var e = $('gp-n'); if (e) e.textContent = Object.keys(LIB_SEL).length;
+};
+/** يستورد المحدد من المكتبة (ما لم يكن عنده) ثم يضيفه كلّه للمجموعة. */
+window.groupLibAdd = function () {
+  var kind = GRP.kind, lib = (window.LIBRARY || {})[kind] || [];
+  var add = [], fresh = [];
+  Object.keys(LIB_SEL).forEach(function (k) {
+    var src = lib[parseInt(k, 10)]; if (!src) return;
+    var mine = libMineOf(kind, src);
+    if (mine) { add.push(mine.id); return; }       // لا نسخة ثانية لما عنده
+    var o = {};
+    for (var f in src) if (Object.prototype.hasOwnProperty.call(src, f)) o[f] = src[f];
+    o.id = uid();
+    fresh.push(o); add.push(o.id);
+  });
+  if (!add.length) return toast('لم تحدد شيئًا بعد', 'er');
+  if (fresh.length) {
+    setColl(kind, coll(kind).concat(fresh));
+    Store.addMany(kind, fresh);
+    fresh.forEach(function (o) { catEnsure(kind, o.category); });
+  }
+  LIB_SEL = {}; closeModal();
+  grpEdit(function (g) {
+    add.forEach(function (id) { if (g.items.indexOf(id) < 0) g.items.push(id); });
+  });
+  var L = kindLbl(kind);
+  toast('✅ ' + countWord(add.length, L.one, L.two, L.few, L.many)
+    + (fresh.length ? ' — أُضيفت للقسم وللمجموعة' : ' — أُضيفت للمجموعة'));
 };
 /** يضيف معرّفات للمجموعة المفتوحة ويحفظ — بلا تكرار. */
 function grpAddItems(ids) {
