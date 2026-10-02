@@ -305,6 +305,74 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
     }
 
+    /**
+     * يُنادى عند كل فتح للقاعدة — لا عند الترقية وحدها.
+     *
+     * رقم الإصدار يقول «مُرقّاة» ولا يضمن أنّها كذلك: ترقية انقطعت، أو نسخة
+     * استُعيدت من جهاز أقدم، أو جدول أُنشئ بمخطط قديم — كلّها تترك قاعدةً
+     * رقمها ٩ وأعمدتها ناقصة. والقراءة صارت تتسامح مع النقص، أمّا الكتابة
+     * فلا: {@code ContentValues} يذكر كل عمود، فعمودٌ واحد ناقص يُسقِط كل
+     * حفظٍ وكل تعديل بصمت. فنصلح المخطط قبل أن يُقرأ أو يُكتب.
+     */
+    @Override
+    public void onOpen(SQLiteDatabase db) {
+        super.onOpen(db);
+        if (db.isReadOnly()) return;
+        ensureSchema(db);
+    }
+
+    /** يستحدث ما ينقص من جداول وأعمدة. آمنٌ للتكرار، ولا يمسّ صفًّا واحدًا. */
+    void ensureSchema(SQLiteDatabase db) {
+        try {
+            createImaging(db); createRecipes(db); createGroups(db); createCats(db);
+            createSections(db); createFields(db); createItems(db); createSent(db);
+            createImages(db);
+            db.execSQL("CREATE TABLE IF NOT EXISTS meds (id TEXT PRIMARY KEY, trade_name TEXT)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS labs (id TEXT PRIMARY KEY, name TEXT)");
+            db.execSQL("CREATE TABLE IF NOT EXISTS cart (kind TEXT NOT NULL,"
+                    + "item_id TEXT NOT NULL, position INTEGER NOT NULL,"
+                    + "PRIMARY KEY (kind, item_id))");
+            db.execSQL("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)");
+
+            for (String kind : KINDS) {
+                addCols(db, kind, textCols(kind), "TEXT");
+                addCols(db, kind, new String[]{"extra"}, "TEXT");
+                addCols(db, kind, new String[]{flagCol(kind)}, "INTEGER NOT NULL DEFAULT 0");
+                addCols(db, kind, new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            }
+            addCols(db, "items", new String[]{"section", "name", "category", "extra", "img"}, "TEXT");
+            addCols(db, "items", new String[]{"flag", "sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "sections", new String[]{"title", "icon"}, "TEXT");
+            addCols(db, "sections", new String[]{"builtin", "sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "fields", new String[]{"kind", "key", "label", "type"}, "TEXT");
+            addCols(db, "fields", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "cats", new String[]{"kind", "name"}, "TEXT");
+            addCols(db, "cats", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "groups", new String[]{"kind", "name"}, "TEXT");
+            addCols(db, "groups", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "images", new String[]{"code", "name", "data"}, "TEXT");
+            addCols(db, "images", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
+            addCols(db, "sent", new String[]{"kind", "title", "who", "item_ids"}, "TEXT");
+            addCols(db, "sent", new String[]{"ts"}, "INTEGER NOT NULL DEFAULT 0");
+        } catch (Exception e) {
+            Log.e(TAG, "ensureSchema failed", e);
+        }
+    }
+
+    /** يضيف ما ينقص من الأعمدة. الجدول غير الموجود يُتجاهَل بلا ضجيج. */
+    private void addCols(SQLiteDatabase db, String table, String[] cols, String decl) {
+        for (String col : cols) {
+            try {
+                if (!hasColumn(db, table, col)) {
+                    db.execSQL("ALTER TABLE " + table + " ADD COLUMN " + col + " " + decl);
+                    Log.w(TAG, "repaired: " + table + "." + col);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "addCols " + table + "." + col, e);
+            }
+        }
+    }
+
     private static boolean hasColumn(SQLiteDatabase db, String table, String col) {
         Cursor c = db.rawQuery("PRAGMA table_info(" + table + ")", null);
         try {
@@ -930,7 +998,22 @@ public class DaliliDb extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /**
+     * عمودٌ ناقص يُسقِط الكتابة كلّها — وهذا ما يراه المستخدم «لا يحفظ
+     * التعديلات». فإن فشلت، نصلح المخطط ونعيد المحاولة مرّة واحدة: الفشل
+     * الثاني وحده هو فشلٌ حقيقي يُبلَّغ به.
+     */
     private void upsertRow(SQLiteDatabase db, String table, String id, ContentValues v) {
+        try {
+            writeRow(db, table, id, v);
+        } catch (Exception e) {
+            Log.w(TAG, "write failed on " + table + " — repairing schema and retrying", e);
+            ensureSchema(db);
+            writeRow(db, table, id, v);
+        }
+    }
+
+    private void writeRow(SQLiteDatabase db, String table, String id, ContentValues v) {
         int updated = db.update(table, v, "id=?", new String[]{id});
         if (updated == 0) {
             v.put("id", id);

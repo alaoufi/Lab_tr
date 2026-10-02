@@ -2529,3 +2529,33 @@ run('الشريط: أزراره كلها حاضرة ومسمّاة في كل ق�
     eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': and groups too:');
   });
 });
+
+/* ── حفظٌ فاشل لا يتظاهر بالنجاح ───────────────────────────────────── */
+
+run('الحفظ: فشل الكتابة يُقال ولا تطمسه رسالة نجاح', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  eq(b._t.labs.length, 1, 'the first save worked:');
+  const id = c.DB.labs[0].id;
+
+  // كما لو رفضت القاعدة الكتابة (عمود ناقص مثلًا)
+  b.upsertItem = () => false;
+  c.labForm(id);
+  c._els('lf-name').value = 'صورة دم كاملة';
+  c.labSave(id);
+
+  eq(c._els('toast').textContent.indexOf('لم يُحفَظ') >= 0, true, 'the failure is what the user is told:');
+  eq(c._els('toast').textContent.indexOf('تم الحفظ') < 0, true, 'and no success message on top of it:');
+  eq(c._els('modal-bg').className.indexOf('on') >= 0, true, 'the form stays open so the typing is not lost:');
+  eq(b._t.labs[0].name, 'CBC', 'and the database is unchanged, as reported:');
+});
+
+run('الحفظ: النجاح يبقى نجاحًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  eq(c._els('toast').textContent.indexOf('تم الحفظ') >= 0, true, 'a real save says so:');
+  eq(c._els('modal-bg').className.indexOf('on') < 0, true, 'and closes the form:');
+  eq(b._t.labs.length, 1, 'and reached the database:');
+});

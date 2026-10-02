@@ -152,7 +152,7 @@ function blobSave() {
   try { localStorage.setItem(KEY, JSON.stringify(DB)); }
   catch (e) { toast('تعذّر الحفظ — الذاكرة ممتلئة؟', 'er'); }
 }
-function dbFail() { toast('تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
+function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
@@ -1294,7 +1294,19 @@ function mft(saveFn, id) {
     + '<button class="btn" onclick="closeModal()">إلغاء</button></div>';
 }
 /** ما بعد الحفظ: إمّا نغلق، أو نُبقي المستخدم في نموذج جديد جاهز للتالي. */
-function afterSave(kind, again, id) {
+/**
+ * `ok` نتيجة الكتابة في القاعدة لا في الذاكرة.
+ *
+ * كانت تُهمَل: فيظهر «تعذّر الحفظ» من `dbFail` ثم تطمسه «✅ تم الحفظ» بعده
+ * بلحظة، ويُغلق النموذج، ويبدو العنصر معدَّلًا — حتى تُعيد التشغيل فيعود
+ * كما كان. وهذا بالضبط ما يُسمّى «لا يحفظ التعديلات». الآن الفشل يُقال،
+ * ويبقى النموذج مفتوحًا بما كتبتَه فلا يضيع.
+ */
+function afterSave(kind, again, id, ok) {
+  if (ok === false) {
+    toast('⚠️ لم يُحفَظ — راجِع 🩺 فحص قاعدة البيانات', 'er');
+    return;
+  }
   var caught = grpCatch(kind);    // عنصرٌ أُنشئ لأجل مجموعة يدخلها فورًا
   if (again && !id) {
     render();
@@ -1537,8 +1549,8 @@ window.secItemSave = function (kind, id, again) {
   var rec;
   if (id) { rec = coll(kind).find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); coll(kind).push(body); rec = body; }
-  Store.upsert(kind, rec);
-  afterSave(kind, again, id);
+  var ok = Store.upsert(kind, rec);
+  afterSave(kind, again, id, ok);
 };
 window.secItemDel = function (kind, id) {
   confirmBox('حذف هذا العنصر؟', function () {
@@ -2282,8 +2294,8 @@ window.medSave = function (id, again) {
   var rec;
   if (id) { rec = DB.meds.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.meds.push(body); rec = body; }
-  Store.upsert('meds', rec);
-  afterSave('meds', again, id);
+  var ok = Store.upsert('meds', rec);
+  afterSave('meds', again, id, ok);
 };
 window.medDel = function (id) {
   confirmBox('حذف هذا العلاج؟', function () {
@@ -2408,8 +2420,8 @@ window.labSave = function (id, again) {
   var rec;
   if (id) { rec = DB.labs.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.labs.push(body); rec = body; }
-  Store.upsert('labs', rec);
-  afterSave('labs', again, id);
+  var ok = Store.upsert('labs', rec);
+  afterSave('labs', again, id, ok);
 };
 window.labDel = function (id) {
   confirmBox('حذف هذا التحليل؟', function () {
@@ -2503,8 +2515,8 @@ window.imgSave = function (id, again) {
   var rec;
   if (id) { rec = DB.imaging.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.imaging.push(body); rec = body; }
-  Store.upsert('imaging', rec);
-  afterSave('imaging', again, id);
+  var ok = Store.upsert('imaging', rec);
+  afterSave('imaging', again, id, ok);
 };
 window.imgDel = function (id) {
   confirmBox('حذف هذا الفحص؟', function () {
@@ -2626,8 +2638,8 @@ window.recipeSave = function (id, again) {
   var rec;
   if (id) { rec = DB.recipes.find(function (x) { return x.id === id; }); Object.assign(rec, body); }
   else { body.id = uid(); DB.recipes.push(body); rec = body; }
-  Store.upsert('recipes', rec);
-  afterSave('recipes', again, id);
+  var ok = Store.upsert('recipes', rec);
+  afterSave('recipes', again, id, ok);
 };
 window.recipeDel = function (id) {
   confirmBox('حذف هذه الوصفة؟', function () {
