@@ -1769,7 +1769,7 @@ run('العرض: تحديد كل التصنيف بضغطة', () => {
   eq(b._t.cart.labs.length, 2, 'and clear independently:');
 });
 
-run('العرض: تعديل القائمة من داخل المعاينة لا يمسّ التحديد', () => {
+run('العرض: التأشير والترتيب من داخل المعاينة لا يمسّان التحديد', () => {
   const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
   c.goPage('labs');
   ['CBC', 'ESR', 'FBS'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
@@ -1778,22 +1778,63 @@ run('العرض: تعديل القائمة من داخل المعاينة لا �
   eq(c.PV.ids.length, 3, 'three in the preview:');
 
   c.pvTab('list');
-  eq(c._els('page').innerHTML.indexOf('للإرسال الحالي فقط') >= 0, true, 'says it is temporary:');
+  eq(c._els('page').innerHTML.indexOf('لهذا الإرسال وحده') >= 0, true, 'says it is temporary:');
+  eq(c._els('page').innerHTML.indexOf('تحديد الكل') >= 0, true, 'with select-all at hand:');
 
   c.pvMove(0, 1);
   eq(c.PV.ids[0], c.DB.labs[1].id, 'reordered:');
-  c.pvDrop(0);
-  eq(c.PV.ids.length, 2, 'dropped from the send:');
-  eq(b._t.cart.labs.length, 3, 'but the selection is untouched:');
+
+  // التأشير: الإلغاء يستثني ولا يحذف
+  c.pvPick(c.PV.ids[0]);
+  eq(c.pvOn().length, 2, 'unticked one is excluded from this send:');
+  eq(c.PV.ids.length, 3, 'but stays on the list to be re-ticked:');
+  eq(b._t.cart.labs.length, 3, 'and the selection is untouched:');
 
   const A = androidStub(); c.window.AndroidBridge = A;
   c.pvSend('pdf');
-  eq(A._pdfs[0].html.split('class="rx-item"').length - 1, 2, 'sends what the preview shows:');
+  eq(A._pdfs[0].html.split('class="rx-item"').length - 1, 2, 'sends only the ticked ones:');
 
-  // إفراغ القائمة من المعاينة يمنع الإرسال بلا انهيار
-  c.pvDrop(0); c.pvDrop(0);
+  // «إلغاء الكل» ثم محاولة إرسال
+  c.pvAll(0);
+  eq(c.pvOn().length, 0, 'none ticked:');
   c.pvSend('pdf');
-  eq(A._pdfs.length, 1, 'empty list refused:');
+  eq(A._pdfs.length, 1, 'and sending is refused:');
+  eq(c._els('toast').textContent, 'لم تؤشّر شيئًا للإرسال', 'with a clear reason:');
+
+  // «تحديد الكل» يعيدها جميعًا
+  c.pvAll(1);
+  eq(c.pvOn().length, 3, 'all back:');
+});
+
+run('العرض: مجموعة شاملة — أرسِل بعضها اليوم وبعضها غدًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedLabs(c, b, ['CBC', 'FBS', 'TSH', 'Vit D', 'HbA1c']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'الفحص الشامل'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  // مريض أوّل: اثنان فقط من الخمسة
+  c.groupPreview(c.DB.groups[0].id);
+  c._els('pv-who').value = 'أحمد'; c.pvWho();
+  c.pvPick(ids[2]); c.pvPick(ids[3]); c.pvPick(ids[4]);
+  eq(c.pvOn().length, 2, 'two ticked for this patient:');
+  c.pvSend('pdf');
+  eq(A._pdfs[0].html.split('class="rx-item"').length - 1, 2, 'and two went out:');
+  eq(A._pdfs[0].name.indexOf('أحمد') >= 0, true, 'under the patient name:');
+  eq(A._pdfs[0].html.indexOf('أحمد') >= 0, true, 'which is on the paper too:');
+
+  // والمجموعة لم تتغيّر — مريض ثانٍ يأخذ غيرها
+  eq(b._t.groups[0].items.length, 5, 'the group still holds all five:');
+  c.goBack();
+  c.groupPreview(c.DB.groups[0].id);
+  eq(c.pvOn().length, 5, 'and the next patient starts from all five:');
+  c._els('pv-who').value = 'سارة'; c.pvWho();
+  c.pvPick(ids[0]);
+  c.pvSend('pdf');
+  eq(A._pdfs[1].html.split('class="rx-item"').length - 1, 4, 'four for the second patient:');
+  eq(A._pdfs[1].name.indexOf('سارة') >= 0, true, 'under their own name:');
 });
 
 run('العرض: ورقة مضغوطة تصغّر المقاسات وتُحفَظ', () => {

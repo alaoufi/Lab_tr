@@ -3514,7 +3514,7 @@ window.openPreview = function (kind, ids, title, imgTitle) {
   var live = liveIds(kind, ids);
   if (!live.length) { PV = null; return toast('لا عناصر في هذه القائمة', 'er'); }
   title = title || kindLbl(kind).title;
-  PV = { kind: kind, ids: live, title: title,
+  PV = { kind: kind, ids: live, off: {}, title: title,
          imgTitle: imgTitle || (kindLbl(kind).icon + ' ' + title) };
   PV_TAB = 'paper';
   goPage('pv');
@@ -3574,11 +3574,12 @@ function pvImgHtml() {
 function pvImgFill() {
   if (!PV) return;
   try {
-    loadImgs(imgsUsed(PV.kind, PV.ids), function (pics) {
+    var ids = pvOn();
+    loadImgs(imgsUsed(PV.kind, ids), function (pics) {
       var box = $('pv-img');
       if (!box || PV_TAB !== 'img') return;
       try {
-        var c = buildCanvas(PV.kind, PV.ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''), pics);
+        var c = buildCanvas(PV.kind, ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''), pics);
         box.innerHTML = '<img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '">';
       } catch (e) {
         box.innerHTML = '<div class="es">تعذّر توليد الصورة — جرّب الورقة أو الإرسال مباشرة</div>';
@@ -3590,14 +3591,15 @@ function pvImgFill() {
 function renderPreview() {
   if (!PV) { h('page', emptyBox('👁️', 'لا يوجد ما يُعرَض', 'اختر عناصر ثم اضغط «عرض وإرسال»')); return; }
   ensurePreviewCss();
-  var n = PV.ids.length, L = kindLbl(PV.kind);
+  var on = pvOn(), n = on.length, all = PV.ids.length, L = kindLbl(PV.kind);
   var html = '<div class="pvtabs">'
     + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
     + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button>'
-    + '<button class="pvt' + (PV_TAB === 'list' ? ' on' : '') + '" onclick="pvTab(\'list\')">✏️ العناصر</button>'
+    + '<button class="pvt' + (PV_TAB === 'list' ? ' on' : '') + '" onclick="pvTab(\'list\')">☑️ اختر وأعِد الترتيب</button>'
     + '</div>'
     + '<div class="hint">' + L.icon + ' ' + esc(PV.title) + ' — '
-    + countWord(n, L.one, L.two, L.few, L.many)
+    + (n === all ? countWord(n, L.one, L.two, L.few, L.many)
+                 : '<b>' + n + ' من ' + all + '</b> ' + L.few)
     + (PV_TAB === 'paper' ? '<button class="btn white sm" style="margin-right:auto"'
         + ' onclick="pvDense()">' + (DB.dense ? '📄 عادي' : '🗜️ مضغوط') + '</button>' : '')
     + '</div>';
@@ -3609,7 +3611,7 @@ function renderPreview() {
 
   if (PV_TAB === 'img') html += pvImgHtml();
   else if (PV_TAB === 'list') html += pvListHtml();
-  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, PV.ids), PV.who) + '</div>';
+  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, on), PV.who) + '</div>';
 
   html += '<div class="pvbar">' + FMTS.slice()
     .sort(function (a, b) {                       // المفضّلة أولًا
@@ -3624,47 +3626,71 @@ function renderPreview() {
 }
 
 /**
- * تبويب «العناصر»: حذف وترتيب لهذا الإرسال وحده. لا يمسّ تحديدك في القسم
- * ولا المجموعة المحفوظة — فالمعاينة نافذة على ما سيخرج الآن لا محرّر بيانات.
+ * تبويب «اختر وأعِد الترتيب»: تأشيرٌ لا حذف.
+ *
+ * الطريقة العملية التي يحتاجها الطبيب: مجموعة واحدة شاملة تصلح للغالب، ثم
+ * لكل مريض يؤشّر ما يرسله منها. الحذف كان يُلزمه بإزالة خمسة عشر عنصرًا
+ * ليرسل خمسة؛ التأشير يجعلها خمس لمسات. والإلغاء هنا لا يمسّ المجموعة
+ * المحفوظة ولا تحديدك في القسم — المعاينة نافذة على ما سيخرج الآن.
  */
 function pvListHtml() {
-  if (!PV.ids.length) return emptyBox('✏️', 'لم يبقَ شيء', 'ارجع وحدّد من جديد');
-  return '<div class="hint">الحذف والترتيب هنا للإرسال الحالي فقط — تحديدك في القسم يبقى كما هو.</div>'
+  if (!PV.ids.length) return emptyBox('☑️', 'لا عناصر', 'ارجع وحدّد من جديد');
+  var on = pvOn().length, all = PV.ids.length;
+  return '<div class="hint">أشِّر ما تريد إرساله الآن. الإلغاء والترتيب هنا'
+    + ' لهذا الإرسال وحده — المجموعة المحفوظة لا تتغيّر.</div>'
+    + '<div class="pvsel">'
+    + '<button class="btn sm" onclick="pvAll(1)">☑️ تحديد الكل</button>'
+    + '<button class="btn sm" onclick="pvAll(0)">⬜ إلغاء الكل</button>'
+    + '<span class="pvsel-n">' + on + ' / ' + all + '</span></div>'
     + PV.ids.map(function (id, i) {
-      var o = itemById(PV.kind, id);
-      return '<div class="card"><div class="row">'
-        + '<span class="idx">' + (i + 1) + '</span>'
-        + '<div class="grow"><div class="name">' + esc(itemLabel(PV.kind, o)) + '</div></div>'
+      var o = itemById(PV.kind, id), off = !!(PV.off && PV.off[id]);
+      return '<div class="card pvrow' + (off ? ' off' : '') + '"><div class="row">'
+        + '<label class="pvck"><input type="checkbox"' + (off ? '' : ' checked')
+        + ' onchange="pvPick(\'' + id + '\')"></label>'
+        + '<div class="grow" onclick="pvPick(\'' + id + '\')">'
+        + '<div class="name">' + esc(itemLabel(PV.kind, o)) + '</div></div>'
         + '<button class="ic"' + (i === 0 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',-1)">⬆️</button>'
         + '<button class="ic"' + (i === PV.ids.length - 1 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',1)">⬇️</button>'
-        + '<button class="ic" onclick="pvDrop(' + i + ')">✖️</button>'
         + '</div></div>';
     }).join('')
     + '<div class="pvpad"></div>';
 }
+/** المؤشَّر منها بترتيبه — هو وحده ما يُطبع ويُرسل ويُسجَّل. */
+function pvOn() {
+  if (!PV) return [];
+  return PV.ids.filter(function (id) { return !(PV.off && PV.off[id]); });
+}
+window.pvPick = function (id) {
+  if (!PV) return;
+  PV.off = PV.off || {};
+  if (PV.off[id]) delete PV.off[id]; else PV.off[id] = 1;
+  render();
+};
+window.pvAll = function (on) {
+  if (!PV) return;
+  PV.off = {};
+  if (!on) PV.ids.forEach(function (id) { PV.off[id] = 1; });
+  render();
+};
 window.pvMove = function (i, dir) {
   var j = i + dir;
   if (!PV || j < 0 || j >= PV.ids.length) return;
   var t = PV.ids[i]; PV.ids[i] = PV.ids[j]; PV.ids[j] = t;
   render();
 };
-window.pvDrop = function (i) {
-  if (!PV) return;
-  PV.ids.splice(i, 1);
-  render();
-};
 
 window.pvSend = function (how) {
   if (!PV) return;
-  if (!PV.ids.length) return toast('القائمة فارغة', 'er');
+  var ids = pvOn();
+  if (!ids.length) return toast('لم تؤشّر شيئًا للإرسال', 'er');
   pvWho();
   var who = PV.who || '';
-  if (how === 'pdf') pdfList(PV.kind, PV.ids, PV.title, who);
-  else if (how === 'img') shareList(PV.kind, PV.ids, PV.title, PV.imgTitle, who);
-  else if (how === 'print') printList(PV.kind, PV.ids, PV.title, who);
-  else copyList(PV.kind, PV.ids, PV.title, who);
+  if (how === 'pdf') pdfList(PV.kind, ids, PV.title, who);
+  else if (how === 'img') shareList(PV.kind, ids, PV.title, PV.imgTitle, who);
+  else if (how === 'print') printList(PV.kind, ids, PV.title, who);
+  else copyList(PV.kind, ids, PV.title, who);
   if (DB.fmt !== how) { DB.fmt = how; Store.setFmt(); }
-  logSent(PV.kind, PV.ids, PV.title, who);
+  logSent(PV.kind, ids, PV.title, who);
 };
 
 /* ── سجل الإرسالات ──────────────────────────────────────────────
