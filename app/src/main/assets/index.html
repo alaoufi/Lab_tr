@@ -83,8 +83,15 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .hcard.wide .hcs{margin-right:auto}
 
 /* شريط الأدوات وحقل البحث */
-.toolbar{display:flex;gap:8px;margin-bottom:10px}
-.srch-inp{flex:1;padding:11px 13px;border:1.5px solid var(--border);border-radius:11px;font-family:inherit;font-size:14px;outline:none;background:#fff}
+/* شريط الأدوات: البحث سطرًا كاملًا والأزرار سطرًا تحته.
+   كان الكل في سطر واحد، و<input> لا ينكمش دون عرض نصّه الإرشادي
+   (min-width:auto الافتراضي) فيدفع الأزرار خارج الشاشة — و«+ إضافة»
+   أوّل ما يختفي لأنه آخر الصفّ. */
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+.toolbar>*{min-width:0}
+.toolbar .srch-inp{flex:1 1 100%}
+.toolbar .btn{flex:1;white-space:nowrap;padding-left:4px;padding-right:4px;font-size:12.5px}
+.srch-inp{flex:1;min-width:0;padding:11px 13px;border:1.5px solid var(--border);border-radius:11px;font-family:inherit;font-size:14px;outline:none;background:#fff}
 .srch-inp:focus{border-color:var(--teal)}
 
 /* الأزرار */

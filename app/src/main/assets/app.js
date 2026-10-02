@@ -1482,8 +1482,8 @@ function renderCustomSection(kind) {
   var ng = groupsOf(kind).length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث…" value="' + esc(q) + '" oninput="render()">'
-    + '<button class="btn" onclick="goPage(\'cat:' + kind + '\')">🏷️</button>'
-    + '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn" onclick="goPage(\'cat:' + kind + '\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="secItemForm(\'' + kind + '\')">+ إضافة</button></div>';
   if (DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
   if (!list.length) {
@@ -2190,8 +2190,8 @@ function renderMeds() {
   var ng = groupsOf('meds').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو التصنيف…" value="' + esc(q) + '" oninput="renderMeds()">'
-    + '<button class="btn" onclick="goPage(\'cat:meds\')">🏷️</button>'
-    + '<button class="btn" onclick="goPage(\'grp:meds\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn" onclick="goPage(\'cat:meds\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'grp:meds\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="medForm()">+ إضافة</button></div>';
   if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
   if (!list.length) {
@@ -2317,8 +2317,8 @@ function renderLabs() {
   var ng = groupsOf('labs').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالرمز أو الاسم أو التخصص…" value="' + esc(q) + '" oninput="renderLabs()">'
-    + '<button class="btn" onclick="goPage(\'cat:labs\')">🏷️</button>'
-    + '<button class="btn" onclick="goPage(\'grp:labs\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn" onclick="goPage(\'cat:labs\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'grp:labs\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="labForm()">+ إضافة</button></div>';
   if (DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
 
@@ -2448,8 +2448,8 @@ function renderImaging() {
   var ng = groupsOf('imaging').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المنطقة…" value="' + esc(q) + '" oninput="renderImaging()">'
-    + '<button class="btn" onclick="goPage(\'cat:imaging\')">🏷️</button>'
-    + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn" onclick="goPage(\'cat:imaging\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="imgForm()">+ إضافة</button></div>';
   if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
   if (!list.length) {
@@ -2558,8 +2558,8 @@ function renderRecipes() {
   var ng = groupsOf('recipes').length;
   var html = '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المواد…" value="' + esc(q) + '" oninput="renderRecipes()">'
-    + '<button class="btn" onclick="goPage(\'cat:recipes\')">🏷️</button>'
-    + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁' + (ng ? ' ' + ng : '') + '</button>'
+    + '<button class="btn" onclick="goPage(\'cat:recipes\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
     + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
   if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
   if (!list.length) {

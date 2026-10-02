@@ -2477,3 +2477,14 @@ run('المكتبة ← المجموعة: ممنوعة ما دامت قراءة 
   eq(html.indexOf('gpLibToggle') < 0, true, 'and offers no library import over unread data:');
   eq(b._t.labs.length, 1, 'nothing was duplicated:');
 });
+
+run('الشريط: أزراره كلها حاضرة ومسمّاة في كل قسم', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
+    c.goPage(k);
+    const html = c._els('page').innerHTML;
+    eq(html.indexOf('+ إضافة') >= 0, true, k + ': the add button is in the markup:');
+    eq(html.indexOf('🏷️ التصنيفات') >= 0, true, k + ': categories named, not a bare icon:');
+    eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': and groups too:');
+  });
+});
