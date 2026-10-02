@@ -554,6 +554,7 @@ async function boot() {
   // هنا تكتب فوق بياناتٍ لم نرها، وهذا بالضبط ما يبدو للمستخدم «حذفًا».
   if (!Store.ok) return showRecovery();
   dedupeCats();
+  pruneOrphans();
   seedCats();
   backfillFieldOut();
   autoBackup(false);
@@ -2554,7 +2555,35 @@ function itemLabel(kind, o) {
   return o.name;
 }
 function itemById(kind, id) {
-  return coll(kind).find(function (x) { return x.id === id; });
+  var c = coll(kind);
+  return c && c.find(function (x) { return x.id === id; });
+}
+/** من قائمة معرّفات: ما له عنصرٌ قائم فعلًا، بترتيبه كما هو. */
+function liveIds(kind, ids) {
+  return (ids || []).filter(function (id) { return !!itemById(kind, id); });
+}
+
+/**
+ * تنظيف الإشارات اليتيمة: معرّفٌ في السلة أو في مجموعة بلا عنصرٍ يقابله.
+ *
+ * يعمل **فقط** بعد قراءةٍ نظيفة تمامًا. لو فشلت قراءة جدول العناصر وحده
+ * لبدت كل إشاراته يتيمة، فيحذف هذا التنظيف تحديدَ المستخدم ومجموعاته
+ * بناءً على قراءةٍ خاطئة — وهو الخطأ نفسه الذي كلّفنا قسمًا ووصفات.
+ */
+function pruneOrphans() {
+  if (!Store.ok || Store.errors.length) return;
+  KINDS.forEach(function (k) {
+    var live = liveIds(k, DB.cart[k]);
+    if (live.length === DB.cart[k].length) return;
+    DB.cart[k] = live;
+    Store.setCart(k);
+  });
+  DB.groups.forEach(function (g) {
+    var live = liveIds(g.kind, g.items);
+    if (live.length === g.items.length) return;
+    g.items = live;
+    Store.saveGroup(g);
+  });
 }
 
 function renderGroupsPage(kind) {
@@ -2581,7 +2610,7 @@ function renderGroupsPage(kind) {
     return '<div class="card"><div class="row">'
       + '<div class="grow" onclick="groupPreview(\'' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many)
+      + '<div class="sub">' + L.icon + ' ' + countWord(liveIds(g.kind, g.items).length, L.one, L.two, L.few, L.many)
       + ' · اضغط للإرسال</div></div>'
       + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
       + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
@@ -2626,20 +2655,45 @@ function drawerOpen() {
   var dw = $('dw');
   return !!dw && dw.className.indexOf('on') >= 0;
 }
-/** يُعاد رسمه عند كل فتح — ترتيبه ومحتواه يتغيّران من داخله. */
+/**
+ * يُعاد رسمه عند كل فتح — ترتيبه ومحتواه يتغيّران من داخله.
+ *
+ * قائمة واحدة واضحة لكل شيء: الأقسام أولًا (العلاجات، التحاليل، … وما
+ * أنشأه المستخدم) بعدد عناصر كل قسم، ثم المجموعات المحفوظة. هكذا لا يحتاج
+ * الرجوع إلى الرئيسية ليتنقّل، ولا يحفظ أين يسكن كل شيء.
+ */
 function renderDrawer() {
+  var html = '<div class="dw-g">الأقسام</div>'
+    + KINDS.map(function (k) {
+      var L = kindLbl(k), n = coll(k).length;
+      return '<button class="dwi" onclick="drawerGo(\'' + k + '\')">'
+        + '<span class="dwi-i">' + L.icon + '</span>'
+        + '<span class="dwi-t">' + esc(L.title) + '</span>'
+        + '<span class="dwi-n">' + (n || '—') + '</span></button>';
+    }).join('')
+    + '<div class="dw-g">أدوات</div>'
+    + '<button class="dwi" onclick="drawerGo(\'sent\')"><span class="dwi-i">🕘</span>'
+    + '<span class="dwi-t">آخر ما أرسلت</span>'
+    + '<span class="dwi-n">' + (DB.sent.length || '—') + '</span></button>'
+    + '<button class="dwi" onclick="drawerGo(\'imgs\')"><span class="dwi-i">🖼️</span>'
+    + '<span class="dwi-t">مكتبة الصور</span>'
+    + '<span class="dwi-n">' + (DB.images.length || '—') + '</span></button>'
+    + '<button class="dwi" onclick="drawerGo(\'settings\')"><span class="dwi-i">⚙️</span>'
+    + '<span class="dwi-t">الإعدادات</span></button>'
+    + '<div class="dw-g">المجموعات المحفوظة</div>';
+
   var gs = DB.groups;
   if (!gs.length) {
-    h('dw-body', emptyBox('📁', 'لا مجموعات بعد',
-      'احفظ ما تطلبه عادةً مجموعةً باسم تختاره، فتصل إليها من هنا وترسلها بضغطة'));
+    h('dw-body', html + '<div class="es">لا مجموعات بعد — احفظ ما تطلبه عادةً'
+      + ' مجموعةً باسم تختاره، فترسلها من هنا بضغطة.</div>');
     return;
   }
-  h('dw-body', gs.map(function (g, i) {
+  h('dw-body', html + gs.map(function (g, i) {
     var L = kindLbl(g.kind);
     return '<div class="card"><div class="row">'
       + '<div class="grow" onclick="drawerSend(\'' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many)
+      + '<div class="sub">' + L.icon + ' ' + countWord(liveIds(g.kind, g.items).length, L.one, L.two, L.few, L.many)
       + ' · اضغط للإرسال</div></div>'
       + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
       + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
@@ -2649,6 +2703,7 @@ function renderDrawer() {
     + '<button class="btn full" onclick="closeDrawer();goPage(\'grp:all\')">🗂️ إدارة المجموعات</button>');
 }
 window.drawerSend = function (id) { closeDrawer(); groupPreview(id); };
+window.drawerGo = function (p) { closeDrawer(); goPage(p); };
 
 function findGroup(id) { return DB.groups.find(function (g) { return g.id === id; }); }
 
@@ -2692,19 +2747,21 @@ function renderGroupPage(kind, id) {
     + '</div>'
     + '<button class="btn full" onclick="groupPick()">➕ إضافة عناصر</button>';
 
-  if (!g.items.length) {
+  // لا تُعرض إلا العناصر القائمة؛ إشارةٌ بلا عنصر ليست صفًّا ناقصًا بل لا شيء
+  var live = liveIds(kind, g.items);
+  if (!live.length) {
     h('page', html + emptyBox('📁', 'المجموعة فارغة', 'اضغط «إضافة عناصر»'));
     return;
   }
   // الترتيب هنا هو ترتيب الورقة والرسالة، فأسهم الرفع والخفض تُغيّره
-  html += g.items.map(function (iid, i) {
+  html += live.map(function (iid, i) {
     var o = itemById(kind, iid);
     return '<div class="card"><div class="row">'
       + '<span class="idx">' + (i + 1) + '</span>'
       + '<div class="grow"><div class="name">' + esc(itemLabel(kind, o)) + '</div></div>'
       + '<button class="ic" onclick="groupItemMove(\'' + iid + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
       + '<button class="ic" onclick="groupItemMove(\'' + iid + '\',1)"'
-      + (i === g.items.length - 1 ? ' disabled' : '') + '>▼</button>'
+      + (i === live.length - 1 ? ' disabled' : '') + '>▼</button>'
       + '<button class="ic" onclick="groupRemove(\'' + iid + '\')">✖️</button>'
       + '</div></div>';
   }).join('');
@@ -3149,14 +3206,22 @@ function sendCanvas(canvas, fname) {
    شريط إرسال ثابت أسفلها. لا شيء يُرسَل قبل أن يراه المستخدم. */
 var PV = null, PV_TAB = 'paper';
 
-/** يفتح المعاينة لقائمة معيّنة (سلة أو مجموعة). */
+/**
+ * يفتح المعاينة لقائمة معيّنة (سلة أو مجموعة أو إرسالٌ سابق).
+ *
+ * لا يدخل هنا إلا معرّفٌ له عنصرٌ قائم. كان الصفّ الذي لا يُعثر على عنصره
+ * يُرسم «(عنصر محذوف)» فيرى المستخدم عشرة أشباح في قائمةٍ من عشرة —
+ * والإشارة إلى ما لا وجود له ليست عنصرًا ناقصًا، بل لا شيء.
+ */
 window.openPreview = function (kind, ids, title, imgTitle) {
-  if (!ids || !ids.length) { PV = null; return toast('القائمة فارغة', 'er'); }
+  var live = liveIds(kind, ids);
+  if (!live.length) { PV = null; return toast('لا عناصر في هذه القائمة', 'er'); }
   title = title || kindLbl(kind).title;
-  PV = { kind: kind, ids: ids.slice(), title: title,
+  PV = { kind: kind, ids: live, title: title,
          imgTitle: imgTitle || (kindLbl(kind).icon + ' ' + title) };
   PV_TAB = 'paper';
   goPage('pv');
+  if (live.length < (ids || []).length) toast('أُسقطت عناصر لم تعد موجودة');
 };
 window.pvTab = function (t) { PV_TAB = t; render(); };
 /** الصيغ الأربع — الأولى في الشريط هي آخر ما استعمله المستخدم. */

@@ -656,7 +656,7 @@ run('الطباعة ترفض القائمة الفارغة', () => {
   c.window.AndroidBridge = { printHtml: h => jobs.push(h) };
   c.previewCart('recipes'); c.pvSend('print');
   eq(jobs.length, 0, 'nothing printed:');
-  eq(c._els('toast').textContent, 'القائمة فارغة');
+  eq(c._els('toast').textContent, 'لا عناصر في هذه القائمة');
 });
 
 // يبني قسم تحاليل صغيرًا للاختبارات التالية
@@ -1211,7 +1211,7 @@ run('المعاينة: ترفض القائمة الفارغة ولا تحتفظ 
 
   c.clearCart('labs');
   c.previewCart('labs');
-  eq(c._els('toast').textContent, 'القائمة فارغة', 'refused:');
+  eq(c._els('toast').textContent, 'لا عناصر في هذه القائمة', 'refused:');
   eq(c.PV, null, 'stale list dropped:');
   c.pvSend('pdf');
   eq(A._pdfs.length, 0, 'nothing sent after a refusal:');
@@ -2194,4 +2194,80 @@ run('الأمان: تصنيفات تكرّرت بأثر عطبٍ سابق تُن
   eq(b._t.cats.length, 2, 'the duplicate row is gone:');
   eq(b._t.cats.map(x => x.id).sort(), ['c1', 'c3'], 'the first of each name stays:');
   eq(b._t.labs[0].category, 'أمراض الدم', 'and not one item lost its category:');
+});
+
+/* ── «إمّا موجود أو غير موجود»: لا أشباح في أي قائمة ──────────────── */
+
+run('الأشباح: معرّف بلا عنصر لا يُعرَض ولا يُرسَل', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+
+  // سلة فيها الحقيقيان وثلاثة معرّفات لا عناصر لها (حالة لقطة المستخدم)
+  c.DB.cart.labs = ids.concat(['ghostA', 'ghostB', 'ghostC']);
+  c.previewCart('labs');
+  eq(c.curPage(), 'pv', 'the preview still opens on what is real:');
+  eq(c.PV.ids, ids, 'and carries only the living ones:');
+
+  c.pvTab('list');
+  eq(c._els('page').innerHTML.indexOf('عنصر محذوف') < 0, true, 'no ghost rows on screen:');
+
+  // ولا شيء حقيقي البتّة ⇒ لا تُفتَح أصلًا
+  c.goHome();
+  c.DB.cart.labs = ['ghostA', 'ghostB'];
+  c.previewCart('labs');
+  eq(c.curPage(), 'home', 'an all-ghost list does not open at all:');
+  eq(c._els('toast').textContent, 'لا عناصر في هذه القائمة', 'and says so plainly:');
+});
+
+run('الأشباح: تُنظَّف من السلة والمجموعات عند إقلاعٍ نظيف', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'مجموعة'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+
+  // كما لو حُذفت العناصر من خارج التطبيق وبقيت الإشارات إليها
+  b._t.labs = [];
+  b._t.cart.labs = ids.concat('ghost');
+  b._t.groups[0].items = ids.concat('ghost');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.Store.ok, true, 'the read itself was clean:');
+  eq(b._t.cart.labs, [], 'the cart was swept:');
+  eq(b._t.groups[0].items, [], 'and so was the group:');
+});
+
+run('الأشباح: قراءةٌ معطوبة لا تُشرِّع حذف التحديد', () => {
+  const b = makeBridge();
+  b._t.labs.push({ id: 'L1', name: 'CBC' });
+  b._t.cart.labs = ['L1', 'L2', 'L3'];
+  const inner = b.loadAll;
+  b.loadAll = () => {                     // جدول العناصر تعذّر، والسلة وصلت
+    const d = JSON.parse(inner());
+    d.labs = []; d.errors = ['labs: Row too big to fit into CursorWindow'];
+    return JSON.stringify(d);
+  };
+  const c = load(b); c.boot();
+
+  eq(c.Store.errors.length, 1, 'the fault is known:');
+  eq(b._t.cart.labs, ['L1', 'L2', 'L3'], 'and the selection is left alone — a bad read is no licence to delete:');
+});
+
+run('القائمة: الدرج يسرد الأقسام والأدوات والمجموعات معًا', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  seedLabs(c, b, ['CBC', 'FBS', 'TSH']);
+
+  c.goPage('recipes');
+  c.openDrawer();
+  const dw = c._els('dw-body').innerHTML;
+  ['العلاجات', 'التحاليل', 'الأشعة والفحوصات', 'الوصفات العلاجية'].forEach(t => {
+    eq(dw.indexOf(t) >= 0, true, 'section listed — ' + t + ':');
+  });
+  eq(dw.indexOf('آخر ما أرسلت') >= 0, true, 'and the tools:');
+  eq(dw.indexOf('مكتبة الصور') >= 0, true, 'image library too:');
+  eq(dw.indexOf('>3<') >= 0, true, 'with how many each section holds:');
+
+  c.drawerGo('labs');
+  eq(c.curPage(), 'labs', 'one tap takes you to the section:');
+  eq(c._els('dw').className.indexOf('on') < 0, true, 'and shuts the drawer behind it:');
 });

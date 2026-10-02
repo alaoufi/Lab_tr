@@ -52,7 +52,13 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .dw.on{transform:translateX(0);visibility:visible}
 .dw-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
 .dw-hd b{font-size:15.5px}
-.dw-g{font-size:12px;font-weight:800;color:var(--mid);margin:14px 0 6px}
+.dw-g{font-size:12px;font-weight:800;color:var(--mid);margin:16px 0 6px}
+.dw-g:first-child{margin-top:0}
+.dwi{display:flex;align-items:center;gap:10px;width:100%;background:#fff;border:1px solid var(--border);
+     border-radius:12px;padding:11px 12px;margin-bottom:6px;cursor:pointer;font:inherit;text-align:right}
+.dwi-i{font-size:18px;flex:none}
+.dwi-t{flex:1;font-weight:700;font-size:14px;color:#0f172a}
+.dwi-n{flex:none;font-size:12px;font-weight:800;color:var(--teal);background:#ecfdf5;border-radius:8px;padding:2px 8px}
 
 #page{padding:12px 12px 100px}
 
@@ -256,7 +262,7 @@ select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointe
     <button class="hdr-b" id="hdr-back" onclick="goBack()" style="display:none" aria-label="رجوع">→</button>
     <div class="hdr-t"><span id="hdr-icon">💊🧪</span><span id="hdr-title">دليلي الطبي</span></div>
     <span class="grow"></span>
-    <button class="hdr-b" id="hdr-grp" onclick="openDrawer()" aria-label="مجموعاتي">📁</button>
+    <button class="hdr-b" id="hdr-grp" onclick="openDrawer()" aria-label="القائمة">☰</button>
     <button class="hdr-b" id="hdr-set" onclick="goPage('settings')" aria-label="الإعدادات">⚙️</button>
   </div>
   <div id="page"></div>
@@ -265,7 +271,7 @@ select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointe
 <!-- الدرج الجانبي: المجموعات في متناول اليد من أي صفحة -->
 <div class="dw-bg" id="dw-bg" onclick="closeDrawer()"></div>
 <aside class="dw" id="dw">
-  <div class="dw-hd"><b>📁 مجموعاتي</b><button class="modal-x" onclick="closeDrawer()">✕</button></div>
+  <div class="dw-hd"><b>🧭 القائمة</b><button class="modal-x" onclick="closeDrawer()">✕</button></div>
   <div id="dw-body"></div>
 </aside>
 
