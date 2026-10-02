@@ -101,6 +101,30 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
   await p.waitForTimeout(300);
   await p.screenshot({ path: 'n11-fields.png', fullPage: true });
 
+  // المجموعات: تُحفَظ فور التعديل، وتُرتَّب، وتُفتَح من الدرج الجانبي
+  await p.evaluate(() => {
+    goPage('grp:labs'); groupNew('labs');
+  });
+  await p.fill('#gn', 'ما قبل الجراحة');
+  await p.click('.mft .btn.primary');
+  await p.waitForTimeout(250);
+  await p.evaluate(() => { groupPick(); DB.labs.forEach(o => groupPickToggle(o.id)); groupPickAdd(); });
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: 'n12-group.png', fullPage: true });
+  await p.click('.card .ic:nth-child(4)');   // ▼ على أول عنصر
+  await p.waitForTimeout(250);
+  await p.evaluate(() => goBack());
+  await p.waitForTimeout(250);
+  await p.screenshot({ path: 'n13-groups-list.png', fullPage: true });
+
+  await p.evaluate(() => goPage('recipes'));
+  await p.waitForTimeout(200);
+  await p.click('#hdr-grp');
+  await p.waitForTimeout(400);
+  await p.screenshot({ path: 'n14-drawer.png' });
+  await p.evaluate(() => closeDrawer());
+  await p.waitForTimeout(300);
+
   // شاشة الإنقاذ — تُرسَم كما تُرسَم حين تتعذّر قراءة القاعدة
   await p.evaluate(() => {
     Store.ok = false;
@@ -108,7 +132,7 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
     showRecovery();
   });
   await p.waitForTimeout(300);
-  await p.screenshot({ path: 'n12-recovery.png', fullPage: true });
+  await p.screenshot({ path: "n15-recovery.png", fullPage: true });
 
   console.log(errs.length ? errs.join('\n') : 'لا أخطاء في الكونسول ✅');
   await b.close();

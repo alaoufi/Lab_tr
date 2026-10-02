@@ -321,6 +321,10 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.deleteGroup(id) || dbFail(); } catch (e) { return dbFail(); }
   },
+  setGroupOrder: function (ids) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setGroupOrder(JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
+  },
   setPin: function (hash) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('pin_hash', hash) || dbFail(); } catch (e) { return dbFail(); }
@@ -487,16 +491,8 @@ window.goPage = function (p) {
   render();
 };
 window.goBack = function () {
-  // مسوّدة المجموعة تُسقَط فقط عند مغادرة صفحات المجموعات نفسها؛ الرجوع من
-  // المعاينة إلى المحرّر يجب أن يبقي التعديلات المؤقّتة كما هي.
-  var leaving = curPage().indexOf('grp:') === 0;
-  if (GRP && GRP.dirty && leaving) {
-    confirmBox('لديك تعديلات غير محفوظة على المجموعة. الخروج يعيدها كما كانت.', function () {
-      GRP = null; closeModal(); popPage();
-    });
-    return;
-  }
-  if (leaving) GRP = null;
+  // لا سؤال عند الخروج: المجموعة محفوظة أصلًا، وGRP مجرّد إشارة للمفتوحة
+  if (curPage().indexOf('grp:') === 0) GRP = null;
   popPage();
 };
 function popPage() {
@@ -510,6 +506,7 @@ window.goHome = function () { NAV = ['home']; window.scrollTo(0, 0); render(); }
 window.onAndroidBack = function () {
   var mb = $('modal-bg');
   if (mb && mb.className.indexOf('on') >= 0) { closeModal(); return true; }
+  if (drawerOpen()) { closeDrawer(); return true; }
   if (NAV.length > 1) { goBack(); return true; }
   return false;
 };
@@ -2577,17 +2574,81 @@ function renderGroupsPage(kind) {
       'اختر ما تطلبه عادةً ثم احفظه مجموعة باسم تختاره — تُعيد إرسالها لاحقًا بضغطة'));
     return;
   }
-  html += gs.map(function (g) {
+  // الضغط على الاسم يذهب للإرسال مباشرةً — هو ما تُفتح المجموعة لأجله.
+  // ✏️ للتحرير، والسهمان يرفعان الأكثر استعمالًا إلى أعلى القائمة.
+  html += gs.map(function (g, i) {
     var L = kindLbl(g.kind);
     return '<div class="card"><div class="row">'
-      + '<div class="grow" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">'
+      + '<div class="grow" onclick="groupPreview(\'' + g.id + '\')">'
       + '<div class="name">📁 ' + esc(g.name) + '</div>'
-      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many) + '</div></div>'
-      + '<button class="ic" onclick="groupPreview(\'' + g.id + '\')">👁️</button>'
+      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many)
+      + ' · اضغط للإرسال</div></div>'
+      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
+      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
+      + (i === gs.length - 1 ? ' disabled' : '') + '>▼</button>'
+      + '<button class="ic" onclick="goPage(\'grp:' + g.kind + ':' + g.id + '\')">✏️</button>'
       + '</div></div>';
   }).join('');
   h('page', html);
 }
+/** ترتيب المجموعات: التبديل يقع في DB.groups كاملةً فيثبت عبر الأقسام. */
+window.groupMove = function (id, dir) {
+  var i = DB.groups.findIndex(function (g) { return g.id === id; });
+  var gs = groupsOf(groupsPageKind()), j = gs.findIndex(function (g) { return g.id === id; }) + dir;
+  if (i < 0 || j < 0 || j >= gs.length) return;
+  var k = DB.groups.indexOf(gs[j]);
+  var t = DB.groups[i]; DB.groups[i] = DB.groups[k]; DB.groups[k] = t;
+  Store.setGroupOrder(DB.groups.map(function (g) { return g.id; }));
+  if (drawerOpen()) renderDrawer(); else render();
+};
+/** القسم الذي تعرضه صفحة المجموعات الحالية، أو الدرج ('all'). */
+function groupsPageKind() {
+  var p = curPage();
+  return p.indexOf('grp:') === 0 ? p.split(':')[1] : 'all';
+}
+
+/* ── الدرج الجانبي ─────────────────────────────────────────────────
+   المجموعة تُحفَظ لتُرسَل مرارًا، وكان الوصول إليها ثلاث ضغطات: رجوع
+   للرئيسية ← «مجموعاتي» ← المجموعة. الدرج يجعلها ضغطتين من أي صفحة،
+   والثانية هي الإرسال نفسه. */
+window.openDrawer = function () {
+  renderDrawer();
+  var bg = $('dw-bg'), dw = $('dw');
+  if (bg) bg.className = 'dw-bg on';
+  if (dw) dw.className = 'dw on';
+};
+window.closeDrawer = function () {
+  var bg = $('dw-bg'), dw = $('dw');
+  if (bg) bg.className = 'dw-bg';
+  if (dw) dw.className = 'dw';
+};
+function drawerOpen() {
+  var dw = $('dw');
+  return !!dw && dw.className.indexOf('on') >= 0;
+}
+/** يُعاد رسمه عند كل فتح — ترتيبه ومحتواه يتغيّران من داخله. */
+function renderDrawer() {
+  var gs = DB.groups;
+  if (!gs.length) {
+    h('dw-body', emptyBox('📁', 'لا مجموعات بعد',
+      'احفظ ما تطلبه عادةً مجموعةً باسم تختاره، فتصل إليها من هنا وترسلها بضغطة'));
+    return;
+  }
+  h('dw-body', gs.map(function (g, i) {
+    var L = kindLbl(g.kind);
+    return '<div class="card"><div class="row">'
+      + '<div class="grow" onclick="drawerSend(\'' + g.id + '\')">'
+      + '<div class="name">📁 ' + esc(g.name) + '</div>'
+      + '<div class="sub">' + L.icon + ' ' + countWord(g.items.length, L.one, L.two, L.few, L.many)
+      + ' · اضغط للإرسال</div></div>'
+      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
+      + '<button class="ic" onclick="groupMove(\'' + g.id + '\',1)"'
+      + (i === gs.length - 1 ? ' disabled' : '') + '>▼</button>'
+      + '</div></div>';
+  }).join('')
+    + '<button class="btn full" onclick="closeDrawer();goPage(\'grp:all\')">🗂️ إدارة المجموعات</button>');
+}
+window.drawerSend = function (id) { closeDrawer(); groupPreview(id); };
 
 function findGroup(id) { return DB.groups.find(function (g) { return g.id === id; }); }
 
@@ -2611,45 +2672,61 @@ window.groupCreate = function (kind) {
   goPage('grp:' + kind + ':' + g.id);
 };
 
-/** المحرّر يعمل على نسخة: الخروج بلا حفظ يعيد المجموعة كما كانت. */
+/**
+ * المحرّر يكتب فور كل تعديل.
+ *
+ * كان يعمل على مسوّدة في `GRP` تحتاج ضغط «حفظ»، والنتيجة أنّ من يضيف
+ * عناصر ثم يخرج يجدها ضاعت — وهو بلاغٌ وصل فعلًا: «ما يحفظ العناصر».
+ * المسوّدة كانت لخدمة «عدّل ثم أرسل بلا حفظ»، وهذا صار داخل المعاينة
+ * نفسها (تعديل القائمة هناك لا يمسّ المجموعة)، فلم يبقَ لها مبرّر.
+ */
 function renderGroupPage(kind, id) {
   var g = findGroup(id);
   if (!g) { h('page', emptyBox('📁', 'المجموعة غير موجودة', '')); return; }
-  if (!GRP || GRP.id !== id) GRP = { id: id, kind: kind, name: g.name, items: g.items.slice(), dirty: false };
+  GRP = { id: id, kind: kind, name: g.name };     // للمنتقي والمعاينة فقط
 
   var html = '<div class="gbar">'
-    + '<button class="btn primary sm" onclick="groupSave()">💾 حفظ' + (GRP.dirty ? ' •' : '') + '</button>'
-    + '<button class="btn wa sm" onclick="groupEditPreview()">👁️ عرض وإرسال</button>'
-    + '<span class="grow"></span>'
+    + '<button class="btn wa sm grow" onclick="groupEditPreview()">👁️ عرض وإرسال</button>'
     + '<button class="btn sm" onclick="groupRename()">✏️</button>'
     + '<button class="btn danger sm" onclick="groupDelete()">🗑️</button>'
     + '</div>'
-    + (GRP.dirty ? '<div class="hint">✎ تعديلات غير محفوظة — «حفظ» يثبّتها، والرجوع يعيد المجموعة كما كانت.</div>' : '')
     + '<button class="btn full" onclick="groupPick()">➕ إضافة عناصر</button>';
 
-  if (!GRP.items.length) {
+  if (!g.items.length) {
     h('page', html + emptyBox('📁', 'المجموعة فارغة', 'اضغط «إضافة عناصر»'));
     return;
   }
-  html += GRP.items.map(function (iid, i) {
+  // الترتيب هنا هو ترتيب الورقة والرسالة، فأسهم الرفع والخفض تُغيّره
+  html += g.items.map(function (iid, i) {
     var o = itemById(kind, iid);
     return '<div class="card"><div class="row">'
       + '<span class="idx">' + (i + 1) + '</span>'
       + '<div class="grow"><div class="name">' + esc(itemLabel(kind, o)) + '</div></div>'
+      + '<button class="ic" onclick="groupItemMove(\'' + iid + '\',-1)"' + (i ? '' : ' disabled') + '>▲</button>'
+      + '<button class="ic" onclick="groupItemMove(\'' + iid + '\',1)"'
+      + (i === g.items.length - 1 ? ' disabled' : '') + '>▼</button>'
       + '<button class="ic" onclick="groupRemove(\'' + iid + '\')">✖️</button>'
       + '</div></div>';
   }).join('');
-  h('page', html);
+  h('page', html + '<div class="muted" style="text-align:center">يُحفظ كل تعديل فور حدوثه.</div>');
+}
+/** كل تعديل على المجموعة: عدّل الكائن الحيّ، اكتبه، ثم أعِد الرسم. */
+function grpEdit(fn) {
+  var g = findGroup(GRP ? GRP.id : ''); if (!g) return;
+  fn(g);
+  GRP.name = g.name;
+  Store.saveGroup(g);
+  render();
 }
 window.groupRemove = function (iid) {
-  GRP.items = GRP.items.filter(function (x) { return x !== iid; });
-  GRP.dirty = true; render();
+  grpEdit(function (g) { g.items = g.items.filter(function (x) { return x !== iid; }); });
 };
-window.groupSave = function () {
-  var g = findGroup(GRP.id); if (!g) return;
-  g.name = GRP.name; g.items = GRP.items.slice();
-  Store.saveGroup(g);
-  GRP.dirty = false; render(); toast('✅ حُفظت المجموعة');
+window.groupItemMove = function (iid, dir) {
+  grpEdit(function (g) {
+    var i = g.items.indexOf(iid), j = i + dir;
+    if (i < 0 || j < 0 || j >= g.items.length) return;
+    var t = g.items[i]; g.items[i] = g.items[j]; g.items[j] = t;
+  });
 };
 window.groupRename = function () {
   openModal('✏️ إعادة تسمية',
@@ -2660,7 +2737,9 @@ window.groupRename = function () {
 window.groupRenameSave = function () {
   var name = (($('gn') || {}).value || '').trim();
   if (!name) return toast('الاسم مطلوب', 'er');
-  GRP.name = name; GRP.dirty = true; closeModal(); render();
+  closeModal();
+  grpEdit(function (g) { g.name = name; });
+  toast('✅ حُفظ الاسم');
 };
 window.groupDelete = function () {
   confirmBox('حذف هذه المجموعة؟ (لا يُحذف أي تحليل أو علاج)', function () {
@@ -2684,13 +2763,14 @@ window.groupPick = function () {
   groupPickRender();
 };
 window.groupPickRender = function () {
+  var cur = findGroup(GRP.id) || { items: [] };
   var kind = GRP.kind, q = norm(($('gp-q') || {}).value);
   var list = coll(kind).filter(function (o) {
     return !q || norm(itemLabel(kind, o) + ' ' + (o.category || o.type || '')).indexOf(q) >= 0;
   });
   if (!list.length) { h('gp-list', emptyBox('🔎', 'لا نتائج', '')); return; }
   h('gp-list', list.map(function (o) {
-    var have = GRP.items.indexOf(o.id) >= 0;
+    var have = cur.items.indexOf(o.id) >= 0;
     return '<label class="lib-i' + (have ? ' have' : '') + '">'
       + '<input type="checkbox"' + (have ? ' disabled' : '') + (GPICK[o.id] ? ' checked' : '')
       + ' onchange="groupPickToggle(\'' + o.id + '\')">'
@@ -2704,8 +2784,9 @@ window.groupPickToggle = function (id) {
 window.groupPickAdd = function () {
   var add = Object.keys(GPICK);
   if (!add.length) return toast('لم تحدد شيئًا بعد', 'er');
-  GRP.items = GRP.items.concat(add);
-  GRP.dirty = true; GPICK = {}; closeModal(); render();
+  GPICK = {}; closeModal();
+  grpEdit(function (g) { g.items = g.items.concat(add); });
+  toast('✅ أُضيفت وحُفظت');
 };
 
 /* ════════════════════════ طباعة/PDF + مشاركة واتساب ════════════════════════ */
@@ -3289,9 +3370,7 @@ window.sentClear = function () {
 window.previewCart = function (kind) {
   openPreview(kind, DB.cart[kind], cartTitle(kind, false), cartTitle(kind, true));
 };
-window.groupEditPreview = function () {
-  openPreview(GRP.kind, GRP.items, GRP.name, '📁 ' + GRP.name);
-};
+window.groupEditPreview = function () { groupPreview(GRP.id); };
 window.groupPreview = function (id) {
   var g = findGroup(id); if (!g) return;
   openPreview(g.kind, g.items, g.name, '📁 ' + g.name);

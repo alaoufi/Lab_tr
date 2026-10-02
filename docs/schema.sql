@@ -113,7 +113,7 @@ CREATE TABLE groups (
     id          TEXT PRIMARY KEY,
     kind        TEXT    NOT NULL,                -- القسم الذي تنتمي إليه
     name        TEXT    NOT NULL,                -- اسم المجموعة
-    sort_order  INTEGER NOT NULL DEFAULT 0
+    sort_order  INTEGER NOT NULL DEFAULT 0       -- ترتيب المستخدم (setGroupOrder)
 );
 
 CREATE TABLE group_items (

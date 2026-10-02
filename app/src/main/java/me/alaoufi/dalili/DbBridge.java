@@ -253,6 +253,18 @@ public class DbBridge {
         }
     }
 
+    /** ترتيب المجموعات كما رتّبها المستخدم — مصفوفة معرّفات. */
+    @JavascriptInterface
+    public boolean setGroupOrder(String jsonIds) {
+        try {
+            db.setGroupOrder(new JSONArray(jsonIds));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "setGroupOrder failed", e);
+            return false;
+        }
+    }
+
     @JavascriptInterface
     public boolean deleteGroup(String id) {
         try {

@@ -810,6 +810,20 @@ public class DaliliDb extends SQLiteOpenHelper {
         }
     }
 
+    /** ترتيب المجموعات كما رتّبها المستخدم — قائمة معرّفات بالترتيب. */
+    public void setGroupOrder(JSONArray ids) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < ids.length(); i++) {
+                ContentValues v = new ContentValues();
+                v.put("sort_order", i);
+                db.update("groups", v, "id=?", new String[]{ids.optString(i)});
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
     public void deleteGroup(String id) {
         SQLiteDatabase db = getWritableDatabase();
         db.beginTransaction();

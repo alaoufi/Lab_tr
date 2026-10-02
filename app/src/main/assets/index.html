@@ -39,9 +39,20 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .rec-e{margin-top:6px;white-space:pre-wrap;word-break:break-word;font-size:11px;color:var(--mid);background:#f8fafc;border-radius:8px;padding:8px;text-align:left;direction:ltr}
 
 /* الترويسة */
-.hdr{position:sticky;top:0;z-index:40;background:linear-gradient(135deg,var(--teal2),var(--teal));color:#fff;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 3px 12px rgba(7,94,84,.25)}
+.hdr{position:sticky;top:0;z-index:40;background:linear-gradient(135deg,var(--teal2),var(--teal));color:#fff;padding:14px 16px;display:flex;align-items:center;gap:8px;box-shadow:0 3px 12px rgba(7,94,84,.25)}
 .hdr-t{font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px}
-.hdr-b{background:rgba(255,255,255,.16);border:none;color:#fff;width:36px;height:36px;border-radius:10px;font-size:16px;cursor:pointer}
+.hdr-b{background:rgba(255,255,255,.16);border:none;color:#fff;width:36px;height:36px;border-radius:10px;font-size:16px;cursor:pointer;flex:none}
+
+/* الدرج الجانبي — المجموعات من أي صفحة. يأتي من اليمين لأن الواجهة RTL */
+.dw-bg{display:none;position:fixed;inset:0;z-index:600;background:rgba(15,23,42,.5)}
+.dw-bg.on{display:block}
+.dw{position:fixed;top:0;right:0;bottom:0;z-index:601;width:86%;max-width:340px;background:#f8fafc;
+    box-shadow:-8px 0 30px rgba(0,0,0,.2);overflow-y:auto;padding:14px;
+    transform:translateX(102%);transition:transform .22s ease;visibility:hidden}
+.dw.on{transform:translateX(0);visibility:visible}
+.dw-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.dw-hd b{font-size:15.5px}
+.dw-g{font-size:12px;font-weight:800;color:var(--mid);margin:14px 0 6px}
 
 #page{padding:12px 12px 100px}
 
@@ -244,10 +255,19 @@ select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointe
   <div class="hdr">
     <button class="hdr-b" id="hdr-back" onclick="goBack()" style="display:none" aria-label="رجوع">→</button>
     <div class="hdr-t"><span id="hdr-icon">💊🧪</span><span id="hdr-title">دليلي الطبي</span></div>
+    <span class="grow"></span>
+    <button class="hdr-b" id="hdr-grp" onclick="openDrawer()" aria-label="مجموعاتي">📁</button>
     <button class="hdr-b" id="hdr-set" onclick="goPage('settings')" aria-label="الإعدادات">⚙️</button>
   </div>
   <div id="page"></div>
 </div>
+
+<!-- الدرج الجانبي: المجموعات في متناول اليد من أي صفحة -->
+<div class="dw-bg" id="dw-bg" onclick="closeDrawer()"></div>
+<aside class="dw" id="dw">
+  <div class="dw-hd"><b>📁 مجموعاتي</b><button class="modal-x" onclick="closeDrawer()">✕</button></div>
+  <div id="dw-body"></div>
+</aside>
 
 <div class="modal-bg" id="modal-bg">
   <div class="modal">

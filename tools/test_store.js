@@ -27,8 +27,9 @@ function makeBridge() {
     if (i >= 0) t[table][i] = Object.assign({}, t[table][i], o); else t[table].push(Object.assign({}, o));
     return true;
   };
+  const orders = {};              // آخر ترتيب وصل لكل جدول — للتحقّق في الاختبارات
   return {
-    _t: t,
+    _t: t, _order: orders,
     loadAll: () => {
       const out = { meds: t.meds, labs: t.labs, imaging: t.imaging, recipes: t.recipes,
         groups: t.groups, cats: t.cats, sections: t.sections, fields: t.fields,
@@ -55,6 +56,12 @@ function makeBridge() {
       return true;
     },
     deleteGroup: id => { t.groups = t.groups.filter(g => g.id !== id); return true; },
+    setGroupOrder: j => {
+      const ids = JSON.parse(j);
+      t.groups.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      orders.groups = ids;
+      return true;
+    },
     // التصنيفات — بنفس دلالات DaliliDb: الربط بالاسم، والنقل تحديث واحد
     saveCat: j => {
       const c = JSON.parse(j);
@@ -684,7 +691,7 @@ run('المجموعات: إنشاء من التحديد ثم طباعة وإرس
   eq(jobs, ['فحوصات ما قبل الجراحة'], 'printed under its own name:');
 });
 
-run('المجموعات: تعديل ثم حفظ يثبّت', () => {
+run('المجموعات: كل تعديل يُحفَظ فور حدوثه بلا زرّ حفظ', () => {
   const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
   const ids = seedLabs(c, b, ['CBC', 'FBS', 'TSH']);
   c.goPage('grp:labs'); c.groupNew('labs');
@@ -693,46 +700,93 @@ run('المجموعات: تعديل ثم حفظ يثبّت', () => {
   c.GPICK = {};
   c.groupPickToggle(ids[0]); c.groupPickToggle(ids[1]);
   c.groupPickAdd();
-  eq(c.GRP.items.length, 2, 'added to the draft:');
-  eq(c.GRP.dirty, true, 'marked dirty:');
-  eq(b._t.groups[0].items.length, 0, 'db untouched before save:');
-
-  c.groupSave();
-  eq(b._t.groups[0].items.length, 2, 'persisted:');
-  eq(c.GRP.dirty, false, 'clean after save:');
+  eq(b._t.groups[0].items.length, 2, 'in the database the moment they are added:');
 
   c.groupRemove(ids[0]);
-  eq(c.GRP.items.length, 1, 'removed from draft:');
-  c.groupSave();
-  eq(b._t.groups[0].items.length, 1, 'removal persisted:');
+  eq(b._t.groups[0].items.length, 1, 'and the removal too:');
+
+  c._els('gn').value = 'باسمٍ آخر'; c.groupRenameSave();
+  eq(b._t.groups[0].name, 'باسمٍ آخر', 'and the rename:');
+
+  // لا زرّ حفظ ولا تحذير مسوّدة — لم يعد لهما وجود
+  eq(typeof c.window.groupSave, 'undefined', 'no save button behind it:');
+  eq(c._els('page').innerHTML.indexOf('غير محفوظة') < 0, true, 'and nothing claims to be unsaved:');
 });
 
-run('المجموعات: الخروج بلا حفظ يعيدها كما كانت', () => {
+run('المجموعات: الخروج لا يسأل ولا يُسقِط شيئًا', () => {
   const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
   const ids = seedLabs(c, b, ['CBC', 'FBS', 'TSH']);
   c.goPage('grp:labs'); c.groupNew('labs');
-  c._els('gn').value = 'للإرسال فقط'; c.groupCreate('labs');
-  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd();
-  c.groupSave();                       // الحالة المحفوظة: عنصر واحد
-
-  // تعديل مؤقت للإرسال فقط
-  c.GPICK = {}; c.groupPickToggle(ids[1]); c.groupPickToggle(ids[2]); c.groupPickAdd();
-  eq(c.GRP.items.length, 3, 'draft has three:');
+  c._els('gn').value = 'ما قبل الجراحة'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
 
   const jobs = [];
   c.window.AndroidBridge = { printHtml: (html, name) => jobs.push({ name, html }) };
   c.groupEditPreview(); c.pvSend('print');
-  eq(jobs[0].html.split('class="rx-item"').length - 1, 3, 'printed the edited list:');
+  eq(jobs[0].html.split('class="rx-item"').length - 1, 3, 'sends what the group holds:');
 
-  c.goBack();                          // من المعاينة إلى المحرّر — بلا سؤال
+  c.goBack();
   eq(c.curPage().indexOf('grp:labs:') === 0, true, 'preview returns to the editor:');
-  eq(c.GRP.items.length, 3, 'draft survived the preview:');
+  c.goBack();
+  eq(c.curPage(), 'grp:labs', 'and out, with no question asked:');
+  eq(b._t.groups[0].items.length, 3, 'the three items are still there:');
 
-  c.goBack();                          // يسأل عن التعديلات
-  c._els('cb-yes').onclick();          // «تجاهل»
-  eq(c.curPage(), 'grp:labs', 'left the editor:');
-  eq(b._t.groups[0].items.length, 1, 'group reverted to its saved state:');
-  eq(c.GRP, null, 'draft dropped:');
+  // وبعد إعادة تشغيل كاملة
+  const c2 = load(b); c2.Store.load(); c2.showApp();
+  eq(c2.DB.groups[0].items.length, 3, 'and survive a restart:');
+});
+
+run('المجموعات: ترتيب العناصر وترتيب المجموعات يُحفظان', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS', 'TSH']);
+  c.goPage('grp:labs');
+  c.groupNew('labs'); c._els('gn').value = 'الأولى'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+
+  // ترتيب العناصر داخل المجموعة — هو ترتيب الورقة والرسالة
+  c.groupItemMove(ids[2], -1);
+  eq(b._t.groups[0].items, [ids[0], ids[2], ids[1]], 'item moved up and persisted:');
+  c.groupItemMove(ids[0], -1);
+  eq(b._t.groups[0].items, [ids[0], ids[2], ids[1]], 'the first one cannot go higher:');
+
+  // ترتيب المجموعات نفسها
+  c.goBack();
+  c.groupNew('labs'); c._els('gn').value = 'الثانية'; c.groupCreate('labs');
+  c.goBack();
+  eq(c.DB.groups.map(g => g.name), ['الأولى', 'الثانية'], 'order of creation:');
+  c.groupMove(c.DB.groups[1].id, -1);
+  eq(c.DB.groups.map(g => g.name), ['الثانية', 'الأولى'], 'the second moved up:');
+  eq(b._order.groups.length, 2, 'and the new order reached the database:');
+
+  const c2 = load(b); c2.Store.load();
+  eq(c2.DB.groups.map(g => g.name), ['الثانية', 'الأولى'], 'and it survives a restart:');
+});
+
+run('المجموعات: الدرج الجانبي يصل إليها من أي صفحة بضغطة', () => {
+  const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  const ids = seedLabs(c, b, ['CBC', 'FBS']);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'متابعة سكري'; c.groupCreate('labs');
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+
+  // من صفحة بعيدة تمامًا
+  c.goPage('recipes');
+  c.openDrawer();
+  const dw = c._els('dw-body').innerHTML;
+  eq(dw.indexOf('متابعة سكري') >= 0, true, 'the group is listed in the drawer:');
+  eq(dw.indexOf('اضغط للإرسال') >= 0, true, 'and says what a tap does:');
+  eq(c._els('dw').className.indexOf('on') >= 0, true, 'the drawer is open:');
+
+  // ضغطة واحدة = شاشة الإرسال
+  c.drawerSend(c.DB.groups[0].id);
+  eq(c._els('dw').className.indexOf('on') < 0, true, 'the drawer closed behind it:');
+  eq(c.curPage(), 'pv', 'and landed straight on the send screen:');
+
+  // زرّ الرجوع في الجهاز يغلق الدرج قبل أن يغادر الصفحة
+  c.openDrawer();
+  eq(c.onAndroidBack(), true, 'back closes the drawer:');
+  eq(c._els('dw').className.indexOf('on') < 0, true, 'and it is shut:');
+  eq(c.curPage(), 'pv', 'without leaving the page:');
 });
 
 run('المجموعات: الحذف لا يمسّ التحاليل نفسها', () => {
@@ -740,7 +794,7 @@ run('المجموعات: الحذف لا يمسّ التحاليل نفسها', 
   const ids = seedLabs(c, b, ['CBC', 'FBS']);
   c.goPage('grp:labs'); c.groupNew('labs');
   c._els('gn').value = 'مؤقتة'; c.groupCreate('labs');
-  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd(); c.groupSave();
+  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd();
 
   c.groupDelete(); c._els('cb-yes').onclick();
   eq(b._t.groups.length, 0, 'group deleted:');
@@ -753,7 +807,7 @@ run('المجموعات تبقى بعد إعادة التشغيل وتدخل ا�
   const ids = seedLabs(c, b, ['CBC']);
   c.goPage('grp:labs'); c.groupNew('labs');
   c._els('gn').value = 'دورية سنوية'; c.groupCreate('labs');
-  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd(); c.groupSave();
+  c.GPICK = {}; c.groupPickToggle(ids[0]); c.groupPickAdd();
 
   eq(c.snapshot().groups.length, 1, 'in backup:');
   c = load(b); c.Store.load();
@@ -854,7 +908,7 @@ run('حذف عنصر ينظّف المجموعات من الإشارات الي�
   const ids = seedLabs(c, b, ['CBC', 'FBS']);
   c.goPage('grp:labs'); c.groupNew('labs');
   c._els('gn').value = 'مجموعة'; c.groupCreate('labs');
-  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd(); c.groupSave();
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
   eq(b._t.groups[0].items.length, 2, 'two members:');
 
   c.goPage('labs');
@@ -1080,7 +1134,7 @@ run('مجموعاتي: صفحة جامعة لكل الأقسام مع PDF', () =
   const ids = seedLabs(c, b, ['CBC', 'FBS']);
   c.goPage('grp:labs'); c.groupNew('labs');
   c._els('gn').value = 'دورية'; c.groupCreate('labs');
-  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd(); c.groupSave();
+  c.GPICK = {}; ids.forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
 
   c.goHome();
   eq(c._els('page').innerHTML.indexOf('مجموعاتي المحفوظة (1)') >= 0, true, 'shortcut on home:');
