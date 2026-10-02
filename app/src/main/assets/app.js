@@ -529,6 +529,7 @@ function pageMeta(p) {
   if (p === 'secs') return { icon: '🗂️', title: 'إدارة الأقسام' };
   if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
   if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
+  if (p === 'diag') return { icon: '🩺', title: 'فحص قاعدة البيانات' };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
   }
@@ -590,10 +591,14 @@ function showRecovery() {
                 + esc(b.name.replace(/^dalili-|\.json$/g, '')) + '</button>';
             }).join('')
         : '<div class="rec-h">لا توجد نسخ احتياطية في هذا الجهاز.</div>')
+    + '<button class="btn" style="width:100%;margin-top:10px" onclick="recoverDiag()">🩺 فحص قاعدة البيانات</button>'
     + '<details class="rec-d"><summary>تفاصيل تقنية</summary><div class="rec-e">'
     + esc(Store.errors.join('\n') || 'غير معروف') + '</div></details>'
     + '</div>');
 }
+/** الفحص متاحٌ حتى حين تتعذّر القراءة — فهو أنفع ما يكون هناك بالذات.
+    NAV من صفحةٍ واحدة: لا سهم رجوع يقود إلى تطبيقٍ يبدو فارغًا. */
+window.recoverDiag = function () { NAV = ['diag']; showApp(); };
 /** الاستعادة من شاشة الإنقاذ — بتأكيدٍ صريح ثم دخولٌ للتطبيق. */
 window.recoverFrom = function (name) {
   confirmBox('استعادة «' + name + '» ستحلّ محلّ ما في قاعدة البيانات الآن. متابعة؟', function () {
@@ -715,9 +720,84 @@ function renderSettings() {
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
     + '<div class="ver"><span class="ver-l">إصدار التطبيق</span>'
     + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
+    + (Store.errors.length
+        ? '<div class="rec-note" style="margin:10px 0">⚠️ تعذّرت قراءة جزء من بياناتك في آخر فتح.'
+          + ' افتح «فحص قاعدة البيانات» لترى ما لم يُقرأ.</div>' : '')
+    + '<button class="btn full" onclick="goPage(\'diag\')">🩺 فحص قاعدة البيانات</button>'
     + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا. التطبيق لا يملك صلاحية إنترنت أصلًا.</div></div>'
   );
 }
+
+/* ── 🩺 فحص قاعدة البيانات ─────────────────────────────────────────
+   «القسم فارغ» و«تعذّرت قراءة القسم» يبدوان واحدًا على الشاشة، وهما ليسا
+   كذلك: الأول لا شيء فيه، والثاني فيه كل شيء ولا نراه. هذه الصفحة تسأل
+   SQLite مباشرةً فتفصل بينهما، وتُنسَخ بضغطة لتصل لمن يصلح. */
+function renderDiag() {
+  var d = {};
+  try { d = NDB ? JSON.parse(NDB.diagnose() || '{}') : {}; } catch (e) { d = { fatal: String(e) }; }
+
+  var html = (Store.ok ? ''
+      : '<button class="btn full" onclick="showRecovery()">↩️ العودة لشاشة الإنقاذ</button>')
+    + '<div class="hint">ما في قاعدتك كما يراه SQLite نفسه — لا كما عرضته الشاشة.</div>';
+
+  if (!NDB) {
+    h('page', html + emptyBox('🩺', 'الفحص داخل التطبيق فقط',
+      'هذه الصفحة تقرأ قاعدة البيانات مباشرةً، ولا قاعدة في المتصفح'));
+    return;
+  }
+
+  if (Store.errors.length) {
+    html += '<div class="rec-note"><b>أخطاء القراءة في آخر فتح:</b><div class="rec-e">'
+      + esc(Store.errors.join('\n')) + '</div></div>';
+  } else {
+    html += '<div class="hint">✅ لا أخطاء قراءة في آخر فتح.</div>';
+  }
+  if (d.fatal) html += '<div class="rec-note">⛔ ' + esc(d.fatal) + '</div>';
+
+  html += '<div class="settings-sec"><div class="settings-lbl">الجداول</div>';
+  (d.tables || []).forEach(function (t) {
+    // الحالة الحرجة: صفوفٌ في الجدول ولا شيء يصل الواجهة
+    var bad = t.read_error || (t.rows > 0 && t.readable === 0);
+    html += '<div class="card"><div class="row">'
+      + '<div class="grow"><div class="name">' + (bad ? '⚠️ ' : '') + esc(t.name) + '</div>'
+      + '<div class="sub">' + (t.rows < 0 ? 'تعذّر العدّ' : t.rows + ' صفًّا')
+      + (t.readable !== undefined ? ' · يُقرأ منها ' + t.readable : '') + '</div>'
+      + '<div class="rec-e">' + esc(t.cols || t.cols_error || '') + '</div>'
+      + (t.read_error ? '<div class="rec-e">⛔ ' + esc(t.read_error) + '</div>' : '')
+      + (t.count_error ? '<div class="rec-e">⛔ ' + esc(t.count_error) + '</div>' : '')
+      + '</div></div></div>';
+  });
+  html += '</div>';
+
+  html += '<div class="settings-sec"><div class="settings-lbl">معلومات</div>'
+    + '<div class="ver"><span class="ver-l">إصدار المخطط</span><span class="ver-v">'
+    + esc(String(d.version)) + ' / المتوقَّع ' + esc(String(d.expected_version)) + '</span></div>'
+    + '<div class="ver"><span class="ver-l">حجم الملف</span><span class="ver-v">'
+    + esc(fmtBytes(d.size || 0)) + '</span></div>'
+    + '<div class="rec-e">' + esc(d.path || '') + '</div></div>';
+
+  html += '<button class="btn full primary" onclick="diagCopy()">📋 نسخ التقرير</button>';
+  h('page', html);
+  DIAG = d;
+}
+var DIAG = null;
+/** التقرير نصًّا — لا يحوي بياناتك، فقط أسماء الجداول وأعدادها وأعمدتها. */
+window.diagCopy = function () {
+  var lines = ['دليلي ' + appVersion(),
+               'مخطط: ' + (DIAG && DIAG.version) + ' / متوقَّع ' + (DIAG && DIAG.expected_version),
+               'أخطاء القراءة: ' + (Store.errors.join(' | ') || 'لا شيء'), ''];
+  ((DIAG && DIAG.tables) || []).forEach(function (t) {
+    lines.push(t.name + ': ' + t.rows + ' صفًّا'
+      + (t.readable !== undefined ? ', يُقرأ ' + t.readable : '')
+      + (t.read_error ? ', خطأ: ' + t.read_error : ''));
+    lines.push('   [' + (t.cols || t.cols_error || '') + ']');
+  });
+  var txt = lines.join('\n');
+  try {
+    if (AB && AB.copyText) { AB.copyText(txt); return toast('📋 نُسخ التقرير'); }
+  } catch (e) { /* يسقط للأسفل */ }
+  toast('تعذّر النسخ', 'er');
+};
 window.saveHeader = function () {
   DB.header = {
     name: (($('hd-name') || {}).value || '').trim(),
@@ -1077,6 +1157,7 @@ function render() {
   else if (p === 'secs') renderSectionsPage();
   else if (p === 'sent') renderSentPage();
   else if (p === 'imgs') renderImagesPage();
+  else if (p === 'diag') renderDiag();
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
@@ -1102,6 +1183,14 @@ function renderHome() {
   var html = '<div class="hero"><div class="hero-t">أهلًا بك 👋</div>'
     + '<div class="hero-s">كتالوجك الشخصي للعلاجات والتحاليل والوصفات — يعمل بلا إنترنت، وبياناتك على جهازك وحده.</div></div>';
 
+  // تحذير ثابت لا يزول مع إشعارٍ عابر: ما لم يُقرأ يجب أن يُرى في كل فتح
+  if (Store.errors.length) {
+    html += '<div class="rec-note"><b>⚠️ تعذّرت قراءة جزء من بياناتك.</b><br>'
+      + 'لم يُحذف شيء، ولن يكتب التطبيق فوق ما لم يقرأه. <b>لا تُعِد الإدخال</b>'
+      + ' قبل أن تفحص.</div>'
+      + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>';
+  }
+
   var cart = KINDS.reduce(function (a, k) { return a + DB.cart[k].length; }, 0);
   if (cart) {
     html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
@@ -1124,7 +1213,8 @@ function renderHome() {
     + KINDS.map(function (k, i) {
       var n = coll(k).length, L = kindLbl(k);
       return homeCard(k, L.icon, L.title,
-        n ? countWord(n, L.one, L.two, L.few, L.many) : 'لا شيء بعد',
+        n ? countWord(n, L.one, L.two, L.few, L.many)
+          : (kindFailed(k) ? '⚠️ تعذّرت القراءة' : 'لا شيء بعد'),
         (i === KINDS.length - 1 && KINDS.length % 2) ? ' wide' : '');
     }).join('')
     + '</div>';
@@ -1955,6 +2045,12 @@ function renderCatsPage(kind) {
     h('page', html + emptyBox('🏷️', 'لا توجد تصنيفات', 'أنشئ تصنيفًا ثم أسنِد إليه عناصرك'));
     return;
   }
+  // تصنيفاتٌ كلّها «فارغ» لأنّ عناصر القسم لم تُقرأ: قل ذلك هنا أيضًا
+  if (kindFailed(kind)) {
+    html += '<div class="rec-note"><b>⚠️ عناصر هذا القسم لم تُقرأ</b> — لذلك تبدو'
+      + ' التصنيفات كلّها فارغة. بياناتك لم تُحذف. <b>لا تُعِد الإدخال.</b></div>'
+      + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>';
+  }
   html += '<div class="hint">التصنيف يظهر في القسم عند وجود عنصر فيه. إعادة'
     + ' التسمية تنقل كل عناصره معه، والحذف يعيدها «غير مصنّف».</div>';
 
@@ -2096,7 +2192,7 @@ function renderMeds() {
   if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
   if (!list.length) {
     h('page', html + (q ? noHit('meds', q)
-      : emptyBox('💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
     return;
   }
 
@@ -2227,7 +2323,7 @@ function renderLabs() {
   });
   if (!list.length) {
     h('page', html + (q ? noHit('labs', q)
-      : emptyBox('🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
     return;
   }
 
@@ -2354,7 +2450,7 @@ function renderImaging() {
   if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
   if (!list.length) {
     h('page', html + (q ? noHit('imaging', q)
-      : emptyBox('📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
+      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
     return;
   }
 
@@ -2464,7 +2560,7 @@ function renderRecipes() {
   if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
   if (!list.length) {
     h('page', html + (q ? noHit('recipes', q)
-      : emptyBox('🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')));
+      : emptyOrFailed('recipes', '🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')));
     return;
   }
 
@@ -2557,6 +2653,27 @@ function itemLabel(kind, o) {
 function itemById(kind, id) {
   var c = coll(kind);
   return c && c.find(function (x) { return x.id === id; });
+}
+/**
+ * هل تعذّرت قراءة جدول هذا القسم في آخر فتح؟
+ *
+ * «القسم فارغ» و«تعذّرت قراءة القسم» يبدوان واحدًا على الشاشة وهما نقيضان:
+ * الأول لا شيء فيه، والثاني فيه كل شيء ولا نراه. وصندوق «لا توجد تحاليل
+ * محفوظة» فوق جدولٍ عامر كذبةٌ تدفع المستخدم لإعادة الإدخال فوق بياناته.
+ */
+function kindFailed(kind) {
+  return Store.errors.some(function (e) { return String(e).indexOf(kind + ':') === 0; });
+}
+/** صندوق الفراغ الصادق: يفرّق بين لا شيء وبين ما لم نستطع قراءته. */
+function emptyOrFailed(kind, icon, title, hint) {
+  if (!kindFailed(kind)) return emptyBox(icon, title, hint);
+  return '<div class="rec-note" style="margin:12px 0">'
+    + '<b>⚠️ هذا القسم ليس فارغًا — تعذّرت قراءته.</b><br>'
+    + 'بياناتك ما زالت في قاعدة البيانات، والتطبيق لم يستطع قراءتها هذه المرة'
+    + ' ولن يكتب فوقها شيئًا. <b>لا تُعِد إدخالها.</b></div>'
+    + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>'
+    + '<button class="btn full" onclick="goPage(\'settings\')">↩️ استعادة نسخة احتياطية</button>'
+    + '<div class="rec-e">' + esc(Store.errors.join('\n')) + '</div>';
 }
 /** من قائمة معرّفات: ما له عنصرٌ قائم فعلًا، بترتيبه كما هو. */
 function liveIds(kind, ids) {

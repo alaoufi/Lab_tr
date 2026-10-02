@@ -2271,3 +2271,51 @@ run('القائمة: الدرج يسرد الأقسام والأدوات وال�
   eq(c.curPage(), 'labs', 'one tap takes you to the section:');
   eq(c._els('dw').className.indexOf('on') < 0, true, 'and shuts the drawer behind it:');
 });
+
+/* ── «فارغ» لا يجوز أن تعني «لم أستطع القراءة» ───────────────────── */
+
+run('الصدق: قسمٌ تعذّرت قراءته لا يُعرَض فارغًا', () => {
+  const b = makeBridge();
+  b._t.labs.push({ id: 'L1', name: 'CBC', category: 'كيمياء الدم' });
+  b._t.cats.push({ id: 'c1', kind: 'labs', name: 'كيمياء الدم' });
+  b._t.cart.labs = ['L1'];
+  const inner = b.loadAll;
+  b.loadAll = () => {                        // جدول التحاليل وحده تعذّر
+    const d = JSON.parse(inner());
+    d.labs = []; d.errors = ['labs: no such column: sort_order'];
+    return JSON.stringify(d);
+  };
+  const c = load(b); c.boot();
+
+  // صفحة القسم
+  c.goPage('labs');
+  let html = c._els('page').innerHTML;
+  eq(html.indexOf('لا توجد تحاليل محفوظة') < 0, true, 'does not claim to be empty:');
+  eq(html.indexOf('ليس فارغًا') >= 0, true, 'says the opposite, plainly:');
+  eq(html.indexOf('لا تُعِد إدخالها') >= 0, true, 'and warns against re-typing over it:');
+  eq(html.indexOf("goPage('diag')") >= 0, true, 'with a way to look:');
+
+  // صفحة التصنيفات — حيث رآها المستخدم «فارغ» سطرًا بعد سطر
+  c.goPage('cat:labs');
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('عناصر هذا القسم لم تُقرأ') >= 0, true, 'the categories page says why they all read empty:');
+
+  // الرئيسية
+  c.goHome();
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('تعذّرت قراءة جزء من بياناتك') >= 0, true, 'a standing banner, not a passing toast:');
+  eq(html.indexOf('⚠️ تعذّرت القراءة') >= 0, true, 'and the card says so too:');
+
+  // ولا كتابة ولا تنظيف
+  eq(b._t.cart.labs, ['L1'], 'and nothing was swept away on a bad read:');
+});
+
+run('الصدق: قسمٌ فارغ فعلًا يبقى فارغًا بلا تهويل', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('لا توجد تحاليل محفوظة') >= 0, true, 'a truly empty section reads empty:');
+  eq(html.indexOf('ليس فارغًا') < 0, true, 'with no alarm:');
+  c.goHome();
+  eq(c._els('page').innerHTML.indexOf('تعذّرت قراءة') < 0, true, 'and no banner on the home page:');
+});

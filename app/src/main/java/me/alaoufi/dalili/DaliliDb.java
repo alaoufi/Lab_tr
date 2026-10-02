@@ -5,6 +5,7 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.util.Log;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -23,6 +24,7 @@ import org.json.JSONObject;
 public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
+    private static final String TAG = "DaliliDb";
     private static final int DB_VERSION = 9;
 
     /**
@@ -426,9 +428,26 @@ public class DaliliDb extends SQLiteOpenHelper {
         return out;
     }
 
+    /**
+     * مؤشّر على صفوف جدول، لا يسقط لأجل الترتيب.
+     *
+     * {@code str} تتسامح مع عمودٍ ناقص عند القراءة، لكن {@code ORDER BY} جملةُ
+     * SQL: عمودٌ ناقص فيها يرمي قبل أن يصل صفٌّ واحد — فيبدو الجدول فارغًا
+     * وهو عامر. فإن تعذّر الترتيب نقرأ بلا ترتيب: ترتيبٌ غير مثالي خيرٌ من
+     * قسمٍ فارغ.
+     */
+    private Cursor rows(SQLiteDatabase db, String table, String sel, String[] args) {
+        try {
+            return db.query(table, null, sel, args, null, null, "sort_order ASC");
+        } catch (Exception e) {
+            Log.w(TAG, "order by sort_order failed on " + table + " — reading unordered", e);
+            return db.query(table, null, sel, args, null, null, null);
+        }
+    }
+
     private JSONArray readItems(SQLiteDatabase db, String kind) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query(kind, null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, kind, null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -455,7 +474,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private JSONArray readSections(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("sections", null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, "sections", null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -471,7 +490,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private JSONArray readFields(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("fields", null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, "fields", null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -489,8 +508,7 @@ public class DaliliDb extends SQLiteOpenHelper {
     /** عناصر قسمٍ أنشأه المستخدم — من جدول items بمرشّح مربوط لا باسم جدول. */
     private JSONArray readCustomItems(SQLiteDatabase db, String section) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("items", null, "section=?", new String[]{section},
-                null, null, "sort_order ASC");
+        Cursor c = rows(db, "items", "section=?", new String[]{section});
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -596,7 +614,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private JSONArray readImages(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("images", null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, "images", null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -684,7 +702,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private JSONArray readCats(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("cats", null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, "cats", null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject o = new JSONObject();
@@ -751,7 +769,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     private JSONArray readGroups(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
-        Cursor c = db.query("groups", null, null, null, null, null, "sort_order ASC");
+        Cursor c = rows(db, "groups", null, null);
         try {
             while (c.moveToNext()) {
                 JSONObject g = new JSONObject();
@@ -1087,6 +1105,69 @@ public class DaliliDb extends SQLiteOpenHelper {
             v.put("position", i);
             db.insertWithOnConflict("cart", null, v, SQLiteDatabase.CONFLICT_REPLACE);
         }
+    }
+
+    /**
+     * تشخيص: ماذا في القاعدة فعلًا، بغضّ النظر عمّا استطاعت الواجهة قراءته.
+     *
+     * الفرق بين «الجدول فارغ» و«تعذّرت قراءته» لا يُرى من الواجهة، وقد
+     * كلّفنا هذا الفرقُ جولتين من التخمين. هنا نسأل SQLite مباشرةً: ما
+     * الجداول الموجودة، وكم صفًّا في كلٍّ منها، وما أعمدته — وأي خطأ يمنع
+     * ذلك يُكتب كما هو لا مُبتلَعًا.
+     */
+    public JSONObject diagnose() {
+        JSONObject out = new JSONObject();
+        JSONArray tables = new JSONArray();
+        try {
+            SQLiteDatabase db = getReadableDatabase();
+            out.put("version", db.getVersion());
+            out.put("expected_version", DB_VERSION);
+            out.put("path", db.getPath());
+            try {
+                java.io.File f = new java.io.File(db.getPath());
+                out.put("size", f.length());
+            } catch (Exception ignored) { }
+
+            JSONArray names = new JSONArray();
+            Cursor t = db.rawQuery(
+                    "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name", null);
+            try { while (t.moveToNext()) names.put(t.getString(0)); } finally { t.close(); }
+
+            for (int i = 0; i < names.length(); i++) {
+                String name = names.optString(i);
+                if (name.startsWith("sqlite_") || name.startsWith("android_")) continue;
+                JSONObject row = new JSONObject();
+                row.put("name", name);
+                // عدد الصفوف كما يراه SQLite — لا كما قرأته الواجهة
+                try {
+                    Cursor c = db.rawQuery("SELECT COUNT(*) FROM \"" + name + "\"", null);
+                    try { row.put("rows", c.moveToFirst() ? c.getInt(0) : -1); } finally { c.close(); }
+                } catch (Exception e) { row.put("rows", -1); row.put("count_error", String.valueOf(e)); }
+                // الأعمدة الموجودة فعلًا
+                try {
+                    StringBuilder cols = new StringBuilder();
+                    Cursor c = db.rawQuery("PRAGMA table_info(\"" + name + "\")", null);
+                    try {
+                        while (c.moveToNext()) {
+                            if (cols.length() > 0) cols.append(", ");
+                            cols.append(c.getString(1));
+                        }
+                    } finally { c.close(); }
+                    row.put("cols", cols.toString());
+                } catch (Exception e) { row.put("cols_error", String.valueOf(e)); }
+                // وهل تنجح القراءة التي تستعملها الواجهة؟
+                if (isKind(name)) {
+                    try {
+                        row.put("readable", readItems(db, name).length());
+                    } catch (Exception e) { row.put("read_error", String.valueOf(e)); }
+                }
+                tables.put(row);
+            }
+        } catch (Exception e) {
+            try { out.put("fatal", String.valueOf(e)); } catch (Exception ignored) { }
+        }
+        try { out.put("tables", tables); } catch (Exception ignored) { }
+        return out;
     }
 
     /** هل القاعدة فارغة تمامًا؟ (تُستخدم لترحيل بيانات localStorage القديمة مرّة واحدة)

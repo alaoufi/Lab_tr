@@ -324,6 +324,17 @@ public class DbBridge {
         }
     }
 
+    /** تشخيص القاعدة كما يراها SQLite — جداولها وأعداد صفوفها وأعمدتها. */
+    @JavascriptInterface
+    public String diagnose() {
+        try {
+            return db.diagnose().toString();
+        } catch (Exception e) {
+            Log.e(TAG, "diagnose failed", e);
+            return "{\"fatal\":\"" + e + "\"}";
+        }
+    }
+
     /** تُستخدم مرّة واحدة لترحيل بيانات localStorage من الإصدارات السابقة. */
     @JavascriptInterface
     public boolean isEmpty() {
