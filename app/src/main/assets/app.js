@@ -3158,16 +3158,31 @@ function grpCatch(kind) {
 /* ════════════════════════ طباعة/PDF + مشاركة واتساب ════════════════════════ */
 /* الاسم دائمًا في السطر الأول؛ الرمز (للتحاليل) والاسم العلمي (للعلاجات)
    يُدمجان معه إن اختيرا، وبقية الحقول المختارة تنزل أسطرًا تحته. */
-function outTitle(kind, o, i) {
+/** اسم العنصر كما يظهر في المخرجات — بلا رقم: الرقم يُرسَم مستقلًّا. */
+function outTitle(kind, o) {
   var sel = DB.out[kind];
   if (kind === 'meds') {
-    return (i + 1) + '. ' + o.trade_name
+    return o.trade_name
       + (sel.indexOf('scientific_name') >= 0 && o.scientific_name ? ' (' + o.scientific_name + ')' : '');
   }
   if (kind === 'labs') {
-    return (i + 1) + '. ' + (sel.indexOf('code') >= 0 && o.code ? o.code + ' — ' : '') + o.name;
+    return (sel.indexOf('code') >= 0 && o.code ? o.code + ' — ' : '') + o.name;
   }
-  return (i + 1) + '. ' + o.name;
+  return o.name;
+}
+/**
+ * اتجاه نصٍّ بحسب أول حرفٍ ذي اتجاه فيه: عربيٌّ ⇒ rtl، لاتينيٌّ ⇒ ltr.
+ *
+ * الأرقام وعلامات الترقيم لا اتجاه لها، لذلك «1. Urea» في فقرةٍ عربية كان
+ * يُرسَم «Urea .1» — الرقم في الطرف الخطأ والنقطة قبله. نفس ما يفعله
+ * `dir="auto"` في HTML، ونحتاجه هنا للوحة الرسم والنصّ المنسوخ أيضًا.
+ */
+function dirOf(t) {
+  var m = String(t == null ? '' : t)
+    .match(/[A-Za-z\u00C0-\u024F\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/);
+  if (!m) return 'rtl';
+  return /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(m[0])
+    ? 'rtl' : 'ltr';
 }
 function outLines(kind, o) {
   var defs = outDefs(kind);
@@ -3193,18 +3208,27 @@ function rowsFor(kind, ids) {
   var src = coll(kind);
   return ids.map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
-    return o ? { title: outTitle(kind, o, i), lines: outLines(kind, o),
+    return o ? { n: i + 1, title: outTitle(kind, o), lines: outLines(kind, o),
                  img: (o.img && imgByCode(o.img)) ? o.img : '' } : null;
   }).filter(Boolean);
 }
 function cartRows(kind) { return rowsFor(kind, DB.cart[kind]); }
+/*
+ * الاتجاه على كل سطرٍ لا على الورقة: `dir="auto"` يجعل المتصفّح يستنتجه من
+ * أول حرفٍ ذي اتجاه. فاسمٌ لاتيني يُرسَم من اليسار ورقمُه عن يساره، واسمٌ
+ * عربي من اليمين ورقمُه عن يمينه — وسطور الحقول تبقى عربية لأن عناوينها
+ * عربية، مهما كانت لغة الاسم فوقها.
+ */
 function itemsHtml(kind, ids) {
   return rowsFor(kind, ids).map(function (r) {
-    return '<div class="rx-item"><div class="rx-name">' + esc(r.title) + '</div>'
+    return '<div class="rx-item">'
+      + '<div class="rx-name" dir="auto"><span class="rx-n">' + r.n + '.</span>'
+      + '<span class="rx-t">' + esc(r.title) + '</span></div>'
       + (r.img ? '<img class="rx-pic" src="' + imgData(r.img) + '" alt="">' : '')
       + r.lines.map(function (x) {
         // نصّ الحقل يمرّ بـtextHtml لا esc: الرمز {code} يصير صورةً مكانه
-        return '<div class="rx-f"><span class="rx-l">' + esc(x.l) + ':</span> ' + textHtml(x.v) + '</div>';
+        return '<div class="rx-f" dir="auto"><span class="rx-l">' + esc(x.l) + ':</span> '
+          + textHtml(x.v) + '</div>';
       }).join('') + '</div>';
   }).join('');
 }
@@ -3243,7 +3267,12 @@ function printCss(scope, dense) {
     + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
     + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:' + F.pad
     + ';margin-bottom:' + F.gap + ';page-break-inside:avoid}'
-    + s + '.rx-name{font-weight:bold;font-size:' + F.name + ';color:#0f766e;margin-bottom:1pt;line-height:1.3}'
+    // الرقم عمودٌ ثابت العرض فتصطفّ الأسماء تحت بعضها، والصندوق يتبع
+    // اتجاه الاسم (dir=auto) فيقع الرقم في الطرف الصحيح من السطر دائمًا
+    + s + '.rx-name{display:flex;gap:' + (dense ? '3pt' : '5pt') + ';align-items:baseline;'
+    + 'font-weight:bold;font-size:' + F.name + ';color:#0f766e;margin-bottom:1pt;line-height:1.3}'
+    + s + '.rx-n{flex:none;min-width:' + (dense ? '7pt' : '9pt') + ';text-align:start;color:#64748b}'
+    + s + '.rx-t{flex:1;min-width:0}'
     + s + '.rx-f{font-size:' + F.line + ';margin:0.5pt 0;line-height:' + F.lh + ';white-space:pre-wrap}'
     + s + '.rx-l{color:#475569;font-weight:bold}'
     + s + '.rx-pic{display:block;max-width:' + (dense ? '38mm' : '52mm')
@@ -3373,7 +3402,10 @@ function buildCanvas(kind, ids, title, pics) {
   }
   var rows = rowsFor(kind, ids).map(function (r) {
     ctx.font = TITLE_F;
-    var titleLines = wrapText(ctx, r.title, MAXW);
+    // الرقم يأخذ عرضه من الهامش فتصطفّ الأسماء تحت بعضها مهما طال الرقم
+    var num = r.n + '.';
+    var numW = Math.max(ctx.measureText('99.').width, ctx.measureText(num).width) + 10;
+    var titleLines = wrapText(ctx, r.title, MAXW - numW);
     ctx.font = LINE_F;
     var lines = [], hh = 0;
     var top = r.img ? picLine(r.img) : null;
@@ -3389,6 +3421,7 @@ function buildCanvas(kind, ids, title, pics) {
       });
     });
     return {
+      num: num, numW: numW, dir: dirOf(r.title),
       titleLines: titleLines, lines: lines, top: top,
       h: 18 + titleLines.length * TITLE_H + hh
     };
@@ -3417,7 +3450,16 @@ function buildCanvas(kind, ids, title, pics) {
 
     var ty = y + 24;
     ctx.fillStyle = '#0f172a'; ctx.font = TITLE_F;
-    r.titleLines.forEach(function (t) { ctx.fillText(t, W - PAD - 11, ty); ty += TITLE_H; });
+    var R = W - PAD - 11, Lx = PAD + 11;          // حافّتا السطر
+    if (r.dir === 'ltr') {
+      ctx.direction = 'ltr'; ctx.textAlign = 'left';
+      ctx.fillText(r.num, Lx, ty);
+      r.titleLines.forEach(function (t) { ctx.fillText(t, Lx + r.numW, ty); ty += TITLE_H; });
+      ctx.direction = 'rtl'; ctx.textAlign = 'right';
+    } else {
+      ctx.fillText(r.num, R, ty);
+      r.titleLines.forEach(function (t) { ctx.fillText(t, R - r.numW, ty); ty += TITLE_H; });
+    }
     if (r.top) {
       ctx.drawImage(r.top.im, W - PAD - 11 - r.top.w, ty - 8, r.top.w, r.top.h);
       ty += r.top.h + 8;
@@ -3453,7 +3495,9 @@ function listText(kind, ids, title, who) {
   lines.push(title + (who ? ' — ' + who : '') + ' — ' + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
   lines.push('');
   rowsFor(kind, ids).forEach(function (r) {
-    lines.push(r.title);
+    // LRM/RLM قبل الرقم: محرف غير مرئي يثبّت ترتيب السطر في واتساب وغيره
+    var mark = dirOf(r.title) === 'ltr' ? '\u200E' : '\u200F';
+    lines.push(mark + r.n + '. ' + r.title);
     r.lines.forEach(function (x) {
       var segs = plainText(x.v).split('\n');
       lines.push('   • ' + x.l + ': ' + segs[0]);

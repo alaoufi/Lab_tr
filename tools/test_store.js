@@ -382,13 +382,14 @@ run('الطباعة تُخرج الحقول المختارة فقط', () => {
   c.toggleCart('meds', b._t.meds[0].id);
 
   let rows = c.cartRows('meds');
-  eq(rows[0].title, '1. بنادول', 'sci not selected → not in title:');
+  eq(rows[0].title, 'بنادول', 'sci not selected → not in title:');
+  eq(rows[0].n, 1, 'and the number is a field of its own, not glued to it:');
   eq(rows[0].lines.map(c.lineText), ['الجرعات: قرص كل ٨ ساعات', 'الاستخدامات: خفض الحرارة'], 'default fields:');
 
   c.toggleOut('meds', 'cautions');
   c.toggleOut('meds', 'scientific_name');
   rows = c.cartRows('meds');
-  eq(rows[0].title, '1. بنادول (Paracetamol)', 'sci merged into title:');
+  eq(rows[0].title, 'بنادول (Paracetamol)', 'sci merged into title:');
   eq(rows[0].lines.length, 3, 'cautions added:');
 
   c.toggleOut('meds', 'uses');
@@ -407,7 +408,7 @@ run('إخراج التحاليل: الرمز يُدمج مع الاسم والب
   c.toggleCart('labs', b._t.labs[0].id);
 
   let r = c.cartRows('labs')[0];
-  eq(r.title, '1. FBS — سكر صائم');
+  eq(r.title, 'FBS — سكر صائم'); eq(r.n, 1);
   eq(r.lines.map(c.lineText), ['متطلبات التحليل: صيام ٨ ساعات']);
 
   c.toggleOut('labs', 'purpose');
@@ -593,7 +594,7 @@ run('الوصفات: السلة والحذف والإخراج', () => {
   eq(b._t.cart.recipes, [id], 'cart persisted:');
 
   let r = c.cartRows('recipes')[0];
-  eq(r.title, '1. خلطة الحديد', 'title is the name:');
+  eq(r.title, 'خلطة الحديد', 'title is the name:');
   eq(r.lines.map(c.lineText), ['المواد المستخدمة: تمر وطحينة', 'طريقة الإعداد: تُخلط جيدًا', 'الجرعة: ملعقة يوميًا'], 'default fields:');
 
   c.toggleOut('recipes', 'precautions');
@@ -895,7 +896,7 @@ run('الأشعة: السلة والإخراج والمجموعات', () => {
   c.toggleCart('imaging', id);
 
   const r = c.cartRows('imaging')[0];
-  eq(r.title, '1. سونار البطن', 'title:');
+  eq(r.title, 'سونار البطن', 'title:');
   eq(r.lines.map(c.lineText), ['المنطقة أو العضو: البطن', 'التحضير المطلوب: صيام ٦ ساعات'], 'defaults:');
   eq(c.cartTitle('imaging', false), 'طلب أشعة وفحوصات', 'document title:');
 
@@ -2558,4 +2559,53 @@ run('الحفظ: النجاح يبقى نجاحًا', () => {
   eq(c._els('toast').textContent.indexOf('تم الحفظ') >= 0, true, 'a real save says so:');
   eq(c._els('modal-bg').className.indexOf('on') < 0, true, 'and closes the form:');
   eq(b._t.labs.length, 1, 'and reached the database:');
+});
+
+/* ── الاتجاه: كل سطر يتبع لغته، والرقم في طرفه الصحيح ────────────────── */
+
+run('الاتجاه: اسم لاتيني يُرسَم ltr وعربي rtl', () => {
+  const c = load(makeBridge()); c.boot();
+  eq(c.dirOf('Urea'), 'ltr', 'latin → ltr:');
+  eq(c.dirOf('ALT (SGPT)'), 'ltr', 'latin with punctuation → ltr:');
+  eq(c.dirOf('صورة دم كاملة'), 'rtl', 'arabic → rtl:');
+  eq(c.dirOf('1. Urea'), 'ltr', 'leading digits do not decide — the letters do:');
+  eq(c.dirOf('٢٠٢٤ سكر الدم'), 'rtl', 'nor arabic-indic digits:');
+  eq(c.dirOf('123'), 'rtl', 'digits alone fall back to the page direction:');
+  eq(c.dirOf(''), 'rtl', 'and so does nothing at all:');
+});
+
+run('الاتجاه: الورقة تضع dir=auto على كل سطر والرقم عنصرًا مستقلًّا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  ['Urea', 'صورة دم كاملة'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+
+  const html = c.itemsHtml('labs', c.DB.cart.labs);
+  eq(html.indexOf('class="rx-name" dir="auto"') >= 0, true, 'the name line decides its own direction:');
+  eq(html.indexOf('<span class="rx-n">1.</span>') >= 0, true, 'the number is its own element:');
+  eq(html.indexOf('<span class="rx-t">Urea</span>') >= 0, true, 'and the name is not glued to it:');
+  eq(/1\. ?Urea/.test(html.replace(/<[^>]+>/g, '')), true, 'they still read as “1. Urea”:');
+  eq(html.indexOf('<span class="rx-n">2.</span>') >= 0, true, 'and numbering carries on:');
+
+  // تنسيق الطباعة يحجز للرقم عمودًا
+  const css = c.printCss('.paper', 0);
+  eq(css.indexOf('.rx-n{') >= 0, true, 'the number has a column of its own:');
+  eq(css.indexOf('text-align:start') >= 0, true, 'aligned to the line start, whichever side that is:');
+});
+
+run('الاتجاه: النصّ المنسوخ يحمل علامة اتجاه قبل الرقم', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  ['Urea', 'صورة دم كاملة'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.copyList('labs', c.DB.cart.labs, 'قائمة تحاليل', '');
+  const lines = A._clip.split('\n');
+  const latin = lines.find(l => l.indexOf('Urea') >= 0);
+  const arabic = lines.find(l => l.indexOf('صورة دم') >= 0);
+  eq(latin.charCodeAt(0), 0x200E, 'the latin line is marked left-to-right:');
+  eq(arabic.charCodeAt(0), 0x200F, 'the arabic line right-to-left:');
+  eq(latin.indexOf('1. Urea') >= 0, true, 'numbered as it reads:');
+  eq(arabic.indexOf('2. صورة دم كاملة') >= 0, true, 'and so is the arabic one:');
 });
