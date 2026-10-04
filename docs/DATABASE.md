@@ -239,6 +239,7 @@ private static String flagCol(String kind)   { … }   // ما اسم عمود �
 | `saveGroup(json)` | `{id, kind, name, items[]}` | نجاح |
 | `deleteGroup(id)` | | نجاح |
 | `setGroupOrder(jsonIds)` | ترتيب المجموعات كما رتّبها المستخدم | نجاح |
+| `setItemOrder(kind, jsonIds)` | ترتيب عناصر قسم — مصدر ترتيب العرض وكل ما يتبعه | نجاح |
 | `saveSection(json)` | `{id, title, icon, builtin}` | نجاح |
 | `deleteSection(id)` | قسم المستخدم بكل ما يتبعه؛ الأصلية مرفوضة | نجاح |
 | `setSectionOrder(jsonIds)` | ترتيب البطاقات في الرئيسية | نجاح |

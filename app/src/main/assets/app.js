@@ -326,6 +326,10 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.deleteGroup(id) || dbFail(); } catch (e) { return dbFail(); }
   },
+  setItemOrder: function (kind, ids) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setItemOrder(kind, JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
+  },
   setGroupOrder: function (ids) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setGroupOrder(JSON.stringify(ids)) || dbFail(); } catch (e) { return dbFail(); }
@@ -1519,7 +1523,7 @@ function renderCustomSection(kind) {
     gs.forEach(function (g) {
       html += accBlock(L.icon + ' ' + g.cat + ' (' + g.items.length + ')',
         g.items.map(function (o) { return secRow(kind, o); }).join(''), op,
-        pickCall(kind, g.cat));
+        pickCall(kind, g.cat), kind, g.cat);
     });
   }
   h('page', html);
@@ -2210,7 +2214,7 @@ function renderMeds() {
     var gs = groupBy(list, 'meds'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(medRow).join(''), op, pickCall('meds', g.cat));
+        g.items.map(medRow).join(''), op, pickCall('meds', g.cat), 'meds', g.cat);
     });
   }
   h('page', html);
@@ -2321,7 +2325,7 @@ function sectionBar(kind, q, placeholder, addCall) {
  * في الإرسال: مربع تأشير واسمٌ وحسب، فالصفّ كلّه يؤشّر.
  * في الإدخال: تعديل وتكرار وحذف، بلا مربع تأشير يشوّش.
  */
-function itemCard(kind, o, body, editCall, delCall, star) {
+function itemCard(kind, o, body, editCall, delCall) {
   var sending = mode() === 'send';
   var on = DB.cart[kind].indexOf(o.id) >= 0;
   return '<div class="card' + (on && sending ? ' sel' : '') + '"><div class="row">'
@@ -2333,12 +2337,56 @@ function itemCard(kind, o, body, editCall, delCall, star) {
         ? ' onclick="toggleCart(\'' + kind + '\',\'' + o.id + '\')"'
         : ' onclick="' + editCall + '"') + '>' + body + '</div>'
     + thumb(o)
-    + (sending ? ''
-        : '<button class="ic" onclick="' + editCall + '">✏️</button>'
-          + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
-          + '<button class="ic" onclick="' + delCall + '">🗑️</button>')
+    + (sending ? '' : orderBtns(kind, o)
+        + '<button class="ic" onclick="' + editCall + '">✏️</button>'
+        + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
+        + '<button class="ic" onclick="' + delCall + '">🗑️</button>')
     + '</div></div>';
 }
+/**
+ * أسهم الترتيب — على البطاقة نفسها، ظاهرةً أوّل ما تُفتح القائمة.
+ *
+ * كان ترتيب العناصر غير ممكن أصلًا، وترتيب التصنيفات مخفيًّا خلف صفحة
+ * أخرى. والترتيب هنا هو مصدر الترتيب في كل مكان: السلة والورقة والصورة
+ * والنصّ المنسوخ تقرأ كلّها من `displayOrder`.
+ */
+function orderBtns(kind, o) {
+  var sibs = sibsOf(kind, o);
+  var i = sibs.indexOf(o.id);
+  return '<button class="ic"' + (i <= 0 ? ' disabled' : '')
+    + ' onclick="itemMove(\'' + kind + '\',\'' + o.id + '\',-1)" title="أعلى">▲</button>'
+    + '<button class="ic"' + (i < 0 || i === sibs.length - 1 ? ' disabled' : '')
+    + ' onclick="itemMove(\'' + kind + '\',\'' + o.id + '\',1)" title="أسفل">▼</button>';
+}
+/** جيران العنصر داخل تصنيفه — وهم من يتبادل معهم الموضع. */
+function sibsOf(kind, o) {
+  var cat = (o.category || '').trim();
+  return coll(kind).filter(function (x) {
+    return ((x.category || '').trim()) === cat;
+  }).map(function (x) { return x.id; });
+}
+/**
+ * يحرّك العنصر بين جيرانه في تصنيفه، ويكتب ترتيب القسم **كاملًا**.
+ * التبديل على القائمة الكاملة لا المعروضة، فيثبت الترتيب مهما كان
+ * المعروض مرشَّحًا ببحثٍ أو مطويًّا في تصنيف.
+ */
+window.itemMove = function (kind, id, dir) {
+  var all = coll(kind);
+  var o = all.find(function (x) { return x.id === id; });
+  if (!o) return;
+  var sibs = sibsOf(kind, o);
+  var i = sibs.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= sibs.length) return;
+  var a = all.findIndex(function (x) { return x.id === id; });
+  var b = all.findIndex(function (x) { return x.id === sibs[j]; });
+  var t = all[a]; all[a] = all[b]; all[b] = t;
+  setColl(kind, all);
+  var ok = Store.setItemOrder(kind, all.map(function (x) { return x.id; }));
+  if (ok === false) return toast('⚠️ لم يُحفَظ الترتيب', 'er');
+  DB.cart[kind] = orderOf(kind, DB.cart[kind]);   // السلة تتبع فورًا
+  Store.setCart(kind);
+  render();
+};
 function emptyBox(icon, title, sub) {
   return '<div class="empty"><div class="ei">' + icon + '</div><div class="et">' + esc(title) + '</div><div class="es">' + esc(sub) + '</div></div>';
 }
@@ -2433,20 +2481,78 @@ function renderLabs() {
     var gs = groupBy(list, 'labs'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(labRow).join(''), op, pickCall('labs', g.cat));
+        g.items.map(labRow).join(''), op, pickCall('labs', g.cat), 'labs', g.cat);
     });
   }
   h('page', html);
 }
 var _accSeq = 0;
 /** `pick` نداءُ «تحديد الكل» — يُوضع داخل الرأس ويمنع طيّ المجموعة عند نقره. */
-function accBlock(title, inner, open, pick) {
-  if (mode() !== 'send') pick = '';     // «تحديد الكل» فعلُ إرسال لا إدخال
+/**
+ * رأس التصنيف يحمل أدوات الوضع الحالي:
+ * في الإرسال «☑️ تحديد الكل»، وفي الإدخال ▲▼ لتحريك التصنيف كلّه.
+ * وكان تحريك التصنيف مخفيًّا في صفحةٍ أخرى لا يصلها إلا من يعرف مكانها.
+ */
+function accBlock(title, inner, open, pick, kind, cat) {
+  var tools = '';
+  if (mode() === 'send') {
+    tools = pick ? '<button class="acc-pick" onclick="event.stopPropagation();event.preventDefault();'
+      + pick + '" title="تحديد الكل">☑️</button>' : '';
+  } else if (kind && cat) {
+    tools = catMoveBtns(kind, cat);
+  }
   return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title)
-    + (pick ? '<button class="acc-pick" onclick="event.stopPropagation();event.preventDefault();'
-        + pick + '" title="تحديد الكل">☑️</button>' : '')
-    + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
+    + tools + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
 }
+/** أسماء التصنيفات التي فيها عناصر — وهي وحدها ما يظهر في القسم. */
+function catsShown(kind) {
+  return groupBy(coll(kind), kind)
+    .map(function (g) { return g.cat; })
+    .filter(function (n) { return n !== UNCAT; });
+}
+/** سهما تحريك التصنيف في رأسه. «غير مصنّف» ليس تصنيفًا فلا يُحرَّك. */
+function catMoveBtns(kind, cat) {
+  if (cat === UNCAT) return '';
+  var shown = catsShown(kind), i = shown.indexOf(cat);
+  var stop = 'event.stopPropagation();event.preventDefault();';
+  var call = function (d) {
+    return stop + 'catMoveNamed(&#39;' + kind + '&#39;,&#39;'
+      + esc(cat).replace(/&#39;/g, '\\&#39;') + '&#39;,' + d + ')';
+  };
+  return '<button class="acc-pick"' + (i <= 0 ? ' disabled' : '')
+    + ' onclick="' + call(-1) + '" title="أعلى">▲</button>'
+    + '<button class="acc-pick"' + (i < 0 || i === shown.length - 1 ? ' disabled' : '')
+    + ' onclick="' + call(1) + '" title="أسفل">▼</button>';
+}
+/**
+ * تحريك تصنيف من رأسه في القسم — بين التصنيفات **الظاهرة** وحدها.
+ *
+ * التبديل مع الجار الخام كان قد يقع مع تصنيفٍ فارغ لا يظهر في القسم، فلا
+ * يتغيّر شيء أمام المستخدم ويظنّ أنّ الترتيب لم يُحفَظ. وهو محفوظ، لكنّه
+ * غير مرئي. فنبدّل مع الجار الذي يراه، ونكتب الترتيب كاملًا.
+ *
+ * واسمٌ مكتوبٌ داخل العناصر وحدها (بلا صفّ في `cats`) يُسجَّل أولًا: ما
+ * يراه المستخدم تصنيفًا يجب أن يتصرّف كتصنيف.
+ */
+window.catMoveNamed = function (kind, name, dir) {
+  var shown = catsShown(kind);
+  var i = shown.indexOf(name), j = i + dir;
+  if (i < 0 || j < 0 || j >= shown.length) return;
+  // نسجّل غير المسجَّل **بترتيب الظهور** لا بترتيب النداء، وإلا وُلِد
+  // الصفّان مقلوبين فجاء التبديل معكوسًا
+  shown.forEach(function (n) { catEnsure(kind, n); });
+  var list = catsRaw(kind);
+  var a = list.findIndex(function (x) { return x.name === name; });
+  var b = list.findIndex(function (x) { return x.name === shown[j]; });
+  if (a < 0 || b < 0) return;
+  var t = list[a]; list[a] = list[b]; list[b] = t;
+  DB.cats = DB.cats.filter(function (c) { return c.kind !== kind; }).concat(list);
+  var ok = Store.setCatOrder(DB.cats.map(function (c) { return c.id; }));
+  if (ok === false) return toast('⚠️ لم يُحفَظ الترتيب', 'er');
+  DB.cart[kind] = orderOf(kind, DB.cart[kind]);
+  Store.setCart(kind);
+  render();
+};
 /** تحديد كل عناصر تصنيف — أو رفعُ التحديد عنها إن كانت كلها محدَّدة. */
 function toggleIds(kind, ids) {
   if (!ids.length) return;
@@ -2550,7 +2656,7 @@ function renderImaging() {
     var gs = groupBy(list, 'imaging'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(imgRow).join(''), op, pickCall('imaging', g.cat));
+        g.items.map(imgRow).join(''), op, pickCall('imaging', g.cat), 'imaging', g.cat);
     });
   }
   h('page', html);
@@ -2646,7 +2752,7 @@ function renderRecipes() {
     var gs = groupBy(list, 'recipes'), op = openByDefault(list, gs);
     gs.forEach(function (g) {
       html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(recipeRow).join(''), op, pickCall('recipes', g.cat));
+        g.items.map(recipeRow).join(''), op, pickCall('recipes', g.cat), 'recipes', g.cat);
     });
   }
   h('page', html);

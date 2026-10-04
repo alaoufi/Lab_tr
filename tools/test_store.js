@@ -56,6 +56,14 @@ function makeBridge() {
       return true;
     },
     deleteGroup: id => { t.groups = t.groups.filter(g => g.id !== id); return true; },
+    setItemOrder: (kind, j) => {
+      const ids = JSON.parse(j);
+      const rank = o => { const i = ids.indexOf(o.id); return i < 0 ? 1e9 : i; };
+      if (isCustom(kind)) t.items.sort((a, b2) => rank(a) - rank(b2));
+      else t[kind].sort((a, b2) => rank(a) - rank(b2));
+      orders[kind] = ids;
+      return true;
+    },
     setGroupOrder: j => {
       const ids = JSON.parse(j);
       t.groups.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
@@ -2746,4 +2754,118 @@ run('الوضعان: البحث بلا نتيجة يدلّ على وضع الإ�
   eq(html.indexOf('أضِفه بهذا الاسم') < 0, true, 'but does not add from the sending mode:');
   eq(html.indexOf("setMode('edit')") >= 0, true, 'it points at the mode that does:');
   eq(b._t.labs.length, 1, 'and nothing was created behind the scenes:');
+});
+
+/* ── ترتيب العناصر: ظاهرٌ على البطاقة، ويُحفَظ، ويسري في كل مكان ───── */
+
+run('الترتيب: أسهم العناصر ظاهرة فور فتح القائمة في كل قسم', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit');
+  ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
+    c.goPage(k);
+    c.Store.upsert(k, { id: 'x1-' + k, name: 'أ', trade_name: 'أ', category: 'ت', extra: {} });
+    c.coll(k).push({ id: 'x1-' + k, name: 'أ', trade_name: 'أ', category: 'ت', extra: {} });
+    c.coll(k).push({ id: 'x2-' + k, name: 'ب', trade_name: 'ب', category: 'ت', extra: {} });
+    c.render();
+    const html = c._els('page').innerHTML;
+    eq(html.indexOf("itemMove('" + k + "'") >= 0, true, k + ': the arrows are right on the card:');
+    eq(html.indexOf('catMoveNamed(&#39;' + k) >= 0, true, k + ': and the category has its own, in its header:');
+  });
+});
+
+run('الترتيب: تحريك عنصر يُحفَظ ويبقى بعد إعادة التشغيل', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  ['FBS', 'Urea', 'CBC'].forEach(n => {
+    const rec = { id: c.uid(), category: 'كيمياء', name: n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', 'كيمياء'); c.Store.upsert('labs', rec);
+  });
+  const ids = c.DB.labs.map(x => x.id);
+
+  c.itemMove('labs', ids[2], -1);
+  eq(c.DB.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'moved up on screen:');
+  eq(b._order.labs, [ids[0], ids[2], ids[1]], 'and the new order reached the database:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'and it survives a restart:');
+
+  // الحدّان
+  c2.itemMove('labs', c2.DB.labs[0].id, -1);
+  eq(c2.DB.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'the first cannot rise:');
+  c2.itemMove('labs', c2.DB.labs[2].id, 1);
+  eq(c2.DB.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'nor the last fall:');
+});
+
+run('الترتيب: العنصر يتحرّك بين جيرانه في تصنيفه لا عبر التصنيفات', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit');
+  [['كيمياء', 'FBS'], ['دم', 'CBC'], ['دم', 'ESR']].forEach(x => {
+    const rec = { id: c.uid(), category: x[0], name: x[1], code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', x[0]); c.Store.upsert('labs', rec);
+  });
+  const ids = c.DB.labs.map(x => x.id);
+
+  c.itemMove('labs', ids[1], -1);       // CBC أوّل «دم» — لا يقفز إلى «كيمياء»
+  eq(c.DB.labs.map(x => x.name), ['FBS', 'CBC', 'ESR'], 'it stays within its category:');
+
+  c.itemMove('labs', ids[2], -1);       // ESR يعلو فوق CBC
+  eq(c.DB.labs.map(x => x.name), ['FBS', 'ESR', 'CBC'], 'but moves freely among its own:');
+});
+
+run('الترتيب: تحريك عنصر يسري على السلة والورقة فورًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit');
+  ['FBS', 'Urea', 'CBC'].forEach(n => {
+    const rec = { id: c.uid(), category: 'كيمياء', name: n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', 'كيمياء'); c.Store.upsert('labs', rec);
+  });
+  c.setMode('send');
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+  eq(c.rowsFor('labs', c.DB.cart.labs).map(r => r.title), ['FBS', 'Urea', 'CBC'], 'paper as created:');
+
+  c.setMode('edit');
+  c.itemMove('labs', c.DB.labs[2].id, -1);
+  eq(c.DB.cart.labs, c.displayOrder('labs'), 'the cart followed at once:');
+  eq(b._t.cart.labs, c.displayOrder('labs'), 'and so did the stored cart:');
+  eq(c.rowsFor('labs', c.DB.cart.labs).map(r => r.title), ['FBS', 'CBC', 'Urea'], 'and the paper with it:');
+});
+
+run('الترتيب: تحريك التصنيف يبدّل مع الجار الظاهر لا الفارغ', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit');
+  // تصنيفات مزروعة كثيرة، واثنان فقط فيهما عناصر
+  [['كيمياء الدم', 'FBS'], ['أمراض الدم', 'CBC']].forEach(x => {
+    const rec = { id: c.uid(), category: x[0], name: x[1], code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', x[0]); c.Store.upsert('labs', rec);
+  });
+  eq(c.catsShown('labs'), ['كيمياء الدم', 'أمراض الدم'], 'only the two with items show:');
+  eq(c.catsRaw('labs').length > 2, true, '(while many more are registered)');
+
+  c.catMoveNamed('labs', 'أمراض الدم', -1);
+  eq(c.catsShown('labs'), ['أمراض الدم', 'كيمياء الدم'], 'one tap actually swaps what is on screen:');
+  eq(c.displayOrder('labs').map(id => c.DB.labs.find(x => x.id === id).name), ['CBC', 'FBS'],
+     'and the list flipped with it:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.catsShown('labs'), ['أمراض الدم', 'كيمياء الدم'], 'and it survives a restart:');
+
+  // الحدّان على ما هو ظاهر
+  c2.catMoveNamed('labs', 'أمراض الدم', -1);
+  eq(c2.catsShown('labs'), ['أمراض الدم', 'كيمياء الدم'], 'the top one cannot rise:');
+});
+
+run('الترتيب: تصنيفٌ مكتوبٌ في العناصر وحدها يُحرَّك أيضًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit');
+  // اسمان بلا صفّ في cats إطلاقًا
+  b._t.cats = []; c.DB.cats = []; c.DB.cats_seeded = 1;
+  ['أ', 'ب'].forEach(n => {
+    const rec = { id: c.uid(), category: n, name: 'عنصر ' + n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  });
+  eq(c.catsShown('labs'), ['أ', 'ب'], 'both show, though neither is registered:');
+
+  c.catMoveNamed('labs', 'ب', -1);
+  eq(c.catsShown('labs'), ['ب', 'أ'], 'and moving one registers it and works:');
+  eq(b._t.cats.length, 2, 'both became real categories:');
 });

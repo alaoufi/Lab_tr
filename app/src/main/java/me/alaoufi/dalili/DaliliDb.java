@@ -835,6 +835,28 @@ public class DaliliDb extends SQLiteOpenHelper {
         } finally { db.endTransaction(); }
     }
 
+    /**
+     * ترتيب عناصر قسمٍ كما رتّبها المستخدم — قائمة معرّفات بالترتيب.
+     *
+     * هذا الترتيب هو مصدر ترتيب العرض في القسم، ومنه يأخذ كل شيء: السلة
+     * والورقة والصورة والنصّ المنسوخ. اسم الجدول من {@code KINDS} أو
+     * {@code items} — لا يصل نصّ المستخدم إلى SQL.
+     */
+    public void setItemOrder(String kind, JSONArray ids) {
+        String table = isCustomKind(kind) ? "items" : kind;
+        if (!isKind(kind) && !isCustomKind(kind)) return;
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (int i = 0; i < ids.length(); i++) {
+                ContentValues v = new ContentValues();
+                v.put("sort_order", i + 1);
+                db.update(table, v, "id=?", new String[]{ids.optString(i)});
+            }
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+    }
+
     private JSONArray readGroups(SQLiteDatabase db) throws Exception {
         JSONArray arr = new JSONArray();
         Cursor c = rows(db, "groups", null, null);

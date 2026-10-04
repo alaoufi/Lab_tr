@@ -253,6 +253,19 @@ public class DbBridge {
         }
     }
 
+    /** ترتيب عناصر قسمٍ كما رتّبها المستخدم — مصفوفة معرّفات. */
+    @JavascriptInterface
+    public boolean setItemOrder(String kind, String jsonIds) {
+        if (!validKind(kind)) return false;
+        try {
+            db.setItemOrder(kind, new JSONArray(jsonIds));
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "setItemOrder failed", e);
+            return false;
+        }
+    }
+
     /** ترتيب المجموعات كما رتّبها المستخدم — مصفوفة معرّفات. */
     @JavascriptInterface
     public boolean setGroupOrder(String jsonIds) {
