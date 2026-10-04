@@ -2609,3 +2609,76 @@ run('الاتجاه: النصّ المنسوخ يحمل علامة اتجاه ق
   eq(latin.indexOf('1. Urea') >= 0, true, 'numbered as it reads:');
   eq(arabic.indexOf('2. صورة دم كاملة') >= 0, true, 'and so is the arabic one:');
 });
+
+/* ── ترتيبٌ واحد في كل مكان ────────────────────────────────────────── */
+
+function seedCatLabs(c, b, pairs) {
+  c.goPage('labs');
+  return pairs.map(([cat, name]) => {
+    c._els('lf-name').value = name;
+    c._els('lf-catsel') && (c._els('lf-catsel').value = cat);
+    const rec = { id: c.uid(), category: cat, name: name, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', cat); c.Store.upsert('labs', rec);
+    return rec.id;
+  });
+}
+
+run('الترتيب: السلة تتبع ترتيب العرض لا ترتيب النقر', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedCatLabs(c, b, [['كيمياء', 'FBS'], ['كيمياء', 'Urea'], ['دم', 'CBC'], ['دم', 'ESR']]);
+  const shown = c.displayOrder('labs');
+  eq(shown.length, 4, 'four on screen:');
+
+  // أشِّر بالعكس تمامًا
+  shown.slice().reverse().forEach(id => c.toggleCart('labs', id));
+  eq(c.DB.cart.labs, shown, 'the cart holds them in display order, not tap order:');
+  eq(b._t.cart.labs, shown, 'and that is what is persisted:');
+
+  // والورقة تتبعها
+  const rows = c.rowsFor('labs', c.DB.cart.labs).map(r => r.title);
+  const names = shown.map(id => c.DB.labs.find(x => x.id === id).name);
+  eq(rows, names, 'and the paper reads the same way:');
+
+  // «تحديد الكل» على تصنيف لا يكسرها
+  c.clearCart('labs');
+  c.toggleIds('labs', [ids[3], ids[2]]);
+  eq(c.DB.cart.labs, [ids[2], ids[3]], 'select-all keeps display order too:');
+});
+
+run('الترتيب: ترتيب التصنيفات يقود ترتيب كل شيء', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedCatLabs(c, b, [['كيمياء', 'FBS'], ['دم', 'CBC']]);
+  eq(c.displayOrder('labs'), ids, 'chemistry first, as created:');
+
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+  eq(c.DB.cart.labs, ids, 'cart follows:');
+
+  // ارفع «دم» فوق «كيمياء»
+  const dam = c.DB.cats.find(x => x.kind === 'labs' && x.name === 'دم');
+  const i = c.catsRaw('labs').findIndex(x => x.id === dam.id);
+  for (let k = i; k > 0; k--) c.catMove('labs', dam.id, -1);
+
+  eq(c.displayOrder('labs'), [ids[1], ids[0]], 'the section flipped:');
+  c.boot();                       // إقلاعٌ جديد يُعيد ترتيب السلة المحفوظة
+  eq(c.DB.cart.labs, [ids[1], ids[0]], 'and so did the stored cart:');
+  const rows = c.rowsFor('labs', c.DB.cart.labs).map(r => r.title);
+  eq(rows, ['CBC', 'FBS'], 'and the paper with it:');
+});
+
+run('الترتيب: الدفعة الجديدة تدخل المجموعة بترتيب العرض', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const ids = seedCatLabs(c, b, [['كيمياء', 'FBS'], ['كيمياء', 'Urea'], ['دم', 'CBC']]);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'شاملة'; c.groupCreate('labs');
+
+  // أضِفها بترتيب معكوس
+  c.GPICK = {}; ids.slice().reverse().forEach(i => c.groupPickToggle(i)); c.groupPickAdd();
+  eq(b._t.groups[0].items, ids, 'they land in display order:');
+
+  // وترتيب المجموعة الذي يضبطه المستخدم لا يُمَسّ بعدها
+  c.groupItemMove(ids[2], -1);
+  eq(b._t.groups[0].items, [ids[0], ids[2], ids[1]], 'his own arrangement stands:');
+  const more = seedCatLabs(c, b, [['دم', 'ESR']]);
+  c.GPICK = {}; c.groupPickToggle(more[0]); c.groupPickAdd();
+  eq(b._t.groups[0].items, [ids[0], ids[2], ids[1], more[0]], 'and new ones only append:');
+});

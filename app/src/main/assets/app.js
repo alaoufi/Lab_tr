@@ -2244,6 +2244,30 @@ function groupBy(list, kind) {
   if (byCat[UNCAT]) order.push(UNCAT);              // غير المصنّف آخرًا دائمًا
   return order.map(function (c) { return { cat: c, items: byCat[c] }; });
 }
+/* ── ترتيبٌ واحد في كل مكان ─────────────────────────────────────────
+   ما يراه المستخدم في القسم هو ما يجب أن يخرج في الورقة. وكانت السلة
+   تحفظ ترتيب النقر: يؤشّر من أسفل القائمة ثم من أعلاها فتخرج الورقة
+   معكوسة عمّا أمامه. الترتيب المعتمد الآن واحد: ترتيب العرض في القسم —
+   التصنيفات كما رتّبها، وداخل كل تصنيف ترتيب العناصر كما هي. */
+
+/** كل معرّفات القسم بترتيب عرضها على الشاشة: تصنيفًا بعد تصنيف. */
+function displayOrder(kind) {
+  var out = [];
+  groupBy(coll(kind), kind).forEach(function (g) {
+    g.items.forEach(function (o) { out.push(o.id); });
+  });
+  return out;
+}
+/** يرتّب مجموعة معرّفات بترتيب العرض. المجهول يبقى في ذيل القائمة. */
+function orderOf(kind, ids) {
+  var seq = displayOrder(kind);
+  return ids.slice().sort(function (a, c) {
+    var ia = seq.indexOf(a), ic = seq.indexOf(c);
+    if (ia < 0) ia = seq.length;
+    if (ic < 0) ic = seq.length;
+    return ia - ic;
+  });
+}
 function emptyBox(icon, title, sub) {
   return '<div class="empty"><div class="ei">' + icon + '</div><div class="et">' + esc(title) + '</div><div class="es">' + esc(sub) + '</div></div>';
 }
@@ -2261,6 +2285,7 @@ function cartBar(kind, n) {
 window.toggleCart = function (kind, id) {
   var arr = DB.cart[kind]; var i = arr.indexOf(id);
   if (i >= 0) arr.splice(i, 1); else arr.push(id);
+  DB.cart[kind] = orderOf(kind, arr);      // لا ترتيب النقر
   Store.setCart(kind); render();
 };
 window.clearCart = function (kind) { DB.cart[kind] = []; Store.setCart(kind); render(); };
@@ -2370,7 +2395,10 @@ function toggleIds(kind, ids) {
   var arr = DB.cart[kind];
   var allIn = ids.every(function (id) { return arr.indexOf(id) >= 0; });
   if (allIn) DB.cart[kind] = arr.filter(function (id) { return ids.indexOf(id) < 0; });
-  else ids.forEach(function (id) { if (arr.indexOf(id) < 0) arr.push(id); });
+  else {
+    ids.forEach(function (id) { if (arr.indexOf(id) < 0) arr.push(id); });
+    DB.cart[kind] = orderOf(kind, arr);
+  }
   Store.setCart(kind); render();
 }
 window.pickCat = function (kind, cat) {
@@ -2706,8 +2734,9 @@ function liveIds(kind, ids) {
 function pruneOrphans() {
   if (!Store.ok || Store.errors.length) return;
   KINDS.forEach(function (k) {
-    var live = liveIds(k, DB.cart[k]);
-    if (live.length === DB.cart[k].length) return;
+    // تنظيفٌ وترتيبٌ معًا: سلالٌ حُفظت بترتيب النقر تعود لترتيب العرض
+    var live = orderOf(k, liveIds(k, DB.cart[k]));
+    if (live.join() === DB.cart[k].join()) return;
     DB.cart[k] = live;
     Store.setCart(k);
   });
@@ -3104,16 +3133,21 @@ window.groupLibAdd = function () {
   }
   LIB_SEL = {}; closeModal();
   grpEdit(function (g) {
-    add.forEach(function (id) { if (g.items.indexOf(id) < 0) g.items.push(id); });
+    orderOf(g.kind, add).forEach(function (id) {
+      if (g.items.indexOf(id) < 0) g.items.push(id);
+    });
   });
   var L = kindLbl(kind);
   toast('✅ ' + countWord(add.length, L.one, L.two, L.few, L.many)
     + (fresh.length ? ' — أُضيفت للقسم وللمجموعة' : ' — أُضيفت للمجموعة'));
 };
-/** يضيف معرّفات للمجموعة المفتوحة ويحفظ — بلا تكرار. */
+/** يضيف معرّفات للمجموعة المفتوحة ويحفظ — بلا تكرار.
+    الدفعة الجديدة تدخل بترتيب عرض القسم؛ وما في المجموعة يبقى كما رتّبه. */
 function grpAddItems(ids) {
   grpEdit(function (g) {
-    ids.forEach(function (id) { if (g.items.indexOf(id) < 0) g.items.push(id); });
+    orderOf(g.kind, ids).forEach(function (id) {
+      if (g.items.indexOf(id) < 0) g.items.push(id);
+    });
   });
   toast('✅ أُضيفت وحُفظت');
 }
