@@ -456,14 +456,27 @@ function backupDirIsCustom() {
   try { return !!(AB && AB.backupDirIsCustom && AB.backupDirIsCustom()); } catch (e) { return false; }
 }
 window.backupDelete = function (name) {
-  confirmBox('حذف هذه النسخة الاحتياطية؟', function () {
-    if (AB) AB.deleteBackup(name);
-    closeModal(); render(); toast('🗑️ حُذفت');
+  dangerBox({
+    title: 'حذف نسخة احتياطية',
+    action: '🗑️ احذف النسخة',
+    keep: 'بياناتك الحالية وبقيّة النسخ',
+    lose: ['النسخة «' + name.replace(/^dalili-|\.json$/g, '') + '» — لن تستعيدها',
+           'إن كانت آخر نسخة، فلا مرجع لك عند أي خطأ'],
+    onYes: function () {
+      if (AB) AB.deleteBackup(name);
+      closeModal(); render(); toast('🗑️ حُذفت');
+    }
   });
 };
 window.backupRestore = function (name) {
-  confirmBox('استعادة «' + name + '» ستستبدل كل بياناتك الحالية. متابعة؟', function () {
-    doRestore(name);
+  dangerBox({
+    title: 'استعادة نسخة احتياطية',
+    word: 'استبدال',
+    action: '↩️ استبدل بياناتي بهذه النسخة',
+    keep: 'نسخةُ أمانٍ لما عندك الآن تُؤخَذ قبل الاستبدال',
+    lose: ['كل ما في التطبيق الآن: ' + liveCount() + ' عنصرًا وتصنيفًا ومجموعة',
+           'ويحلّ محلّها ما في «' + name.replace(/^dalili-|\.json$/g, '') + '»'],
+    onYes: function () { doRestore(name); }
   });
 };
 /** الاستعادة الفعلية: نسخةُ أمانٍ لما هو قائم أولًا، ثم الاستبدال.
@@ -611,9 +624,14 @@ function showRecovery() {
 window.recoverDiag = function () { NAV = ['diag']; showApp(); };
 /** الاستعادة من شاشة الإنقاذ — بتأكيدٍ صريح ثم دخولٌ للتطبيق. */
 window.recoverFrom = function (name) {
-  confirmBox('استعادة «' + name + '» ستحلّ محلّ ما في قاعدة البيانات الآن. متابعة؟', function () {
-    doRestore(name);
-    if (Store.ok) showApp();
+  dangerBox({
+    title: 'استعادة نسخة احتياطية',
+    word: 'استبدال',
+    action: '↩️ استبدل ما في القاعدة بهذه النسخة',
+    keep: 'لا شيء يُحذف من النسخ الأخرى',
+    lose: ['ما في قاعدة البيانات الآن — وهو ما تعذّرت قراءته',
+           'ويحلّ محلّه ما في «' + name.replace(/^dalili-|\.json$/g, '') + '»'],
+    onYes: function () { doRestore(name); if (Store.ok) showApp(); }
   });
 };
 
@@ -1013,7 +1031,13 @@ window.savePin = async function () {
   DB.pin_hash = await sha256(a); Store.setPin(DB.pin_hash); closeModal(); toast('✅ فُعِّل رمز القفل');
 };
 window.removePin = function () {
-  confirmBox('إزالة رمز القفل؟', function () { DB.pin_hash = null; Store.setPin(null); closeModal(); toast('تمت الإزالة'); });
+  dangerBox({
+    title: 'إزالة رمز القفل',
+    action: '🔓 أزِل الرمز',
+    keep: 'كل بياناتك كما هي',
+    lose: ['حماية التطبيق — يفتحه بعدها كل من يمسك الجهاز'],
+    onYes: function () { DB.pin_hash = null; Store.setPin(null); closeModal(); toast('تمت الإزالة'); }
+  });
 };
 window.exportBackup = function () {
   var blob = new Blob([JSON.stringify(DB, null, 2)], { type: 'application/json' });
@@ -1030,7 +1054,14 @@ window.importBackup = function (input) {
     try {
       var data = JSON.parse(reader.result);
       if (!data || !KINDS.some(function (k) { return Array.isArray(data[k]); })) throw new Error('bad');
-      confirmBox('استيراد هذه النسخة سيستبدل بياناتك الحالية. متابعة؟', function () {
+      dangerBox({
+        title: 'استيراد نسخة من ملف',
+        word: 'استبدال',
+        action: '📥 استبدل بياناتي بهذا الملف',
+        keep: 'نسخةُ أمانٍ لما عندك الآن تُؤخَذ قبل الاستبدال',
+        lose: ['كل ما في التطبيق الآن: ' + liveCount() + ' عنصرًا وتصنيفًا ومجموعة',
+               'ويحلّ محلّها ما في الملف المختار'],
+        onYes: function () {
         var keep = DB.pin_hash;
         autoBackup(true);          // نسخة أمانٍ للقائم قبل أن يحلّ محلّه غيره
         applyData(data);
@@ -1041,9 +1072,10 @@ window.importBackup = function (input) {
             return coll(k).some(function (x) { return x.id === id; });
           });
         });
-        Store.replaceAll();
-        KINDS.forEach(function (k) { Store.setOut(k); });
-        closeModal(); render(); toast('✅ تم الاستيراد');
+          Store.replaceAll();
+          KINDS.forEach(function (k) { Store.setOut(k); });
+          closeModal(); render(); toast('✅ تم الاستيراد');
+        }
       });
     } catch (e) { toast('ملف غير صالح', 'er'); }
   };
@@ -1149,6 +1181,72 @@ function confirmBox(msg, onYes) {
     + '<div class="mft"><button class="btn danger" id="cb-yes">تأكيد</button><button class="btn" onclick="closeModal()">إلغاء</button></div>');
   var b = $('cb-yes'); if (b) b.onclick = onYes;
 }
+
+/** حذف عنصر: يسمّيه، ويعدّ ما يتبعه من مجموعاتٍ وتحديد. */
+function itemDangerBox(kind, id, onYes) {
+  var o = coll(kind).find(function (x) { return x.id === id; });
+  var inGrp = DB.groups.filter(function (g) {
+    return g.kind === kind && g.items.indexOf(id) >= 0;
+  }).length;
+  dangerBox({
+    title: 'حذف «' + (o ? itemLabel(kind, o) : 'عنصر') + '»',
+    action: '🗑️ احذفه',
+    keep: 'بقيّة ' + kindLbl(kind).title + ' وتصنيفاتها',
+    lose: [
+      'العنصر وكل ما كُتب في حقوله',
+      DB.cart[kind].indexOf(id) >= 0 ? 'إزالته من قائمتك المحدَّدة' : '',
+      inGrp ? 'إزالته من ' + countWord(inGrp, 'مجموعة واحدة', 'مجموعتين', 'مجموعات', 'مجموعة') : ''
+    ],
+    onYes: onYes
+  });
+}
+
+/**
+ * صندوق ما لا رجعة فيه.
+ *
+ * «حذف هذا العنصر؟ [تأكيد]» لا يقول ماذا يُحذف ولا كم، ولا يفرّق بين حذف
+ * سطرٍ وحذف قسمٍ بكل ما فيه. هنا يُعدّ المفقود صراحةً، ويُذكَر ما يبقى
+ * سالمًا، والزرّ يحمل اسم الفعل لا كلمة «تأكيد».
+ *
+ * @param o.title   عنوان الصندوق
+ * @param o.lose    أسطر بما سيُفقَد — بأعداده
+ * @param o.keep    ما يبقى سالمًا (طمأنةٌ صادقة تمنع التردّد في الحذف الصغير)
+ * @param o.word    كلمةٌ يكتبها المستخدم ليُفعَّل الزرّ — للأفعال الأثقل وحدها
+ * @param o.action  نصّ الزرّ الأحمر
+ */
+function dangerBox(o) {
+  var lose = (o.lose || []).filter(Boolean);
+  var needWord = !!o.word;
+  openModal('⚠️ ' + o.title,
+    '<div class="dz">'
+    + (lose.length
+        ? '<div class="dz-h">سيُحذف نهائيًا:</div><ul class="dz-l">'
+          + lose.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>'
+        : '')
+    + '<div class="dz-w">لا يمكن التراجع عن هذا.</div></div>'
+    + (o.keep ? '<div class="dz-k">✅ يبقى سالمًا: ' + esc(o.keep) + '</div>' : '')
+    + (needWord
+        ? '<div class="f" style="margin-top:12px"><label>اكتب <b>' + esc(o.word)
+          + '</b> للتأكيد</label><input id="dz-in" class="inp" autocomplete="off"'
+          + ' oninput="dzCheck()" placeholder="' + esc(o.word) + '"></div>'
+        : '')
+    + '<div class="mft"><button class="btn danger" id="cb-yes"'
+    + (needWord ? ' disabled' : '') + '>' + esc(o.action || 'احذف نهائيًا') + '</button>'
+    + '<button class="btn" onclick="closeModal()">إلغاء</button></div>');
+  DZ_WORD = o.word || '';
+  var b = $('cb-yes');
+  if (b) b.onclick = function () {
+    if (DZ_WORD && String((($('dz-in') || {}).value) || '').trim() !== DZ_WORD) return;
+    o.onYes();
+  };
+}
+var DZ_WORD = '';
+/** الزرّ لا يُفعَّل حتى تُكتب الكلمة بالضبط — تعمّدٌ لا نقرة عابرة. */
+window.dzCheck = function () {
+  var b = $('cb-yes'), e = $('dz-in');
+  if (!b || !e) return;
+  b.disabled = String(e.value || '').trim() !== DZ_WORD;
+};
 
 /* ── موزّع الصفحات ── */
 function render() {
@@ -1460,9 +1558,22 @@ window.secSave = function (id) {
 window.secDel = function (id) {
   var s = secOf(id); if (!s || s.builtin) return;
   var n = coll(id).length;
-  confirmBox('حذف قسم «' + s.title + '»؟'
-    + (n ? ' سيُحذف معه ' + countWord(n, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
-      + ' وتصنيفاته ومجموعاته.' : ''), function () {
+  var nc = DB.cats.filter(function (c) { return c.kind === id; }).length;
+  var nf = fieldsOf(id).length;
+  var ng = groupsOf(id).length;
+  dangerBox({
+    title: 'حذف قسم «' + s.title + '»',
+    word: s.title,                 // أثقل حذفٍ في التطبيق: يُكتب اسمه
+    action: '🗑️ احذف القسم وكل ما فيه',
+    keep: 'بقيّة الأقسام وبياناتها',
+    lose: [
+      'القسم «' + s.title + '» بالكامل',
+      n ? countWord(n, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا') : '',
+      nc ? countWord(nc, 'تصنيف واحد', 'تصنيفان', 'تصنيفات', 'تصنيفًا') : '',
+      nf ? countWord(nf, 'حقل واحد', 'حقلان', 'حقول', 'حقلًا') + ' وما كُتب فيها' : '',
+      ng ? countWord(ng, 'مجموعة واحدة', 'مجموعتان', 'مجموعات', 'مجموعة') : ''
+    ],
+    onYes: function () {
     autoBackup(true);   // أكثر حذفٍ كلفةً في التطبيق — نسخةُ أمانٍ قبله
     DB.sections = DB.sections.filter(function (x) { return x.id !== id; });
     DB.cats = DB.cats.filter(function (c) { return c.kind !== id; });
@@ -1471,7 +1582,8 @@ window.secDel = function (id) {
     delete DB[id]; delete DB.cart[id]; delete DB.out[id];
     KINDS = DB.sections.map(function (x) { return x.id; });
     Store.dropSection(id);
-    closeModal(); goPage('secs'); toast('🗑️ حُذف القسم');
+      closeModal(); goPage('secs'); toast('🗑️ حُذف القسم');
+    }
   });
 };
 window.secMove = function (id, dir) {
@@ -1563,7 +1675,7 @@ window.secItemSave = function (kind, id, again) {
   afterSave(kind, again, id, ok);
 };
 window.secItemDel = function (kind, id) {
-  confirmBox('حذف هذا العنصر؟', function () {
+  itemDangerBox(kind, id, function () {
     setColl(kind, coll(kind).filter(function (x) { return x.id !== id; }));
     DB.cart[kind] = DB.cart[kind].filter(function (x) { return x !== id; });
     Store.remove(kind, id); closeModal(); toast('🗑️ تم الحذف'); render();
@@ -1594,32 +1706,72 @@ function extraRow(kind, o) {
 /** مفتاح ثابت لا يتغيّر بتغيّر التسمية، فلا تضيع القيم عند إعادة التسمية. */
 function fieldKey() { return 'f' + uid(); }
 
+/**
+ * صفحة الحقول — مكانٌ واحد يحكم ما يخرج من القسم وبأي ترتيب.
+ *
+ * كان ظهور الحقل في العرض والإرسال يُضبَط في الإعدادات، وترتيبه هنا،
+ * وحقول القسم الأصلية في موضعٍ ثالث. ثلاثة أماكن لقرارٍ واحد. الآن كلّها
+ * هنا: كل حقلٍ — أصليًّا كان أو مضافًا — بسطره وزرّ ظهوره وسهمَي ترتيبه.
+ */
 function renderFieldsPage(kind) {
   var L = kindLbl(kind), list = fieldsOf(kind);
   var html = '<button class="btn full primary" onclick="fldNew(\'' + kind + '\')">➕ حقل جديد</button>'
     + '<button class="btn full" onclick="goPage(\'cat:' + kind + '\')">🏷️ تصنيفات ' + esc(L.title) + '</button>'
-    + '<div class="hint">حقول تضيفها لبيانات ' + esc(L.title) + ': تظهر في نموذج العنصر'
-    + ' وعلى بطاقته وفي الإرسال. وتقدر تضيف حقلًا وأنت داخل النموذج نفسه من'
-    + ' «➕ إضافة حقل لهذا القسم».</div>';
+    + '<div class="hint">كل حقول ' + esc(L.title) + ' هنا. 👁️ يُظهر الحقل في العرض'
+    + ' والإرسال و🚫 يُخفيه، والسهمان يرتّبانه. اسم العنصر يظهر دائمًا.</div>';
 
+  // الحقول المضافة: تُرتَّب وتُعدَّل وتُحذف وتُظهَر وتُخفى
+  html += '<div class="settings-lbl">🧩 حقول أضفتَها</div>';
   if (!list.length) {
-    h('page', html + emptyBox('🧩', 'لا حقول إضافية', 'الحقول الأصلية للقسم موجودة دائمًا'));
-    return;
+    html += '<div class="es" style="margin-bottom:12px">لا حقول مضافة بعد —'
+      + ' «➕ حقل جديد» يضيف حقلًا يظهر في كل عناصر هذا القسم.</div>';
+  } else {
+    html += list.map(function (f, i) {
+      return '<div class="card"><div class="row">'
+        + outEyeBtn(kind, 'x:' + f.key)
+        + '<div class="grow"><div class="name">' + esc(f.label) + '</div>'
+        + '<div class="sub">' + (f.type === 'area' ? 'نصّ طويل' : 'سطر واحد')
+        + ' · ' + (outHas(kind, 'x:' + f.key) ? 'يظهر في الإرسال' : 'مخفيّ عن الإرسال') + '</div></div>'
+        + '<button class="ic"' + (i === 0 ? ' disabled' : '')
+        + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',-1)">▲</button>'
+        + '<button class="ic"' + (i === list.length - 1 ? ' disabled' : '')
+        + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',1)">▼</button>'
+        + '<button class="ic" onclick="fldEdit(\'' + kind + '\',\'' + f.id + '\')">✏️</button>'
+        + '<button class="ic" onclick="fldDel(\'' + kind + '\',\'' + f.id + '\')">🗑️</button>'
+        + '</div></div>';
+    }).join('');
   }
-  html += list.map(function (f, i) {
-    return '<div class="card"><div class="row">'
-      + '<div class="grow"><div class="name">🧩 ' + esc(f.label) + '</div>'
-      + '<div class="sub">' + (f.type === 'area' ? 'نصّ طويل' : 'سطر واحد') + '</div></div>'
-      + '<button class="ic"' + (i === 0 ? ' disabled' : '')
-      + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',-1)">⬆️</button>'
-      + '<button class="ic"' + (i === list.length - 1 ? ' disabled' : '')
-      + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',1)">⬇️</button>'
-      + '<button class="ic" onclick="fldEdit(\'' + kind + '\',\'' + f.id + '\')">✏️</button>'
-      + '<button class="ic" onclick="fldDel(\'' + kind + '\',\'' + f.id + '\')">🗑️</button>'
-      + '</div></div>';
-  }).join('');
+
+  // الحقول الأصلية: لا تُحذف ولا تُرتَّب، لكنّ ظهورها بيد المستخدم
+  var base = (OUT_ALL[kind] || [['category', 'التصنيف']]);
+  html += '<div class="settings-lbl" style="margin-top:14px">📋 حقول ' + esc(L.title) + ' الأصلية</div>'
+    + '<div class="es" style="margin-bottom:8px">موجودة دائمًا في النموذج — وأنت تقرّر ما يخرج منها.</div>'
+    + base.map(function (f) {
+        return '<div class="card"><div class="row">'
+          + outEyeBtn(kind, f[0])
+          + '<div class="grow"><div class="name">' + esc(f[1]) + '</div>'
+          + '<div class="sub">' + (outHas(kind, f[0]) ? 'يظهر في الإرسال' : 'مخفيّ عن الإرسال')
+          + '</div></div></div></div>';
+      }).join('');
   h('page', html);
 }
+/** هل هذا الحقل ضمن ما يخرج في العرض والإرسال؟ */
+function outHas(kind, key) {
+  return (DB.out[kind] || []).indexOf(key) >= 0;
+}
+/** زرّ الظهور — حالته مقروءة من شكله لا من ذاكرة المستخدم. */
+function outEyeBtn(kind, key) {
+  var on = outHas(kind, key);
+  return '<button class="eye' + (on ? ' on' : '') + '"'
+    + ' onclick="fldEye(\'' + kind + '\',\'' + key + '\')"'
+    + ' title="' + (on ? 'يظهر — اضغط لإخفائه' : 'مخفيّ — اضغط لإظهاره') + '">'
+    + (on ? '👁️' : '🚫') + '</button>';
+}
+window.fldEye = function (kind, key) {
+  toggleOut(kind, key);
+  render();
+  toast(outHas(kind, key) ? '👁️ يظهر في العرض والإرسال' : '🚫 أُخفي عن العرض والإرسال');
+};
 function fldFormBody(f) {
   var t = f.type || 'text';
   return '<div class="f"><label>اسم الحقل *</label>'
@@ -1672,11 +1824,18 @@ window.fldSave = function (id) {
 };
 window.fldDel = function (kind, id) {
   var f = DB.fields.find(function (x) { return x.id === id; }); if (!f) return;
-  confirmBox('حذف حقل «' + f.label + '»؟ ما كُتب فيه داخل العناصر لن يظهر بعدها.', function () {
-    DB.fields = DB.fields.filter(function (x) { return x.id !== id; });
-    DB.out[kind] = (DB.out[kind] || []).filter(function (k) { return k !== 'x:' + f.key; });
-    Store.dropField(id); Store.setOut(kind);
-    closeModal(); render(); toast('🗑️ حُذف الحقل');
+  dangerBox({
+    title: 'حذف حقل «' + f.label + '»',
+    action: '🗑️ احذف الحقل',
+    keep: 'العناصر نفسها وبقيّة حقولها',
+    lose: ['الحقل من كل عناصر ' + kindLbl(kind).title,
+           'ما كُتب فيه داخلها — لن يظهر بعدها'],
+    onYes: function () {
+      DB.fields = DB.fields.filter(function (x) { return x.id !== id; });
+      DB.out[kind] = (DB.out[kind] || []).filter(function (k) { return k !== 'x:' + f.key; });
+      Store.dropField(id); Store.setOut(kind);
+      closeModal(); render(); toast('🗑️ حُذف الحقل');
+    }
   });
 };
 window.fldMove = function (kind, id, dir) {
@@ -2147,13 +2306,19 @@ window.catRenameSave = function (kind, id) {
 window.catDel = function (kind, id) {
   var c = DB.cats.find(function (x) { return x.id === id; }); if (!c) return;
   var n = catCount(kind, c.name);
-  confirmBox('حذف التصنيف «' + c.name + '»؟'
-    + (n ? ' لن يُحذف أي عنصر — تعود عناصره «غير مصنّف».' : ''), function () {
-    DB.cats = DB.cats.filter(function (x) { return x.id !== id; });
-    coll(kind).forEach(function (o) { if ((o.category || '').trim() === c.name) o.category = ''; });
-    Store.moveCatItems(kind, c.name, '');
-    Store.dropCat(id);
-    closeModal(); render(); toast('🗑️ حُذف التصنيف');
+  dangerBox({
+    title: 'حذف تصنيف «' + c.name + '»',
+    action: '🗑️ احذف التصنيف',
+    keep: n ? countWord(n, 'عنصره', 'عنصراه', 'عناصره', 'عنصرًا منه') + ' — تعود «غير مصنّف»'
+            : 'كل عناصر القسم',
+    lose: ['التصنيف نفسه وموضعه في الترتيب'],
+    onYes: function () {
+      DB.cats = DB.cats.filter(function (x) { return x.id !== id; });
+      coll(kind).forEach(function (o) { if ((o.category || '').trim() === c.name) o.category = ''; });
+      Store.moveCatItems(kind, c.name, '');
+      Store.dropCat(id);
+      closeModal(); render(); toast('🗑️ حُذف التصنيف');
+    }
   });
 };
 /** تسجيل اسم كُتِب داخل العناصر ليصير تصنيفًا كامل الصلاحيات. */
@@ -2461,7 +2626,21 @@ window.toggleCart = function (kind, id) {
   DB.cart[kind] = orderOf(kind, arr);      // لا ترتيب النقر
   Store.setCart(kind); render();
 };
-window.clearCart = function (kind) { DB.cart[kind] = []; Store.setCart(kind); render(); };
+window.clearCart = function (kind) {
+  var n = DB.cart[kind].length;
+  if (!n) return;
+  dangerBox({
+    title: 'مسح التحديد',
+    action: '🧹 امسح التحديد',
+    keep: 'كل عناصرك — لا يُحذف منها شيء، إنّما يُلغى تأشيرها',
+    lose: ['تأشير ' + countWord(n, 'عنصر واحد', 'عنصرين', 'عناصر', 'عنصرًا')
+           + ' — تعيد اختيارها من جديد'],
+    onYes: function () {
+      DB.cart[kind] = []; Store.setCart(kind); closeModal(); render();
+      toast('🧹 مُسح التحديد');
+    }
+  });
+};
 
 window.medForm = function (id) {
   var m = id ? (DB.meds.find(function (x) { return x.id === id; }) || {}) : newItem('meds');
@@ -2496,7 +2675,7 @@ window.medSave = function (id, again) {
   afterSave('meds', again, id, ok);
 };
 window.medDel = function (id) {
-  confirmBox('حذف هذا العلاج؟', function () {
+  itemDangerBox('meds', id, function () {
     DB.meds = DB.meds.filter(function (x) { return x.id !== id; });
     DB.cart.meds = DB.cart.meds.filter(function (x) { return x !== id; });
     Store.remove('meds', id); closeModal(); toast('🗑️ تم الحذف'); render();
@@ -2670,7 +2849,7 @@ window.labSave = function (id, again) {
   afterSave('labs', again, id, ok);
 };
 window.labDel = function (id) {
-  confirmBox('حذف هذا التحليل؟', function () {
+  itemDangerBox('labs', id, function () {
     DB.labs = DB.labs.filter(function (x) { return x.id !== id; });
     DB.cart.labs = DB.cart.labs.filter(function (x) { return x !== id; });
     Store.remove('labs', id); closeModal(); toast('🗑️ تم الحذف'); render();
@@ -2751,7 +2930,7 @@ window.imgSave = function (id, again) {
   afterSave('imaging', again, id, ok);
 };
 window.imgDel = function (id) {
-  confirmBox('حذف هذا الفحص؟', function () {
+  itemDangerBox('imaging', id, function () {
     DB.imaging = DB.imaging.filter(function (x) { return x.id !== id; });
     DB.cart.imaging = DB.cart.imaging.filter(function (x) { return x !== id; });
     Store.remove('imaging', id); closeModal(); toast('🗑️ تم الحذف'); render();
@@ -2860,7 +3039,7 @@ window.recipeSave = function (id, again) {
   afterSave('recipes', again, id, ok);
 };
 window.recipeDel = function (id) {
-  confirmBox('حذف هذه الوصفة؟', function () {
+  itemDangerBox('recipes', id, function () {
     DB.recipes = DB.recipes.filter(function (x) { return x.id !== id; });
     DB.cart.recipes = DB.cart.recipes.filter(function (x) { return x !== id; });
     Store.remove('recipes', id); closeModal(); toast('🗑️ تم الحذف'); render();
@@ -3169,12 +3348,18 @@ window.groupRenameSave = function () {
   toast('✅ حُفظ الاسم');
 };
 window.groupDelete = function () {
-  confirmBox('حذف هذه المجموعة؟ (لا يُحذف أي تحليل أو علاج)', function () {
-    var id = GRP.id, kind = GRP.kind;
-    DB.groups = DB.groups.filter(function (g) { return g.id !== id; });
-    Store.dropGroup(id);
-    GRP = null; closeModal(); toast('🗑️ حُذفت المجموعة');
-    NAV.pop(); render();
+  dangerBox({
+    title: 'حذف مجموعة «' + (GRP ? GRP.name : '') + '»',
+    action: '🗑️ احذف المجموعة',
+    keep: 'كل العناصر التي فيها — لا يُحذف منها شيء',
+    lose: ['المجموعة وترتيب ما فيها'],
+    onYes: function () {
+      var id = GRP.id, kind = GRP.kind;
+      DB.groups = DB.groups.filter(function (g) { return g.id !== id; });
+      Store.dropGroup(id);
+      GRP = null; closeModal(); toast('🗑️ حُذفت المجموعة');
+      NAV.pop(); render();
+    }
   });
 };
 
@@ -4055,9 +4240,16 @@ window.sentOpen = function (id) {
   render();
 };
 window.sentClear = function () {
-  confirmBox('إفراغ سجل الإرسالات؟ لا يُحذف أي عنصر.', function () {
-    DB.sent = []; Store.clearSent();
-    closeModal(); render(); toast('🧹 أُفرِغ السجل');
+  dangerBox({
+    title: 'إفراغ سجل الإرسالات',
+    action: '🧹 أفرِغ السجل',
+    keep: 'كل عناصرك ومجموعاتك — لا يُحذف منها شيء',
+    lose: [countWord(DB.sent.length, 'إرسالًا واحدًا', 'إرسالين', 'إرسالات', 'إرسالًا')
+           + ' من السجل، فلا تعيدها بضغطة بعدها'],
+    onYes: function () {
+      DB.sent = []; Store.clearSent();
+      closeModal(); render(); toast('🧹 أُفرِغ السجل');
+    }
   });
 };
 

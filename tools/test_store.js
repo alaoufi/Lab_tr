@@ -266,7 +266,7 @@ run('CRUD للتحاليل', () => {
   eq(b._t.labs[0].code, 'CBC');
   const id = b._t.labs[0].id;
   c.toggleCart('labs', id);
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   eq(b._t.cart.labs, []);
   c.labDel(id); c._els('cb-yes').onclick();
   eq(b._t.labs.length, 0);
@@ -338,6 +338,7 @@ run('استيراد نسخة احتياطية يستبدل الكل وينظّف
   c.FileReader = function () { return { readAsText() { onload = this.onload; this.result = JSON.stringify(backup); onload.call(this); }, set onload(f) { this._f = f; }, get onload() { return this._f; } }; };
   vm.runInContext('window.FileReader = FileReader;', c);
   c.importBackup(fake);
+  c._els('dz-in').value = 'استبدال'; c.dzCheck();
   c._els('cb-yes').onclick();
   eq(b._t.meds.map(m => m.id), ['n1'], 'imported meds:');
   eq(b._t.labs.map(l => l.id), ['n2'], 'imported labs:');
@@ -972,7 +973,7 @@ run('نسخ القائمة كنص', () => {
   eq(A._clip.indexOf('• متطلبات التحليل: صيام ٨ ساعات') >= 0, true, 'field in text:');
   eq(A._clip.indexOf('<') < 0, true, 'plain text, no markup:');
 
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   A._clip = null;
   c.previewCart('labs'); c.pvSend('copy');
   eq(A._clip, null, 'empty list is refused:');
@@ -1003,6 +1004,7 @@ run('النسخ الاحتياطي التلقائي: يكتب ويقيّد وي�
     cart: { meds: [], labs: [], imaging: [], recipes: [] }, groups: []
   });
   c.backupRestore('dalili-2026-02-01-1200.json');
+  c._els('dz-in').value = 'استبدال'; c.dzCheck();
   c._els('cb-yes').onclick();
   eq(c.DB.labs.map(l => l.name), ['مستعاد'], 'restored in memory:');
   eq(b._t.labs.map(l => l.name), ['مستعاد'], 'restored in db:');
@@ -1141,7 +1143,7 @@ run('إرسال PDF مباشرة بلا مربع الطباعة', () => {
   eq(A._pdfs[0].name, 'قائمة تحاليل', 'file name:');
   eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'content included:');
 
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   c.previewCart('labs'); c.pvSend('pdf');
   eq(A._pdfs.length, 1, 'empty list refused:');
 });
@@ -1226,7 +1228,7 @@ run('المعاينة: ترفض القائمة الفارغة ولا تحتفظ 
   c.previewCart('labs');
   eq(c.PV.ids.length, 1, 'preview loaded:');
 
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   c.previewCart('labs');
   eq(c._els('toast').textContent, 'لا عناصر في هذه القائمة', 'refused:');
   eq(c.PV, null, 'stale list dropped:');
@@ -1479,8 +1481,13 @@ run('الأقسام: تسمية الأصلي وترتيبه وحذف المُن�
   c.goPage('grp:' + k); c.groupNew(k); c._els('gn').value = 'مج'; c.groupCreate(k);
   eq(b._t.items.length, 1);
 
-  c.secDel(k); c._els('cb-yes').onclick();
-  eq(c.DB.sections.length, 4, 'section removed:');
+  // حذف القسم صار يطلب كتابة اسمه — نقرةٌ وحدها لا تكفي
+  c.secDel(k);
+  c._els('cb-yes').onclick();
+  eq(c.DB.sections.length, 5, 'a bare tap does nothing:');
+  c._els('dz-in').value = c.secOf(k).title; c.dzCheck();
+  c._els('cb-yes').onclick();
+  eq(c.DB.sections.length, 4, 'section removed once the name is typed:');
   eq(b._t.items.length, 0, 'its items too:');
   eq(b._t.fields.filter(f => f.kind === k).length, 0, 'its fields:');
   eq(b._t.cats.filter(x => x.kind === k).length, 0, 'its categories:');
@@ -1934,7 +1941,7 @@ run('الإرسال: السجل يحفظ آخر عشرة ويعيدها بضغط
   eq(c._els('page').innerHTML.indexOf('آخر ما أرسلت (1)') >= 0, true, 'shortcut on home:');
 
   // إعادة الفتح
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   c.goPage('sent');
   eq(c._els('page').innerHTML.indexOf('اليوم') >= 0, true, 'shows when it was sent:');
   c.sentOpen(c.DB.sent[0].id);
@@ -2175,6 +2182,7 @@ run('الأمان: الاستعادة من شاشة الإنقاذ تفتح ال
   eq(c._els('lock').innerHTML.indexOf('recoverFrom') >= 0, true, 'the backup is offered:');
 
   c.recoverFrom(backupName);
+  c._els('dz-in').value = 'استبدال'; c.dzCheck();
   c._els('cb-yes').onclick();
   eq(c.Store.ok, true, 'the shield is opened by the user’s own choice:');
   eq(b._t.labs.length, 1, 'the lab came back:');
@@ -2204,7 +2212,9 @@ run('الأمان: نسخة قبل حذف قسم كامل', () => {
   const id = c.DB.sections[4].id;
   c.secItemForm(id); c._els('cf-name').value = 'اشرب ماءً'; c.secItemSave(id, '');
 
-  c.secDel(id); c._els('cb-yes').onclick();
+  c.secDel(id);
+  c._els('dz-in').value = 'نصائح'; c.dzCheck();
+  c._els('cb-yes').onclick();
   eq(b._t.sections.filter(s => !s.builtin).length, 0, 'the section is gone as asked:');
   const files = JSON.parse(A.listBackups());
   eq(files.length, 1, 'but a safety copy was taken first:');
@@ -2705,7 +2715,7 @@ run('الترتيب: السلة تتبع ترتيب العرض لا ترتيب �
   eq(rows, names, 'and the paper reads the same way:');
 
   // «تحديد الكل» على تصنيف لا يكسرها
-  c.clearCart('labs');
+  c.clearCart('labs'); c._els('cb-yes').onclick();
   c.toggleIds('labs', [ids[3], ids[2]]);
   eq(c.DB.cart.labs, [ids[2], ids[3]], 'select-all keeps display order too:');
 });
@@ -2953,4 +2963,124 @@ run('الترتيب: «احفظ هذا الترتيب للقسم» من المع
 
   const c2 = load(b); c2.boot();
   eq(c2.DB.labs.map(x => x.name), ['Urea', 'FBS', 'CBC'], 'and it survives a restart:');
+});
+
+/* ── الحقول: مكانٌ واحد يحكم الترتيب والظهور ──────────────────────── */
+
+run('الحقول: صفحةٌ واحدة تحكم ترتيب الحقل وظهوره في الإرسال', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.fldNew('labs'); c._els('ff-label').value = 'المختبر'; c.fldCreate('labs');
+  c.fldNew('labs'); c._els('ff-label').value = 'السعر'; c.fldCreate('labs');
+  const keys = c.fieldsOf('labs').map(f => f.key);
+
+  c.goPage('fld:labs');
+  let html = c._els('page').innerHTML;
+  eq(html.indexOf('المختبر') >= 0 && html.indexOf('السعر') >= 0, true, 'the added fields are listed:');
+  eq(html.indexOf('حقول ' + c.kindLbl('labs').title + ' الأصلية') >= 0, true,
+     'and the built-in ones, in the same place:');
+  eq(html.indexOf("fldEye('labs','x:" + keys[0] + "')") >= 0, true, 'each has a visibility button:');
+  eq(html.indexOf("fldEye('labs','requirements')") >= 0, true, 'built-ins too:');
+
+  // الحقل الجديد يظهر في الإرسال تلقائيًا، والزرّ يُخفيه
+  eq(c.outHas('labs', 'x:' + keys[0]), true, 'a new field goes out by default:');
+  c.fldEye('labs', 'x:' + keys[0]);
+  eq(c.outHas('labs', 'x:' + keys[0]), false, 'and the eye hides it:');
+  eq(c._els('toast').textContent.indexOf('أُخفي') >= 0, true, 'and says so:');
+
+  // وأثره في المخرجات
+  const rec = { id: 'L1', name: 'CBC', category: '', extra: {} };
+  rec.extra[keys[0]] = 'مختبر الشفاء';
+  rec.extra[keys[1]] = '٩٠ ريالًا';
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  let out = c.outLines('labs', rec).map(x => x.l);
+  eq(out.indexOf('المختبر') < 0, true, 'the hidden one is out of the paper:');
+  eq(out.indexOf('السعر') >= 0, true, 'the shown one stays:');
+
+  c.fldEye('labs', 'x:' + keys[0]);
+  out = c.outLines('labs', rec).map(x => x.l);
+  eq(out.indexOf('المختبر') >= 0, true, 'and showing it brings it back:');
+
+  // الترتيب يُحفَظ ويحكم ترتيب الأسطر
+  c.fldMove('labs', c.fieldsOf('labs')[1].id, -1);
+  eq(c.fieldsOf('labs').map(f => f.label), ['السعر', 'المختبر'], 'reordered:');
+  const c2 = load(b); c2.boot();
+  eq(c2.fieldsOf('labs').map(f => f.label), ['السعر', 'المختبر'], 'and it survives a restart:');
+  eq(c2.outLines('labs', rec).map(x => x.l).filter(l => l === 'السعر' || l === 'المختبر'),
+     ['السعر', 'المختبر'], 'and the paper follows that order:');
+});
+
+run('الحقول: إخفاء حقلٍ أصلي يُخرجه من الورقة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const rec = { id: 'L1', name: 'CBC', requirements: 'صيام ٨ ساعات', category: '', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  eq(c.outLines('labs', rec).map(x => x.l).indexOf('متطلبات التحليل') >= 0, true, 'it is out by default:');
+
+  c.fldEye('labs', 'requirements');
+  eq(c.outLines('labs', rec).map(x => x.l).indexOf('متطلبات التحليل') < 0, true, 'and the eye removes it:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.outHas('labs', 'requirements'), false, 'and the choice is persisted:');
+});
+
+/* ── الحذف: تحذيرٌ يعدّ، وتأكيدٌ بقدر الخطر ───────────────────────── */
+
+run('الحذف: صندوق التحذير يعدّ ما يُفقَد ويطمئن على ما يبقى', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c._els('lf-category').value = ''; c.labSave('');
+  const id = c.DB.labs[0].id;
+  c.toggleCart('labs', id);
+  c.goPage('grp:labs'); c.groupNew('labs');
+  c._els('gn').value = 'مج'; c.groupCreate('labs');
+  c.GPICK = {}; c.groupPickToggle(id); c.groupPickAdd();
+
+  c.labDel(id);
+  const html = c._els('modal-body').innerHTML;
+  eq(html.indexOf('سيُحذف نهائيًا') >= 0, true, 'it says what goes:');
+  eq(html.indexOf('لا يمكن التراجع') >= 0, true, 'and that there is no undo:');
+  eq(html.indexOf('قائمتك المحدَّدة') >= 0, true, 'it counts the selection:');
+  eq(html.indexOf('مجموعة واحدة') >= 0, true, 'and the groups it sits in:');
+  eq(html.indexOf('يبقى سالمًا') >= 0, true, 'and what survives:');
+  eq(html.indexOf('🗑️ احذفه') >= 0, true, 'and the button names the act, not «تأكيد»:');
+
+  c._els('cb-yes').onclick();
+  eq(b._t.labs.length, 0, 'and it deletes when confirmed:');
+});
+
+run('الحذف: الأثقل يحتاج كتابة كلمة لا نقرة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.DB.labs.push({ id: 'L1', name: 'CBC', category: '', extra: {} });
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  const name = c.autoBackup(true);
+
+  c.backupRestore(name);
+  eq(c._els('modal-body').innerHTML.indexOf('اكتب') >= 0, true, 'it asks for a typed word:');
+  c._els('cb-yes').onclick();
+  eq(c.DB.labs.length, 1, 'a bare tap changes nothing:');
+
+  c._els('dz-in').value = 'خطأ'; c.dzCheck();
+  c._els('cb-yes').onclick();
+  eq(c.DB.labs.length, 1, 'nor does the wrong word:');
+
+  c._els('dz-in').value = 'استبدال'; c.dzCheck();
+  c._els('cb-yes').onclick();
+  eq(c._els('toast').textContent.indexOf('تمت الاستعادة') >= 0, true, 'the right word goes through:');
+});
+
+run('الحذف: «مسح» التحديد صار يُؤكَّد بعد أن كان بلا سؤال', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  ['CBC', 'ESR'].forEach(n => { c._els('lf-name').value = n; c.labSave(''); });
+  c.setMode('send');
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+  eq(c.DB.cart.labs.length, 2, 'two selected:');
+
+  c.clearCart('labs');
+  eq(c.DB.cart.labs.length, 2, 'the tap alone does not wipe it:');
+  eq(c._els('modal-body').innerHTML.indexOf('لا يُحذف منها شيء') >= 0, true,
+     'and it reassures that no item is lost:');
+  c._els('cb-yes').onclick();
+  eq(c.DB.cart.labs.length, 0, 'confirmed, it clears:');
+  eq(b._t.labs.length, 2, 'and not one item was deleted:');
 });
