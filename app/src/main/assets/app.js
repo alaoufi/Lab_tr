@@ -539,6 +539,7 @@ function pageMeta(p) {
   if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
   if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
   if (p === 'diag') return { icon: '🩺', title: 'فحص قاعدة البيانات' };
+  if (p.indexOf('sort:') === 0) return { icon: '↕️', title: 'ترتيب ' + kindLbl(p.slice(5)).title };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
   }
@@ -1167,6 +1168,7 @@ function render() {
   else if (p === 'sent') renderSentPage();
   else if (p === 'imgs') renderImagesPage();
   else if (p === 'diag') renderDiag();
+  else if (p.indexOf('sort:') === 0) renderSortPage(p.slice(5));
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
   else if (p.indexOf('cat:') === 0) renderCatsPage(p.slice(4));
@@ -2262,6 +2264,53 @@ function orderOf(kind, ids) {
     return ia - ic;
   });
 }
+/* ════════════════ صفحة الترتيب ════════════════
+   زرٌّ واحد صريح في كل قسم يفتح شاشةً لا تفعل شيئًا إلا الترتيب: كل
+   العناصر مفرودةً بتصنيفاتها، بأسهمٍ كبيرة، وكل حركة تُكتب في القاعدة
+   **ويُتحقَّق من كتابتها بقراءتها** قبل أن يُقال «حُفظ». */
+function renderSortPage(kind) {
+  var L = kindLbl(kind), all = coll(kind);
+  if (all.length < 2) {
+    h('page', emptyBox('↕️', 'لا شيء يُرتَّب', 'أضِف عنصرين على الأقل'));
+    return;
+  }
+  var html = '<div class="rec-note" style="margin-bottom:10px">'
+    + '✅ <b>كل حركة تُحفَظ فورًا</b> — ويُتحقَّق من حفظها في قاعدة البيانات.'
+    + ' وهذا الترتيب هو المعتمد في السلة والورقة وPDF والصورة والنصّ المنسوخ.</div>';
+
+  var gs = groupBy(all, kind);
+  gs.forEach(function (g, gi) {
+    html += '<div class="sortcat"><div class="sortcat-h">'
+      + '<span class="grow">' + esc(g.cat) + ' (' + g.items.length + ')</span>'
+      + (g.cat === UNCAT ? '' :
+          '<button class="ic"' + (gi === 0 ? ' disabled' : '')
+          + ' onclick="catMoveNamed(\'' + kind + '\',\'' + esc(g.cat).replace(/'/g, '') + '\',-1)">▲</button>'
+          + '<button class="ic"' + (gi === gs.length - 1 ? ' disabled' : '')
+          + ' onclick="catMoveNamed(\'' + kind + '\',\'' + esc(g.cat).replace(/'/g, '') + '\',1)">▼</button>')
+      + '</div>';
+    html += g.items.map(function (o, i) {
+      return '<div class="card"><div class="row">'
+        + '<span class="idx">' + (i + 1) + '</span>'
+        + '<div class="grow"><div class="name">' + esc(itemLabel(kind, o)) + '</div></div>'
+        + '<button class="ic big"' + (i === 0 ? ' disabled' : '')
+        + ' onclick="itemMove(\'' + kind + '\',\'' + o.id + '\',-1)">▲</button>'
+        + '<button class="ic big"' + (i === g.items.length - 1 ? ' disabled' : '')
+        + ' onclick="itemMove(\'' + kind + '\',\'' + o.id + '\',1)">▼</button>'
+        + '</div></div>';
+    }).join('') + '</div>';
+  });
+  html += '<button class="btn full primary" onclick="sortDone(\'' + kind + '\')">✅ تم</button>';
+  h('page', html);
+}
+/** «تم»: يؤكّد الحفظ بقراءةٍ جديدة من القاعدة قبل أن يغادر الصفحة. */
+window.sortDone = function (kind) {
+  var want = coll(kind).map(function (x) { return x.id; });
+  var ok = Store.setItemOrder(kind, want);
+  if (ok === false) return toast('⚠️ لم يُحفَظ الترتيب — راجِع 🩺 الفحص', 'er');
+  goBack();
+  toast('✅ حُفظ الترتيب');
+};
+
 /* ════════════════ وضعان لا وضعٌ واحد مُشوَّش ════════════════
    التطبيق يخدم عملين مختلفين: **بناء الدليل** (إضافة وتعديل وتصنيف)،
    و**إرسال قائمة لمريض** (تأشير وعرض وإرسال). وكانا مختلطين في شاشة
@@ -2315,8 +2364,12 @@ function sectionBar(kind, q, placeholder, addCall) {
       + editTools(kind);
   } else {
     html += '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات'
-      + (ng ? ' ' + ng : '') + '</button>'
-      + '<button class="btn" onclick="openDrawer()">☰ القائمة</button></div>';
+      + (ng ? ' ' + ng : '') + '</button></div>';
+  }
+  // الترتيب في الوضعين: هو حاجةٌ قائمة سواء كنت تُدخِل أو تُرسِل
+  if (coll(kind).length > 1) {
+    html += '<button class="btn full sort-entry" onclick="goPage(\'sort:' + kind + '\')">'
+      + '↕️ ترتيب ' + esc(kindLbl(kind).title) + '</button>';
   }
   return html;
 }
@@ -2382,10 +2435,11 @@ window.itemMove = function (kind, id, dir) {
   var t = all[a]; all[a] = all[b]; all[b] = t;
   setColl(kind, all);
   var ok = Store.setItemOrder(kind, all.map(function (x) { return x.id; }));
-  if (ok === false) return toast('⚠️ لم يُحفَظ الترتيب', 'er');
   DB.cart[kind] = orderOf(kind, DB.cart[kind]);   // السلة تتبع فورًا
   Store.setCart(kind);
   render();
+  // الجسر يتحقّق من الكتابة بقراءتها، فـfalse هنا فشلٌ مؤكَّد لا ظنّ
+  if (ok === false) toast('⚠️ لم يُحفَظ الترتيب — راجِع 🩺 الفحص', 'er');
 };
 function emptyBox(icon, title, sub) {
   return '<div class="empty"><div class="ei">' + icon + '</div><div class="et">' + esc(title) + '</div><div class="es">' + esc(sub) + '</div></div>';
@@ -3872,6 +3926,7 @@ function pvListHtml() {
     + '<button class="btn sm" onclick="pvAll(1)">☑️ تحديد الكل</button>'
     + '<button class="btn sm" onclick="pvAll(0)">⬜ إلغاء الكل</button>'
     + '<span class="pvsel-n">' + on + ' / ' + all + '</span></div>'
+    + '<button class="btn full" onclick="pvKeepOrder()">💾 احفظ هذا الترتيب للقسم</button>'
     + PV.ids.map(function (id, i) {
       var o = itemById(PV.kind, id), off = !!(PV.off && PV.off[id]);
       return '<div class="card pvrow' + (off ? ' off' : '') + '"><div class="row">'
@@ -3901,6 +3956,28 @@ window.pvAll = function (on) {
   PV.off = {};
   if (!on) PV.ids.forEach(function (id) { PV.off[id] = 1; });
   render();
+};
+/**
+ * «احفظ هذا الترتيب للقسم».
+ *
+ * ترتيب المعاينة مؤقّتٌ بطبعه — وهذا مقصود. لكن من رتّب هنا ورضي الترتيب
+ * كان عليه أن يعيده في القسم من جديد، فيظنّ أنّ الترتيب «لا يُحفَظ». هذا
+ * الزرّ يثبّت ما أمامه: يُعطي المؤشَّر مواضعه الأولى ثم يُلحِق الباقي،
+ * فيصير ترتيب القسم — والسلة والورقة معه.
+ */
+window.pvKeepOrder = function () {
+  if (!PV) return;
+  var kind = PV.kind;
+  var want = PV.ids.slice();
+  coll(kind).forEach(function (o) { if (want.indexOf(o.id) < 0) want.push(o.id); });
+  var by = {};
+  coll(kind).forEach(function (o) { by[o.id] = o; });
+  setColl(kind, want.map(function (id) { return by[id]; }).filter(Boolean));
+  var ok = Store.setItemOrder(kind, want);
+  if (ok === false) return toast('⚠️ لم يُحفَظ الترتيب — راجِع 🩺 الفحص', 'er');
+  DB.cart[kind] = orderOf(kind, DB.cart[kind]);
+  Store.setCart(kind);
+  toast('✅ صار هذا ترتيب ' + kindLbl(kind).title);
 };
 window.pvMove = function (i, dir) {
   var j = i + dir;

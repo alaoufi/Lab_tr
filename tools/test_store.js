@@ -56,13 +56,19 @@ function makeBridge() {
       return true;
     },
     deleteGroup: id => { t.groups = t.groups.filter(g => g.id !== id); return true; },
+    // كما في DaliliDb: يكتب ثم **يتحقّق بقراءة** قبل أن يقول «نجح»
     setItemOrder: (kind, j) => {
       const ids = JSON.parse(j);
-      const rank = o => { const i = ids.indexOf(o.id); return i < 0 ? 1e9 : i; };
+      const rows = isCustom(kind) ? t.items.filter(o => o.section === kind) : t[kind];
+      ids.forEach((id, i) => { const o = rows.find(x => x.id === id); if (o) o.sort_order = i + 1; });
+      const rank = o => (o.sort_order === undefined ? 1e9 : o.sort_order);
       if (isCustom(kind)) t.items.sort((a, b2) => rank(a) - rank(b2));
       else t[kind].sort((a, b2) => rank(a) - rank(b2));
       orders[kind] = ids;
-      return true;
+      return ids.every((id, i) => {
+        const o = rows.find(x => x.id === id);
+        return !!o && o.sort_order === i + 1;
+      });
     },
     setGroupOrder: j => {
       const ids = JSON.parse(j);
@@ -2868,4 +2874,83 @@ run('الترتيب: تصنيفٌ مكتوبٌ في العناصر وحدها ي
   c.catMoveNamed('labs', 'ب', -1);
   eq(c.catsShown('labs'), ['ب', 'أ'], 'and moving one registers it and works:');
   eq(b._t.cats.length, 2, 'both became real categories:');
+});
+
+/* ── الترتيب: زرٌّ صريح، وحفظٌ مُتحقَّق منه ────────────────────────── */
+
+run('الترتيب: زرّ «↕️ ترتيب» ظاهر في كل قسم وفي الوضعين', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
+    ['أ', 'ب'].forEach(n => {
+      const rec = { id: c.uid(), name: n, trade_name: n, category: 'ت', extra: {} };
+      c.coll(k).push(rec); c.Store.upsert(k, rec);
+    });
+    ['send', 'edit'].forEach(m => {
+      c.setMode(m); c.goPage(k);
+      eq(c._els('page').innerHTML.indexOf("goPage('sort:" + k + "')") >= 0, true,
+         k + ' / ' + m + ': the sort button is right there:');
+    });
+  });
+});
+
+run('الترتيب: صفحة الترتيب تحرّك وتحفظ وتتحقّق', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['FBS', 'Urea', 'CBC'].forEach(n => {
+    const rec = { id: c.uid(), category: 'كيمياء', name: n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', 'كيمياء'); c.Store.upsert('labs', rec);
+  });
+  const ids = c.DB.labs.map(x => x.id);
+
+  c.goPage('sort:labs');
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('كل حركة تُحفَظ فورًا') >= 0, true, 'it promises to save as you go:');
+  eq(html.indexOf("itemMove('labs'") >= 0, true, 'with arrows on every item:');
+  eq(html.indexOf("catMoveNamed('labs'") >= 0, true, 'and on the category:');
+
+  c.itemMove('labs', ids[2], -1);
+  eq(b._t.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'the move reached the database:');
+  eq(b._t.labs.map(x => x.sort_order), [1, 2, 3], 'with real sort_order values:');
+
+  c.sortDone('labs');
+  eq(c._els('toast').textContent, '✅ حُفظ الترتيب', 'and «done» confirms it:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.labs.map(x => x.name), ['FBS', 'CBC', 'Urea'], 'and it survives a restart:');
+});
+
+run('الترتيب: فشل الكتابة يُقال ولا يُبتلع', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['FBS', 'Urea'].forEach(n => {
+    const rec = { id: c.uid(), category: 'كيمياء', name: n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', 'كيمياء'); c.Store.upsert('labs', rec);
+  });
+  b.setItemOrder = () => false;          // كما لو فشل التحقّق في القاعدة
+  c.goPage('sort:labs');
+  c.itemMove('labs', c.DB.labs[1].id, -1);
+  eq(c._els('toast').textContent.indexOf('لم يُحفَظ الترتيب') >= 0, true, 'the failure is reported:');
+  c.sortDone('labs');
+  eq(c._els('toast').textContent.indexOf('لم يُحفَظ الترتيب') >= 0, true, 'and «done» refuses to claim success:');
+});
+
+run('الترتيب: «احفظ هذا الترتيب للقسم» من المعاينة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['FBS', 'Urea', 'CBC'].forEach(n => {
+    const rec = { id: c.uid(), category: 'كيمياء', name: n, code: '', extra: {} };
+    c.DB.labs.push(rec); c.catEnsure('labs', 'كيمياء'); c.Store.upsert('labs', rec);
+  });
+  c.setMode('send');
+  c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
+  c.previewCart('labs'); c.pvTab('list');
+  eq(c._els('page').innerHTML.indexOf('احفظ هذا الترتيب للقسم') >= 0, true, 'the button is offered:');
+
+  c.pvMove(0, 1);                        // FBS ينزل تحت Urea
+  eq(c.rowsFor('labs', c.pvOn()).map(r => r.title), ['Urea', 'FBS', 'CBC'], 'the preview order changed:');
+  eq(b._t.labs.map(x => x.name), ['FBS', 'Urea', 'CBC'], 'but the section is untouched so far:');
+
+  c.pvKeepOrder();
+  eq(b._t.labs.map(x => x.name), ['Urea', 'FBS', 'CBC'], 'now the section took it:');
+  eq(c.DB.cart.labs, c.displayOrder('labs'), 'and the cart followed:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.labs.map(x => x.name), ['Urea', 'FBS', 'CBC'], 'and it survives a restart:');
 });

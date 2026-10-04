@@ -258,8 +258,7 @@ public class DbBridge {
     public boolean setItemOrder(String kind, String jsonIds) {
         if (!validKind(kind)) return false;
         try {
-            db.setItemOrder(kind, new JSONArray(jsonIds));
-            return true;
+            return db.setItemOrder(kind, new JSONArray(jsonIds));
         } catch (Exception e) {
             Log.e(TAG, "setItemOrder failed", e);
             return false;

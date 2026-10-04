@@ -842,10 +842,21 @@ public class DaliliDb extends SQLiteOpenHelper {
      * والورقة والصورة والنصّ المنسوخ. اسم الجدول من {@code KINDS} أو
      * {@code items} — لا يصل نصّ المستخدم إلى SQL.
      */
-    public void setItemOrder(String kind, JSONArray ids) {
+    public boolean setItemOrder(String kind, JSONArray ids) {
+        if (!isKind(kind) && !isCustomKind(kind)) return false;
         String table = isCustomKind(kind) ? "items" : kind;
-        if (!isKind(kind) && !isCustomKind(kind)) return;
         SQLiteDatabase db = getWritableDatabase();
+        try {
+            writeOrder(db, table, ids);
+        } catch (Exception e) {
+            Log.w(TAG, "order write failed on " + table + " — repairing and retrying", e);
+            ensureSchema(db);
+            writeOrder(db, table, ids);
+        }
+        return verifyOrder(db, table, ids);
+    }
+
+    private void writeOrder(SQLiteDatabase db, String table, JSONArray ids) {
         db.beginTransaction();
         try {
             for (int i = 0; i < ids.length(); i++) {
@@ -855,6 +866,32 @@ public class DaliliDb extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
+    }
+
+    /**
+     * يقرأ ما كُتب ويقارنه بما طُلب.
+     *
+     * «نجحت الكتابة» في SQLite تعني أنّ الأمر نُفِّذ، لا أنّ الصفّ تغيّر:
+     * {@code UPDATE … WHERE id=?} على معرّفٍ غير موجود يعيد صفرًا بلا خطأ.
+     * والمستخدم لا يرى إلا النتيجة — فنتأكّد منها بقراءةٍ لا بالظنّ.
+     */
+    private boolean verifyOrder(SQLiteDatabase db, String table, JSONArray ids) {
+        try {
+            for (int i = 0; i < ids.length(); i++) {
+                Cursor c = db.query(table, new String[]{"sort_order"}, "id=?",
+                        new String[]{ids.optString(i)}, null, null, null);
+                try {
+                    if (!c.moveToFirst() || c.getInt(0) != i + 1) {
+                        Log.e(TAG, "order verify failed at " + i + " in " + table);
+                        return false;
+                    }
+                } finally { c.close(); }
+            }
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "order verify error", e);
+            return false;
+        }
     }
 
     private JSONArray readGroups(SQLiteDatabase db) throws Exception {
