@@ -21,10 +21,15 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
   await p.waitForTimeout(400);
   await p.screenshot({ path: 'n1-home.png' });
 
+  // الإضافة فعلُ إدخال — ندخل وضعه أولًا
+  await p.evaluate(() => setMode('edit'));
+  await p.waitForTimeout(200);
+  await p.screenshot({ path: 'n1b-edit-mode.png' });
+
   // إضافة وصفة من صفحة الوصفات
   await p.click('text=الوصفات العلاجية');
   await p.waitForTimeout(250);
-  await p.click('text=+ إضافة');
+  await p.click('text=➕ إضافة عنصر');
   await p.waitForTimeout(250);
   await p.fill('#rf-name', 'شراب الزنجبيل والعسل');
   await p.click('.seg:has-text("وقائية")');
@@ -42,6 +47,10 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
   await p.click('.mft .btn.primary');
   await p.waitForTimeout(350);
   await p.screenshot({ path: 'n3-recipes.png' });
+
+  // التأشير فعلُ إرسال — نعود لوضعه
+  await p.evaluate(() => setMode('send'));
+  await p.waitForTimeout(250);
 
   // حدّد الوصفة ثم عاينها بتبويبيها قبل الرجوع
   await p.check('.card input[type=checkbox]');
@@ -76,7 +85,9 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
   // تسهيل الإضافة: حفظ ومتابعة، ثم بحثٌ بلا نتيجة يضيف بالاسم
   await p.evaluate(() => goPage('labs'));
   await p.waitForTimeout(250);
-  await p.click('text=+ إضافة');
+  await p.evaluate(() => setMode('edit'));
+  await p.waitForTimeout(200);
+  await p.click('text=➕ إضافة عنصر');
   await p.waitForTimeout(300);
   await p.selectOption('#lf-catsel', 'أمراض الدم');
   for (const n of ['CBC', 'ESR']) {
@@ -102,9 +113,7 @@ if (process.env.PW_CHROME) LAUNCH.executablePath = process.env.PW_CHROME;
   await p.screenshot({ path: 'n11-fields.png', fullPage: true });
 
   // المجموعات: تُحفَظ فور التعديل، وتُرتَّب، وتُفتَح من الدرج الجانبي
-  await p.evaluate(() => {
-    goPage('grp:labs'); groupNew('labs');
-  });
+  await p.evaluate(() => { setMode('send'); goPage('grp:labs'); groupNew('labs'); });
   await p.fill('#gn', 'ما قبل الجراحة');
   await p.click('.mft .btn.primary');
   await p.waitForTimeout(250);

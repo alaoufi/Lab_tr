@@ -1701,6 +1701,7 @@ run('الإضافة: ⧉ تكرار عنصر يفتح نسخة قابلة للت
 
 run('الإضافة: بحثٌ بلا نتيجة يضيف بالاسم مباشرةً', () => {
   const b = makeBridge(); const c = load(b); c.Store.load(); c.showApp();
+  c.setMode('edit');                    // الإضافة فعلُ إدخال
   c.goPage('meds');
   c.medForm(); c._els('mf-trade_name').value = 'بنادول';
   c._els('mf-category').value = 'مسكنات'; c.medSave('');
@@ -2520,15 +2521,65 @@ run('المكتبة ← المجموعة: ممنوعة ما دامت قراءة 
   eq(b._t.labs.length, 1, 'nothing was duplicated:');
 });
 
-run('الشريط: أزراره كلها حاضرة ومسمّاة في كل قسم', () => {
+run('الوضعان: كل قسم يقول أين أنت وأدواتُه تتبع ذلك', () => {
   const b = makeBridge(); const c = load(b); c.boot();
   ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
-    c.goPage(k);
-    const html = c._els('page').innerHTML;
-    eq(html.indexOf('+ إضافة') >= 0, true, k + ': the add button is in the markup:');
-    eq(html.indexOf('🏷️ التصنيفات') >= 0, true, k + ': categories named, not a bare icon:');
-    eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': and groups too:');
+    // وضع الإرسال — الافتراضي
+    c.setMode('send'); c.goPage(k);
+    let html = c._els('page').innerHTML;
+    eq(html.indexOf('📤 إرسال') >= 0 && html.indexOf('📝 إدخال وتعديل') >= 0, true,
+       k + ': both modes are on screen:');
+    eq(html.indexOf('أشِّر ما تريد إرساله') >= 0, true, k + ': and it says what this one does:');
+    eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': sending reaches the groups:');
+    eq(html.indexOf('إضافة عنصر') < 0, true, k + ': and offers no adding — that is the other mode:');
+    eq(html.indexOf('🏷️ التصنيفات') < 0, true, k + ': nor the building tools:');
+
+    // وضع الإدخال
+    c.setMode('edit'); c.goPage(k);
+    html = c._els('page').innerHTML;
+    eq(html.indexOf('➕ إضافة عنصر') >= 0, true, k + ': adding is here, named in full:');
+    eq(html.indexOf('🏷️ التصنيفات') >= 0, true, k + ': with the categories:');
+    eq(html.indexOf('🧩 الحقول') >= 0, true, k + ': and the fields:');
+    eq(html.indexOf('أضِف عناصرك وعدّلها') >= 0, true, k + ': and it says so:');
   });
+});
+
+run('الوضعان: البطاقة تعرض ما يخصّ الوضع وحده', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+
+  let html = c._els('page').innerHTML;
+  eq(html.indexOf('✏️') >= 0 && html.indexOf('🗑️') >= 0, true, 'edit mode: pencil and bin:');
+  eq(html.indexOf('type="checkbox"') < 0, true, 'and no tick boxes to confuse it:');
+
+  c.setMode('send');
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('type="checkbox"') >= 0, true, 'send mode: a tick box:');
+  eq(html.indexOf('🗑️') < 0, true, 'and nothing that deletes:');
+  eq(html.indexOf('toggleCart') >= 0, true, 'the whole row ticks:');
+});
+
+run('الوضعان: الوضع يُحفَظ فلا يُعاد اختياره', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  eq(c.mode(), 'send', 'sending is the daily job, so it is the default:');
+  c.setMode('edit');
+  eq(b._t.settings.mode, 'edit', 'the choice is persisted:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.mode(), 'edit', 'and comes back on the next launch:');
+});
+
+run('الوضعان: شريط السلة لا يظهر وأنت تُدخِل', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+  c.setMode('send');
+  c.toggleCart('labs', c.DB.labs[0].id);
+  eq(c._els('page').innerHTML.indexOf('عرض وإرسال') >= 0, true, 'the send bar is there while sending:');
+  c.setMode('edit');
+  eq(c._els('page').innerHTML.indexOf('عرض وإرسال') < 0, true, 'and out of the way while editing:');
+  eq(c.DB.cart.labs.length, 1, 'though the selection itself is kept:');
 });
 
 /* ── حفظٌ فاشل لا يتظاهر بالنجاح ───────────────────────────────────── */
@@ -2681,4 +2732,18 @@ run('الترتيب: الدفعة الجديدة تدخل المجموعة بت�
   const more = seedCatLabs(c, b, [['دم', 'ESR']]);
   c.GPICK = {}; c.groupPickToggle(more[0]); c.groupPickAdd();
   eq(b._t.groups[0].items, [ids[0], ids[2], ids[1], more[0]], 'and new ones only append:');
+});
+
+run('الوضعان: البحث بلا نتيجة يدلّ على وضع الإدخال بدل أن يُضيف', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.setMode('edit'); c.goPage('labs');
+  c._els('lf-name').value = 'CBC'; c.labSave('');
+
+  c.setMode('send');
+  c._els('srch').value = 'فيتامين د'; c.renderLabs();
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('لا نتيجة') >= 0, true, 'it still says there is no hit:');
+  eq(html.indexOf('أضِفه بهذا الاسم') < 0, true, 'but does not add from the sending mode:');
+  eq(html.indexOf("setMode('edit')") >= 0, true, 'it points at the mode that does:');
+  eq(b._t.labs.length, 1, 'and nothing was created behind the scenes:');
 });

@@ -133,6 +133,7 @@ function applyData(data) {
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
   DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || 0) || 0;
   DB.dense = Number(data.dense || st.dense || 0) || 0;
+  DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -154,7 +155,7 @@ function blobSave() {
 }
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash,
+  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -300,6 +301,10 @@ var Store = {
   clearSent: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.clearSent() || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setMode: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('mode', DB.mode) || dbFail(); } catch (e) { return dbFail(); }
   },
   setDense: function () {
     if (!NDB) { blobSave(); return true; }
@@ -1191,6 +1196,9 @@ function renderHome() {
       + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>';
   }
 
+  // الوضع ظاهرٌ من الرئيسية أيضًا: يُعرَف قبل الدخول لا بعده
+  html += modeBar();
+
   var cart = KINDS.reduce(function (a, k) { return a + DB.cart[k].length; }, 0);
   if (cart) {
     html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
@@ -1328,11 +1336,18 @@ function nameKey(kind) { return kind === 'meds' ? 'trade_name' : 'name'; }
 /** بحثٌ بلا نتيجة هو أسرع مدخل للإضافة: الاسم مكتوب أصلًا في خانة البحث. */
 function noHit(kind, q) {
   var cat = LAST_CAT[kind];
+  // الإضافة فعلُ إدخال: في وضع الإرسال نعرض الطريق إليها لا الفعل نفسه
+  if (mode() !== 'edit') {
+    return '<div class="empty"><div class="ei">🔎</div>'
+      + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
+      + '<button class="btn primary full" style="margin-top:11px" onclick="setMode(\'edit\')">'
+      + '📝 انتقل لوضع الإدخال لإضافته</button></div>';
+  }
   return '<div class="empty"><div class="ei">🔎</div>'
     + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
     + '<button class="btn primary full" style="margin-top:11px" onclick="addNamed(\'' + kind + '\')">'
     + '➕ أضِفه بهذا الاسم' + (cat ? ' إلى «' + esc(cat) + '»' : '') + '</button>'
-    + '<div class="es" style="margin-top:9px">أو «+ إضافة» لملء بقيّة الحقول</div></div>';
+    + '<div class="es" style="margin-top:9px">أو «➕ إضافة عنصر» لملء بقيّة الحقول</div></div>';
 }
 /** إضافة بالاسم وحده — تُكمَّل تفاصيله متى شئت. */
 window.addNamed = function (kind) {
@@ -1468,18 +1483,12 @@ window.secMove = function (id, dir) {
    بقيّة الوظائف (السلة، المجموعات، المعاينة، الطباعة) تعمل بلا سطر إضافي
    لأنها كلها تدور على `kind` لا على أسماء الحقول. */
 function secRow(kind, o) {
-  var on = DB.cart[kind].indexOf(o.id) >= 0;
-  return '<div class="card' + (on ? ' sel' : '') + '"><div class="row">'
-    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'' + kind + '\',\'' + o.id + '\')">'
-    + '<div class="grow" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">'
-    + '<div class="name">' + esc(o.name) + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
+  return itemCard(kind, o,
+    '<div class="name">' + esc(o.name) + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
     + (o.category ? '<div class="sub">' + esc(o.category) + '</div>' : '')
-    + extraRow(kind, o) + '</div>'
-    + thumb(o)
-    + '<button class="ic" onclick="secItemForm(\'' + kind + '\',\'' + o.id + '\')">✏️</button>'
-    + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
-    + '<button class="ic" onclick="secItemDel(\'' + kind + '\',\'' + o.id + '\')">🗑️</button>'
-    + '</div></div>';
+    + extraRow(kind, o),
+    "secItemForm('" + kind + "','" + o.id + "')",
+    "secItemDel('" + kind + "','" + o.id + "')");
 }
 function renderCustomSection(kind) {
   var L = kindLbl(kind);
@@ -1491,13 +1500,8 @@ function renderCustomSection(kind) {
     })).join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
   });
-  var ng = groupsOf(kind).length;
-  var html = '<div class="toolbar">'
-    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث…" value="' + esc(q) + '" oninput="render()">'
-    + '<button class="btn" onclick="goPage(\'cat:' + kind + '\')">🏷️ التصنيفات</button>'
-    + '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
-    + '<button class="btn primary" onclick="secItemForm(\'' + kind + '\')">+ إضافة</button></div>';
-  if (DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
+  var html = sectionBar(kind, q, '🔎 ابحث…', "secItemForm('" + kind + "')");
+  if (mode() === 'send' && DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
   if (!list.length) {
     h('page', html + (q ? noHit(kind, q)
       : emptyBox(L.icon, 'لا شيء في ' + L.title,
@@ -2178,34 +2182,20 @@ var MED_FLD = [
 ];
 
 function medRow(m) {
-  var on = DB.cart.meds.indexOf(m.id) >= 0;
-  return '<div class="card' + (on ? ' sel' : '') + '">'
-    + '<div class="row">'
-    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'meds\',\'' + m.id + '\')">'
-    + '<div class="grow" onclick="medForm(\'' + m.id + '\')">'
-    + '<div class="name">' + esc(m.trade_name) + (m.default_include ? ' <span class="star">★</span>' : '') + '</div>'
+  return itemCard('meds', m,
+    '<div class="name">' + esc(m.trade_name) + (m.default_include ? ' <span class="star">★</span>' : '') + '</div>'
     + (m.scientific_name ? '<div class="sub">' + esc(m.scientific_name) + (m.concentration ? ' • ' + esc(m.concentration) : '') + '</div>' : '')
     + (m.dosage ? '<div class="req">💊 ' + esc(m.dosage) + '</div>' : '')
-    + extraRow('meds', m)
-    + '</div>'
-    + thumb(m)
-    + '<button class="ic" onclick="medForm(\'' + m.id + '\')">✏️</button>'
-    + '<button class="ic" onclick="dupItem(\'meds\',\'' + m.id + '\')" title="تكرار">⧉</button>'
-    + '<button class="ic" onclick="medDel(\'' + m.id + '\')">🗑️</button>'
-    + '</div></div>';
+    + extraRow('meds', m),
+    "medForm('" + m.id + "')", "medDel('" + m.id + "')");
 }
 function renderMeds() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
   var list = DB.meds.filter(function (m) {
     return !q || (m.trade_name + ' ' + (m.scientific_name || '') + ' ' + (m.category || '')).toLowerCase().indexOf(q) >= 0;
   });
-  var ng = groupsOf('meds').length;
-  var html = '<div class="toolbar">'
-    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو التصنيف…" value="' + esc(q) + '" oninput="renderMeds()">'
-    + '<button class="btn" onclick="goPage(\'cat:meds\')">🏷️ التصنيفات</button>'
-    + '<button class="btn" onclick="goPage(\'grp:meds\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
-    + '<button class="btn primary" onclick="medForm()">+ إضافة</button></div>';
-  if (DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
+  var html = sectionBar('meds', q, '🔎 ابحث بالاسم أو التصنيف…', "medForm()");
+  if (mode() === 'send' && DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
   if (!list.length) {
     h('page', html + (q ? noHit('meds', q)
       : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
@@ -2267,6 +2257,87 @@ function orderOf(kind, ids) {
     if (ic < 0) ic = seq.length;
     return ia - ic;
   });
+}
+/* ════════════════ وضعان لا وضعٌ واحد مُشوَّش ════════════════
+   التطبيق يخدم عملين مختلفين: **بناء الدليل** (إضافة وتعديل وتصنيف)،
+   و**إرسال قائمة لمريض** (تأشير وعرض وإرسال). وكانا مختلطين في شاشة
+   واحدة: مربع تأشير وقلم وسلة ونجمة في كل بطاقة، وشريطٌ فيه أربعة أزرار
+   مختلفة الغرض — فلا يُعرف «وين الإدخال ووين العرض والإرسال».
+
+   الآن وضعٌ واحد في كل مرّة، ظاهرٌ في أعلى كل قسم، ويُحفَظ فلا يُعاد
+   اختياره في كل فتح. */
+var MODES = {
+  send: { icon: '📤', label: 'إرسال', hint: 'أشِّر ما تريد إرساله' },
+  edit: { icon: '📝', label: 'إدخال وتعديل', hint: 'أضِف عناصرك وعدّلها ونظّمها' }
+};
+function mode() { return DB.mode === 'edit' ? 'edit' : 'send'; }
+window.setMode = function (m) {
+  if (mode() === m) return;
+  DB.mode = m; Store.setMode();
+  render();
+  toast(MODES[m].icon + ' وضع ' + MODES[m].label);
+};
+/** شريط الوضعين — يتصدّر كل قسم فيُعرَف أين أنت قبل أن تضغط شيئًا. */
+function modeBar() {
+  var m = mode();
+  return '<div class="modebar">'
+    + Object.keys(MODES).map(function (k) {
+        return '<button class="mb' + (k === m ? ' on' : '') + '" onclick="setMode(\'' + k + '\')">'
+          + MODES[k].icon + ' ' + MODES[k].label + '</button>';
+      }).join('')
+    + '</div><div class="modehint">' + MODES[m].hint + '</div>';
+}
+/** أدوات البناء — تظهر في وضع الإدخال وحده، حيث مكانها. */
+function editTools(kind) {
+  var hasLib = ((window.LIBRARY || {})[kind] || []).length > 0;
+  return '<div class="etools">'
+    + '<button class="btn sm" onclick="goPage(\'cat:' + kind + '\')">🏷️ التصنيفات</button>'
+    + '<button class="btn sm" onclick="goPage(\'fld:' + kind + '\')">🧩 الحقول</button>'
+    + (hasLib ? '<button class="btn sm" onclick="openLibrary(\'' + kind + '\')">📚 المكتبة</button>' : '')
+    + '</div>';
+}
+/**
+ * شريط أدوات القسم — واحدٌ لكل الأقسام، يتبدّل بتبدّل الوضع.
+ * `addCall` نداء فتح نموذج الإضافة في هذا القسم.
+ */
+function sectionBar(kind, q, placeholder, addCall) {
+  var ng = groupsOf(kind).length;
+  var html = modeBar()
+    + '<div class="toolbar">'
+    + '<input id="srch" class="srch-inp" placeholder="' + esc(placeholder) + '" value="' + esc(q)
+    + '" oninput="render()">';
+  if (mode() === 'edit') {
+    html += '<button class="btn primary" onclick="' + addCall + '">➕ إضافة عنصر</button></div>'
+      + editTools(kind);
+  } else {
+    html += '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات'
+      + (ng ? ' ' + ng : '') + '</button>'
+      + '<button class="btn" onclick="openDrawer()">☰ القائمة</button></div>';
+  }
+  return html;
+}
+/**
+ * بطاقة عنصر — واحدة لكل الأقسام.
+ * في الإرسال: مربع تأشير واسمٌ وحسب، فالصفّ كلّه يؤشّر.
+ * في الإدخال: تعديل وتكرار وحذف، بلا مربع تأشير يشوّش.
+ */
+function itemCard(kind, o, body, editCall, delCall, star) {
+  var sending = mode() === 'send';
+  var on = DB.cart[kind].indexOf(o.id) >= 0;
+  return '<div class="card' + (on && sending ? ' sel' : '') + '"><div class="row">'
+    + (sending
+        ? '<label class="pvck"><input type="checkbox" ' + (on ? 'checked' : '')
+          + ' onchange="toggleCart(\'' + kind + '\',\'' + o.id + '\')"></label>'
+        : '')
+    + '<div class="grow"' + (sending
+        ? ' onclick="toggleCart(\'' + kind + '\',\'' + o.id + '\')"'
+        : ' onclick="' + editCall + '"') + '>' + body + '</div>'
+    + thumb(o)
+    + (sending ? ''
+        : '<button class="ic" onclick="' + editCall + '">✏️</button>'
+          + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
+          + '<button class="ic" onclick="' + delCall + '">🗑️</button>')
+    + '</div></div>';
 }
 function emptyBox(icon, title, sub) {
   return '<div class="empty"><div class="ei">' + icon + '</div><div class="et">' + esc(title) + '</div><div class="es">' + esc(sub) + '</div></div>';
@@ -2332,32 +2403,18 @@ window.medDel = function (id) {
 
 /* ════════════════════════ 🧪 التحاليل ════════════════════════ */
 function labRow(t) {
-  var on = DB.cart.labs.indexOf(t.id) >= 0;
-  return '<div class="card' + (on ? ' sel' : '') + '">'
-    + '<div class="row">'
-    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'labs\',\'' + t.id + '\')">'
-    + '<div class="grow" onclick="labForm(\'' + t.id + '\')">'
-    + '<div class="name">' + esc(t.code || t.name) + (t.is_common ? ' <span class="star">★</span>' : '') + '</div>'
+  return itemCard('labs', t,
+    '<div class="name">' + esc(t.code || t.name) + (t.is_common ? ' <span class="star">★</span>' : '') + '</div>'
     + (t.code ? '<div class="sub">' + esc(t.name) + '</div>' : '')
     + (t.requirements ? '<div class="req">📋 ' + esc(t.requirements) + '</div>' : '')
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
-    + extraRow('labs', t)
-    + '</div>'
-    + thumb(t)
-    + '<button class="ic" onclick="labForm(\'' + t.id + '\')">✏️</button>'
-    + '<button class="ic" onclick="dupItem(\'labs\',\'' + t.id + '\')" title="تكرار">⧉</button>'
-    + '<button class="ic" onclick="labDel(\'' + t.id + '\')">🗑️</button>'
-    + '</div></div>';
+    + extraRow('labs', t),
+    "labForm('" + t.id + "')", "labDel('" + t.id + "')");
 }
 function renderLabs() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
-  var ng = groupsOf('labs').length;
-  var html = '<div class="toolbar">'
-    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالرمز أو الاسم أو التخصص…" value="' + esc(q) + '" oninput="renderLabs()">'
-    + '<button class="btn" onclick="goPage(\'cat:labs\')">🏷️ التصنيفات</button>'
-    + '<button class="btn" onclick="goPage(\'grp:labs\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
-    + '<button class="btn primary" onclick="labForm()">+ إضافة</button></div>';
-  if (DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
+  var html = sectionBar('labs', q, '🔎 ابحث بالرمز أو الاسم أو التخصص…', "labForm()");
+  if (mode() === 'send' && DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
 
   var list = DB.labs.filter(function (t) {
     return !q || ((t.code || '') + ' ' + t.name + ' ' + (t.category || '') + ' ' + (t.purpose || '')).toLowerCase().indexOf(q) >= 0;
@@ -2384,6 +2441,7 @@ function renderLabs() {
 var _accSeq = 0;
 /** `pick` نداءُ «تحديد الكل» — يُوضع داخل الرأس ويمنع طيّ المجموعة عند نقره. */
 function accBlock(title, inner, open, pick) {
+  if (mode() !== 'send') pick = '';     // «تحديد الكل» فعلُ إرسال لا إدخال
   return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title)
     + (pick ? '<button class="acc-pick" onclick="event.stopPropagation();event.preventDefault();'
         + pick + '" title="تحديد الكل">☑️</button>' : '')
@@ -2462,36 +2520,22 @@ window.labDel = function (id) {
 /* ════════════════════════ 📷 الأشعة والفحوصات ════════════════════════
    تصوير ومناظير وتخطيط — بنيتها كالتحاليل مع «المنطقة أو العضو» بدل الرمز. */
 function imgRow(t) {
-  var on = DB.cart.imaging.indexOf(t.id) >= 0;
-  return '<div class="card' + (on ? ' sel' : '') + '">'
-    + '<div class="row">'
-    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'imaging\',\'' + t.id + '\')">'
-    + '<div class="grow" onclick="imgForm(\'' + t.id + '\')">'
-    + '<div class="name">' + esc(t.name) + (t.is_common ? ' <span class="star">★</span>' : '')
+  return itemCard('imaging', t,
+    '<div class="name">' + esc(t.name) + (t.is_common ? ' <span class="star">★</span>' : '')
     + (t.region ? ' <span class="chip">' + esc(t.region) + '</span>' : '') + '</div>'
     + (t.purpose ? '<div class="sub">' + esc(t.purpose) + '</div>' : '')
     + (t.requirements ? '<div class="req">📋 ' + esc(t.requirements) + '</div>' : '')
     + (t.prohibitions ? '<div class="ban">⛔ ' + esc(t.prohibitions) + '</div>' : '')
-    + extraRow('imaging', t)
-    + '</div>'
-    + thumb(t)
-    + '<button class="ic" onclick="imgForm(\'' + t.id + '\')">✏️</button>'
-    + '<button class="ic" onclick="dupItem(\'imaging\',\'' + t.id + '\')" title="تكرار">⧉</button>'
-    + '<button class="ic" onclick="imgDel(\'' + t.id + '\')">🗑️</button>'
-    + '</div></div>';
+    + extraRow('imaging', t),
+    "imgForm('" + t.id + "')", "imgDel('" + t.id + "')");
 }
 function renderImaging() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
   var list = DB.imaging.filter(function (t) {
     return !q || [t.name, t.category, t.region, t.purpose, t.requirements].join(' ').toLowerCase().indexOf(q) >= 0;
   });
-  var ng = groupsOf('imaging').length;
-  var html = '<div class="toolbar">'
-    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المنطقة…" value="' + esc(q) + '" oninput="renderImaging()">'
-    + '<button class="btn" onclick="goPage(\'cat:imaging\')">🏷️ التصنيفات</button>'
-    + '<button class="btn" onclick="goPage(\'grp:imaging\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
-    + '<button class="btn primary" onclick="imgForm()">+ إضافة</button></div>';
-  if (DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
+  var html = sectionBar('imaging', q, '🔎 ابحث بالاسم أو النوع أو المنطقة…', "imgForm()");
+  if (mode() === 'send' && DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
   if (!list.length) {
     h('page', html + (q ? noHit('imaging', q)
       : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
@@ -2572,36 +2616,22 @@ var RX_FLD = [
 ];
 
 function recipeRow(r) {
-  var on = DB.cart.recipes.indexOf(r.id) >= 0;
-  return '<div class="card' + (on ? ' sel' : '') + '">'
-    + '<div class="row">'
-    + '<input type="checkbox" ' + (on ? 'checked' : '') + ' onchange="toggleCart(\'recipes\',\'' + r.id + '\')">'
-    + '<div class="grow" onclick="recipeForm(\'' + r.id + '\')">'
-    + '<div class="name">' + esc(r.name) + (r.is_favorite ? ' <span class="star">★</span>' : '')
+  return itemCard('recipes', r,
+    '<div class="name">' + esc(r.name) + (r.is_favorite ? ' <span class="star">★</span>' : '')
     + (r.type ? ' <span class="chip">' + esc(r.type) + '</span>' : '') + '</div>'
     + (r.purpose ? '<div class="sub">' + esc(r.purpose) + '</div>' : '')
     + (r.dose ? '<div class="req">⚖️ ' + esc(r.dose) + '</div>' : '')
     + (r.precautions ? '<div class="ban">⛔ ' + esc(r.precautions) + '</div>' : '')
-    + extraRow('recipes', r)
-    + '</div>'
-    + thumb(r)
-    + '<button class="ic" onclick="recipeForm(\'' + r.id + '\')">✏️</button>'
-    + '<button class="ic" onclick="dupItem(\'recipes\',\'' + r.id + '\')" title="تكرار">⧉</button>'
-    + '<button class="ic" onclick="recipeDel(\'' + r.id + '\')">🗑️</button>'
-    + '</div></div>';
+    + extraRow('recipes', r),
+    "recipeForm('" + r.id + "')", "recipeDel('" + r.id + "')");
 }
 function renderRecipes() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
   var list = DB.recipes.filter(function (r) {
     return !q || [r.name, r.category, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
   });
-  var ng = groupsOf('recipes').length;
-  var html = '<div class="toolbar">'
-    + '<input id="srch" class="srch-inp" placeholder="🔎 ابحث بالاسم أو النوع أو المواد…" value="' + esc(q) + '" oninput="renderRecipes()">'
-    + '<button class="btn" onclick="goPage(\'cat:recipes\')">🏷️ التصنيفات</button>'
-    + '<button class="btn" onclick="goPage(\'grp:recipes\')">📁 المجموعات' + (ng ? ' ' + ng : '') + '</button>'
-    + '<button class="btn primary" onclick="recipeForm()">+ إضافة</button></div>';
-  if (DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
+  var html = sectionBar('recipes', q, '🔎 ابحث بالاسم أو النوع أو المواد…', "recipeForm()");
+  if (mode() === 'send' && DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
   if (!list.length) {
     h('page', html + (q ? noHit('recipes', q)
       : emptyOrFailed('recipes', '🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')));
@@ -2710,7 +2740,11 @@ function kindFailed(kind) {
 }
 /** صندوق الفراغ الصادق: يفرّق بين لا شيء وبين ما لم نستطع قراءته. */
 function emptyOrFailed(kind, icon, title, hint) {
-  if (!kindFailed(kind)) return emptyBox(icon, title, hint);
+  if (!kindFailed(kind)) {
+    if (mode() === 'edit') return emptyBox(icon, title, hint);
+    return emptyBox(icon, title, hint)
+      + '<button class="btn full primary" onclick="setMode(\'edit\')">📝 انتقل لوضع الإدخال وابدأ</button>';
+  }
   return '<div class="rec-note" style="margin:12px 0">'
     + '<b>⚠️ هذا القسم ليس فارغًا — تعذّرت قراءته.</b><br>'
     + 'بياناتك ما زالت في قاعدة البيانات، والتطبيق لم يستطع قراءتها هذه المرة'
