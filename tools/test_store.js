@@ -374,15 +374,15 @@ run('حقول التحليل الستة تُحفَظ كلها', () => {
 run('الحقول المرسلة: الافتراضي ثم التغيير يبقى بعد إعادة التشغيل', () => {
   const b = makeBridge(); let c = load(b);
   c.Store.load();
-  eq(c.DB.out.meds, ['dosage', 'uses'], 'med default:');
-  eq(c.DB.out.labs, ['code', 'requirements'], 'lab default:');
+  eq(c.DB.out.meds, ['dosage', 'uses', 'img'], 'med default — the image is in, as it always printed:');
+  eq(c.DB.out.labs, ['code', 'requirements', 'img'], 'lab default:');
 
   c.toggleOut('meds', 'cautions');          // إضافة
   c.toggleOut('meds', 'dosage');            // إزالة
-  eq(JSON.parse(b._t.settings.out_meds), ['uses', 'cautions'], 'saved:');
+  eq(JSON.parse(b._t.settings.out_meds), ['uses', 'img', 'cautions'], 'saved:');
 
   c = load(b); c.Store.load();
-  eq(c.DB.out.meds, ['uses', 'cautions'], 'after restart:');
+  eq(c.DB.out.meds, ['uses', 'img', 'cautions'], 'after restart:');
 });
 
 run('الطباعة تُخرج الحقول المختارة فقط', () => {
@@ -3083,4 +3083,77 @@ run('الحذف: «مسح» التحديد صار يُؤكَّد بعد أن ك�
   c._els('cb-yes').onclick();
   eq(c.DB.cart.labs.length, 0, 'confirmed, it clears:');
   eq(b._t.labs.length, 2, 'and not one item was deleted:');
+});
+
+/* ── القائمة كاملة: كل حقلٍ في النموذج له سطرٌ في المرسلة ─────────── */
+
+run('المرسلة: كل حقل في النموذج موجود في القائمة — بلا استثناء', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  // أعمدة كل قسم كما تُحفَظ فعلًا، مقابل ما تعرضه قائمة الحقول المرسلة
+  const cols = {
+    meds: ['scientific_name', 'category', 'concentration', 'dosage', 'duration',
+           'uses', 'cautions', 'notes', 'img'],
+    labs: ['code', 'category', 'purpose', 'requirements', 'prohibitions', 'img'],
+    imaging: ['category', 'region', 'purpose', 'requirements', 'prohibitions', 'img'],
+    recipes: ['category', 'type', 'purpose', 'ingredients', 'preparation', 'usage',
+              'dose', 'duration', 'effects', 'precautions', 'img']
+  };
+  Object.keys(cols).forEach(k => {
+    const listed = c.outDefs(k).map(f => f[0]);
+    cols[k].forEach(col => {
+      eq(listed.indexOf(col) >= 0, true, k + ': «' + col + '» is listed:');
+    });
+    eq(listed.length, cols[k].length, k + ': and nothing extra:');
+  });
+});
+
+run('المرسلة: الاسم مذكورٌ مقفلًا، والصورة حقلٌ يُؤشَّر', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('settings');
+  let html = c._els('page').innerHTML;
+  ['الاسم التجاري', 'اسم التحليل', 'اسم الفحص', 'اسم الوصفة'].forEach(n => {
+    eq(html.indexOf('🔒 ' + n) >= 0, true, 'the name is shown as locked — ' + n + ':');
+  });
+  eq(html.indexOf('الصورة') >= 0, true, 'and the image is a row of its own:');
+
+  c.goPage('fld:labs');
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('اسم التحليل') >= 0, true, 'the fields page lists it too:');
+  eq(html.indexOf('لا يُلغى') >= 0, true, 'and says it cannot be switched off:');
+  eq(html.indexOf("fldEye('labs','img')") >= 0, true, 'while the image can:');
+});
+
+run('المرسلة: إخفاء الصورة يُخرجها من الورقة ومن الصورة المُرسَلة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.saveImage && 0;
+  const im = { id: 'i1', code: 'arf', name: 'موضع الحقن', data: 'data:image/png;base64,AAA' };
+  c.DB.images.push(im); c.Store.saveImage(im);
+  const rec = { id: 'L1', name: 'CBC', category: '', img: 'arf', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+
+  eq(c.outHas('labs', 'img'), true, 'the image goes out by default:');
+  eq(c.rowsFor('labs', ['L1'])[0].img, 'arf', 'and reaches the paper:');
+
+  c.fldEye('labs', 'img');
+  eq(c.rowsFor('labs', ['L1'])[0].img, '', 'hidden, it does not:');
+  eq(c.DB.labs[0].img, 'arf', 'though the item keeps it:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.outHas('labs', 'img'), false, 'and the choice is persisted:');
+});
+
+run('المرسلة: من كان يستعمل التطبيق قبلُ لا تختفي صوره فجأةً', () => {
+  const b = makeBridge();
+  // مستخدمٌ قديم: حقوله المرسلة محفوظة بلا «img» لأنّه لم يكن حقلًا
+  b._t.settings.out_labs = JSON.stringify(['code', 'requirements']);
+  b._t.settings.out_meds = JSON.stringify(['dosage']);
+  const c = load(b); c.boot();
+  eq(c.outHas('labs', 'img'), true, 'the image was ticked for him once:');
+  eq(c.outHas('meds', 'img'), true, 'in every section:');
+  eq(c.DB.out.labs.indexOf('code') >= 0, true, 'without disturbing his own choices:');
+
+  // ومرّةً واحدة فقط: من أخفاها بعدها تبقى مخفيّة
+  c.fldEye('labs', 'img');
+  const c2 = load(b); c2.boot();
+  eq(c2.outHas('labs', 'img'), false, 'and hiding it afterwards sticks:');
 });

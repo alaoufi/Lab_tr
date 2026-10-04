@@ -26,21 +26,24 @@ var OUT_MEDS = [
   ['duration', 'مدة الاستخدام'],
   ['uses', 'الاستخدامات'],
   ['cautions', 'المحاذير'],
-  ['notes', 'ملاحظات']
+  ['notes', 'ملاحظات'],
+  ['img', 'الصورة']
 ];
 var OUT_LABS = [
   ['code', 'رمز التحليل (المصطلح)'],
   ['category', 'التصنيف (التخصص)'],
   ['purpose', 'الهدف من التحليل'],
   ['requirements', 'متطلبات التحليل'],
-  ['prohibitions', 'ممنوعات التحليل']
+  ['prohibitions', 'ممنوعات التحليل'],
+  ['img', 'الصورة']
 ];
 var OUT_IMAGING = [
   ['category', 'نوع الفحص'],
   ['region', 'المنطقة أو العضو'],
   ['purpose', 'الهدف من الفحص'],
   ['requirements', 'التحضير المطلوب'],
-  ['prohibitions', 'موانع الإجراء']
+  ['prohibitions', 'موانع الإجراء'],
+  ['img', 'الصورة']
 ];
 var OUT_RECIPES = [
   ['category', 'التصنيف'],
@@ -52,13 +55,16 @@ var OUT_RECIPES = [
   ['dose', 'الجرعة'],
   ['duration', 'مدة الاستخدام'],
   ['effects', 'الأعراض المتوقعة'],
-  ['precautions', 'الاحتياطات']
+  ['precautions', 'الاحتياطات'],
+  ['img', 'الصورة']
 ];
+/* المؤشَّر افتراضيًا على تثبيتٍ جديد. الصورة ضمنه في الجميع: من يضع صورةً
+   لعنصر يريدها أن تصل، ولو لم يفتح صفحة الحقول. */
 var OUT_DEF = {
-  meds: ['dosage', 'uses'],
-  labs: ['code', 'requirements'],
-  imaging: ['region', 'requirements'],
-  recipes: ['ingredients', 'preparation', 'dose']
+  meds: ['dosage', 'uses', 'img'],
+  labs: ['code', 'requirements', 'img'],
+  imaging: ['region', 'requirements', 'img'],
+  recipes: ['ingredients', 'preparation', 'dose', 'img']
 };
 var OUT_ALL = { meds: OUT_MEDS, labs: OUT_LABS, imaging: OUT_IMAGING, recipes: OUT_RECIPES };
 /**
@@ -66,8 +72,16 @@ var OUT_ALL = { meds: OUT_MEDS, labs: OUT_LABS, imaging: OUT_IMAGING, recipes: O
  * المستخدم. حقول المستخدم تُسبَق بـ«x:» فيعرف `outLines` أن قيمتها في
  * `extra` لا في العنصر مباشرةً.
  */
+/** الحقل الذي يحمل اسم العنصر — يظهر دائمًا ولا يُلغى، لكن يُذكَر. */
+function nameFieldLabel(kind) {
+  if (kind === 'meds') return 'الاسم التجاري';
+  if (kind === 'labs') return 'اسم التحليل';
+  if (kind === 'imaging') return 'اسم الفحص';
+  if (kind === 'recipes') return 'اسم الوصفة';
+  return 'الاسم';
+}
 function outDefs(kind) {
-  var base = OUT_ALL[kind] ? OUT_ALL[kind].slice() : [['category', 'التصنيف']];
+  var base = OUT_ALL[kind] ? OUT_ALL[kind].slice() : [['category', 'التصنيف'], ['img', 'الصورة']];
   return base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label]; }));
 }
 function outValue(o, key) {
@@ -127,11 +141,12 @@ function applyData(data) {
     DB.cart[k] = Array.isArray(c[k]) ? c[k] : [];
     // الحقول المرسلة: من جدول الإعدادات داخل التطبيق، أو من النسخة
     // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
-    DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k] || []);
+    DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k] || ['img']);
   });
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
   DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || 0) || 0;
+  DB.img_out_done = Number(data.img_out_done || st.img_out_done || 0) || 0;
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
@@ -313,6 +328,10 @@ var Store = {
   setFieldsOutDone: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('fields_out_done', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setImgOutDone: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('img_out_done', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
   setCatOrder: function (ids) {
     if (!NDB) { blobSave(); return true; }
@@ -581,6 +600,7 @@ async function boot() {
   pruneOrphans();
   seedCats();
   backfillFieldOut();
+  backfillImgOut();
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
@@ -704,7 +724,8 @@ function renderSettings() {
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">الحقول المرسلة في الطباعة والصورة</div>'
-    + '<div class="muted" style="margin-bottom:9px">اسم العلاج واسم التحليل يظهران دائمًا. اختر ما يُضاف معهما.</div>'
+    + '<div class="muted" style="margin-bottom:9px">كل حقول كل قسم هنا — المؤشَّر منها يخرج في الورقة'
+    + ' والصورة والنصّ المنسوخ. و🔒 يعني أنّه يظهر دائمًا ولا يُلغى.</div>'
     + KINDS.map(function (k) {
       var L = kindLbl(k);
       return outBlock(k, L.icon + ' ' + L.title, outDefs(k));
@@ -871,6 +892,7 @@ function backupSection() {
 function outBlock(kind, title, fields) {
   var sel = DB.out[kind];
   return '<div class="out-grp"><div class="out-t">' + title + '</div>'
+    + '<label class="chk-row locked">🔒 ' + esc(nameFieldLabel(kind)) + '</label>'
     + fields.map(function (f) {
       return '<label class="chk-row"><input type="checkbox" ' + (sel.indexOf(f[0]) >= 0 ? 'checked' : '')
         + ' onchange="toggleOut(\'' + kind + '\',\'' + f[0] + '\')"> ' + esc(f[1]) + '</label>';
@@ -1743,9 +1765,14 @@ function renderFieldsPage(kind) {
   }
 
   // الحقول الأصلية: لا تُحذف ولا تُرتَّب، لكنّ ظهورها بيد المستخدم
-  var base = (OUT_ALL[kind] || [['category', 'التصنيف']]);
+  var base = (OUT_ALL[kind] || [['category', 'التصنيف'], ['img', 'الصورة']]);
   html += '<div class="settings-lbl" style="margin-top:14px">📋 حقول ' + esc(L.title) + ' الأصلية</div>'
     + '<div class="es" style="margin-bottom:8px">موجودة دائمًا في النموذج — وأنت تقرّر ما يخرج منها.</div>'
+    // الاسم أوّل القائمة ومقفل: يظهر دائمًا، لكنّه يُذكَر فلا تبدو القائمة ناقصة
+    + '<div class="card"><div class="row">'
+    + '<span class="eye on lock">🔒</span>'
+    + '<div class="grow"><div class="name">' + esc(nameFieldLabel(kind)) + '</div>'
+    + '<div class="sub">يظهر دائمًا في العنوان — لا يُلغى</div></div></div></div>'
     + base.map(function (f) {
         return '<div class="card"><div class="row">'
           + outEyeBtn(kind, f[0])
@@ -1855,6 +1882,20 @@ window.fldMove = function (kind, id, dir) {
  * الورقة ولا الصورة. نُدرجها هنا مرّةً واحدة تحرسها علامة في الإعدادات،
  * حتى يبقى أي إلغاء تأشير يفعله المستخدم بعدها ثابتًا.
  */
+/**
+ * الصورة صارت حقلًا يُؤشَّر — وكانت تخرج دائمًا بلا خيار.
+ * فنؤشّرها مرّةً واحدة لمن كان يستعمل التطبيق قبل ذلك، وإلّا اختفت صوره
+ * من الورقة فجأةً بلا سبب يراه.
+ */
+function backfillImgOut() {
+  if (DB.img_out_done) return;
+  KINDS.forEach(function (k) {
+    var arr = DB.out[k];
+    if (arr && arr.indexOf('img') < 0) { arr.push('img'); Store.setOut(k); }
+  });
+  DB.img_out_done = 1;
+  Store.setImgOutDone();
+}
 function backfillFieldOut() {
   if (DB.fields_out_done) return;
   var touched = {};
@@ -3621,8 +3662,10 @@ function rowsFor(kind, ids) {
   var src = coll(kind);
   return ids.map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
+    // الصورة حقلٌ كغيره: لا تخرج إلا إن كانت ضمن الحقول المرسلة
+    var show = (DB.out[kind] || []).indexOf('img') >= 0;
     return o ? { n: i + 1, title: outTitle(kind, o), lines: outLines(kind, o),
-                 img: (o.img && imgByCode(o.img)) ? o.img : '' } : null;
+                 img: (show && o.img && imgByCode(o.img)) ? o.img : '' } : null;
   }).filter(Boolean);
 }
 function cartRows(kind) { return rowsFor(kind, DB.cart[kind]); }
