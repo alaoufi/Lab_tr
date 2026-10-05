@@ -2976,8 +2976,7 @@ run('الحقول: صفحةٌ واحدة تحكم ترتيب الحقل وظهو
   c.goPage('fld:labs');
   let html = c._els('page').innerHTML;
   eq(html.indexOf('المختبر') >= 0 && html.indexOf('السعر') >= 0, true, 'the added fields are listed:');
-  eq(html.indexOf('حقول ' + c.kindLbl('labs').title + ' الأصلية') >= 0, true,
-     'and the built-in ones, in the same place:');
+  eq(html.indexOf('متطلبات التحليل') >= 0, true, 'and the built-in ones, in the same list:');
   eq(html.indexOf("fldEye('labs','x:" + keys[0] + "')") >= 0, true, 'each has a visibility button:');
   eq(html.indexOf("fldEye('labs','requirements')") >= 0, true, 'built-ins too:');
 
@@ -3001,12 +3000,10 @@ run('الحقول: صفحةٌ واحدة تحكم ترتيب الحقل وظهو
   eq(out.indexOf('المختبر') >= 0, true, 'and showing it brings it back:');
 
   // الترتيب يُحفَظ ويحكم ترتيب الأسطر
-  c.fldMove('labs', c.fieldsOf('labs')[1].id, -1);
-  eq(c.fieldsOf('labs').map(f => f.label), ['السعر', 'المختبر'], 'reordered:');
+  c.outMove('labs', 'x:' + keys[1], -1);
   const c2 = load(b); c2.boot();
-  eq(c2.fieldsOf('labs').map(f => f.label), ['السعر', 'المختبر'], 'and it survives a restart:');
   eq(c2.outLines('labs', rec).map(x => x.l).filter(l => l === 'السعر' || l === 'المختبر'),
-     ['السعر', 'المختبر'], 'and the paper follows that order:');
+     ['السعر', 'المختبر'], 'the paper follows that order, and it survives a restart:');
 });
 
 run('الحقول: إخفاء حقلٍ أصلي يُخرجه من الورقة', () => {
@@ -3156,4 +3153,90 @@ run('المرسلة: من كان يستعمل التطبيق قبلُ لا تخ�
   c.fldEye('labs', 'img');
   const c2 = load(b); c2.boot();
   eq(c2.outHas('labs', 'img'), false, 'and hiding it afterwards sticks:');
+});
+
+/* ── القائمة الجانبية: كل قسم يفتح على أعماله الأربعة ─────────────── */
+
+run('القائمة: كل قسم قائمة منبثقة بأعماله الأربعة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.openDrawer();
+  const dw = c._els('dw-body').innerHTML;
+  ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
+    eq(dw.indexOf("dwGo('" + k + "','edit')") >= 0, true, k + ': add & edit:');
+    eq(dw.indexOf("dwGo('" + k + "','send')") >= 0, true, k + ': view & send:');
+    eq(dw.indexOf("drawerGo('sort:" + k + "')") >= 0, true, k + ': order the items:');
+    eq(dw.indexOf("drawerGo('fld:" + k + "')") >= 0, true, k + ': and the sent fields:');
+  });
+  eq(dw.indexOf("dwLib('labs')") >= 0, true, 'and the ready library, where there is one:');
+  eq(dw.indexOf('إضافة وتعديل العناصر') >= 0, true, 'each named in full:');
+  eq(dw.indexOf('الحقول المرسلة وترتيبها') >= 0, true, 'including the ordering:');
+});
+
+run('القائمة: كل مدخل يفتح على وضعه الصحيح', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+
+  c.openDrawer(); c.dwGo('labs', 'send');
+  eq(c.mode(), 'send', '«عرض وإرسال» puts you in sending:');
+  eq(c.curPage(), 'labs', 'on the section:');
+  eq(c._els('dw').className.indexOf('on') < 0, true, 'and shuts the drawer:');
+  eq(c._els('page').innerHTML.indexOf('إضافة عنصر') < 0, true,
+     'so only the sending shape shows:');
+
+  c.openDrawer(); c.dwGo('labs', 'edit');
+  eq(c.mode(), 'edit', '«إضافة وتعديل» puts you in editing:');
+  eq(c._els('page').innerHTML.indexOf('➕ إضافة عنصر') >= 0, true, 'with adding at hand:');
+
+  c.openDrawer(); c.dwLib('labs');
+  eq(c.mode(), 'edit', 'the library is an editing act:');
+  eq(c.curPage(), 'lib:labs', 'and lands straight in it:');
+
+  c.openDrawer(); c.drawerGo('sort:labs');
+  eq(c.curPage(), 'sort:labs', 'ordering opens its own page:');
+  c.openDrawer(); c.drawerGo('fld:labs');
+  eq(c.curPage(), 'fld:labs', 'and so do the sent fields:');
+});
+
+/* ── ترتيب الحقول المرسلة ─────────────────────────────────────────── */
+
+run('الحقول المرسلة: ترتيبها بيد المستخدم ويحكم أسطر الورقة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const rec = { id: 'L1', name: 'CBC', category: 'كيمياء', purpose: 'تقييم عام',
+                requirements: 'صيام', prohibitions: 'لا شيء', code: 'CBC', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  ['category', 'purpose', 'prohibitions'].forEach(k => c.toggleOut('labs', k));
+
+  const before = c.outLines('labs', rec).map(x => x.l);
+  eq(before, ['التصنيف (التخصص)', 'الهدف من التحليل', 'متطلبات التحليل', 'ممنوعات التحليل'],
+     'the paper reads in code order to begin with:');
+
+  // قدّم «متطلبات التحليل» إلى الصدارة
+  c.outMove('labs', 'requirements', -1);
+  c.outMove('labs', 'requirements', -1);
+  c.outMove('labs', 'requirements', -1);
+  eq(c.outLines('labs', rec).map(x => x.l)[0], 'متطلبات التحليل', 'now it leads:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.outLines('labs', rec).map(x => x.l)[0], 'متطلبات التحليل', 'and it survives a restart:');
+  eq(c2.outLines('labs', rec).map(x => x.l).length, 4, 'with nothing lost:');
+
+  // الحدّان
+  const top = c2.outDefs('labs')[0][0];
+  c2.outMove('labs', top, -1);
+  eq(c2.outDefs('labs')[0][0], top, 'the first cannot rise:');
+});
+
+run('الحقول المرسلة: حقلٌ جديد يلحق بموضعه ولا يقفز ولا يختفي', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.outMove('labs', 'requirements', -1);        // ترتيبٌ محفوظ بلا الحقل الجديد
+  const n0 = c.outDefs('labs').length;
+
+  c.fldNew('labs'); c._els('ff-label').value = 'المختبر'; c.fldCreate('labs');
+  const defs = c.outDefs('labs');
+  eq(defs.length, n0 + 1, 'the new field appears:');
+  eq(defs[defs.length - 1][1], 'المختبر', 'at the end, not jumping to the front:');
+  eq(c.outHas('labs', 'x:' + c.fieldsOf('labs')[0].key), true, 'and goes out by default:');
+
+  // ويصير قابلًا للترتيب كغيره
+  c.outMove('labs', 'x:' + c.fieldsOf('labs')[0].key, -1);
+  eq(c.outDefs('labs')[n0 - 1][1], 'المختبر', 'and moves like any other:');
 });

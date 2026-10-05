@@ -105,6 +105,18 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .dwi-i{font-size:18px;flex:none}
 .dwi-t{flex:1;font-weight:700;font-size:14px;color:#0f172a}
 .dwi-n{flex:none;font-size:12px;font-weight:800;color:var(--teal);background:#ecfdf5;border-radius:8px;padding:2px 8px}
+/* القسم في القائمة: رأسٌ يطوي، وتحته أعماله */
+.dws{margin-bottom:6px}
+.dws summary{list-style:none;margin:0}
+.dws summary::-webkit-details-marker{display:none}
+.dws-a{flex:none;color:var(--light);font-size:12px;transition:transform .15s}
+.dws[open] .dws-a{transform:rotate(180deg)}
+.dws[open]>summary{border-color:var(--teal3);background:#ecfdf5}
+.dws-b{padding:6px 10px 2px 10px}
+.dwa{display:block;width:100%;text-align:right;background:#fff;border:1px solid var(--border);
+     border-radius:10px;padding:10px 12px;margin-bottom:5px;font:inherit;font-size:13px;
+     font-weight:700;color:#0f172a;cursor:pointer}
+.dwa.sub{margin-right:14px;width:calc(100% - 14px);background:#f8fafc;font-size:12.5px;color:var(--mid)}
 
 #page{padding:12px 12px 100px}
 

@@ -82,8 +82,36 @@ function nameFieldLabel(kind) {
 }
 function outDefs(kind) {
   var base = OUT_ALL[kind] ? OUT_ALL[kind].slice() : [['category', 'التصنيف'], ['img', 'الصورة']];
-  return base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label]; }));
+  var all = base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label]; }));
+  return applyOutOrder(kind, all);
 }
+/**
+ * ترتيب الحقول المرسلة كما رتّبه المستخدم.
+ *
+ * ترتيب الأسطر على الورقة كان من ترتيب الكود، فلا يملك المستخدم تقديم
+ * «المتطلبات» على «الهدف» مثلًا. `DB.outOrder[kind]` قائمة مفاتيح: ما فيها
+ * يتقدّم بترتيبه، وما ليس فيها (حقلٌ أُضيف بعدها) يلحق في موضعه الأصلي —
+ * فلا يختفي حقلٌ جديد ولا يقفز إلى الصدارة.
+ */
+function applyOutOrder(kind, defs) {
+  var ord = DB.outOrder[kind];
+  if (!ord || !ord.length) return defs;
+  var known = [], rest = [];
+  defs.forEach(function (f) { (ord.indexOf(f[0]) >= 0 ? known : rest).push(f); });
+  known.sort(function (a, b) { return ord.indexOf(a[0]) - ord.indexOf(b[0]); });
+  return known.concat(rest);
+}
+/** يحرّك حقلًا في ترتيب الإرسال ويحفظ الترتيب كاملًا. */
+window.outMove = function (kind, key, dir) {
+  var keys = outDefs(kind).map(function (f) { return f[0]; });
+  var i = keys.indexOf(key), j = i + dir;
+  if (i < 0 || j < 0 || j >= keys.length) return;
+  var t = keys[i]; keys[i] = keys[j]; keys[j] = t;
+  DB.outOrder[kind] = keys;
+  var ok = Store.setOutOrder(kind);
+  render();
+  if (ok === false) toast('⚠️ لم يُحفَظ ترتيب الحقول', 'er');
+};
 function outValue(o, key) {
   if (key.indexOf('x:') === 0) return ((o.extra || {})[key.slice(2)]) || '';
   return o[key] == null ? '' : o[key];
@@ -135,13 +163,14 @@ function applyData(data) {
   DB.sections = Array.isArray(data.sections) ? data.sections : [];
   DB.fields = Array.isArray(data.fields) ? data.fields : [];
   ensureSections();
-  DB.cart = {}; DB.out = {};
+  DB.cart = {}; DB.out = {}; DB.outOrder = {};
   KINDS.forEach(function (k) {
     setColl(k, Array.isArray(data[k]) ? data[k] : []);
     DB.cart[k] = Array.isArray(c[k]) ? c[k] : [];
     // الحقول المرسلة: من جدول الإعدادات داخل التطبيق، أو من النسخة
     // المحفوظة كاملةً في المتصفح/النسخة الاحتياطية
     DB.out[k] = parseList(o[k] || st['out_' + k], OUT_DEF[k] || ['img']);
+    DB.outOrder[k] = parseList((data.outOrder || {})[k] || st['ord_' + k], []);
   });
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
@@ -172,7 +201,7 @@ function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البي
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
-            out: DB.out, header: DB.header };
+            out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
   return o;
 }
@@ -233,6 +262,12 @@ var Store = {
   setCart: function (kind) {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setCart(kind, JSON.stringify(DB.cart[kind])) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  /** ترتيب الحقول المرسلة لكل قسم. */
+  setOutOrder: function (kind) {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('ord_' + kind, JSON.stringify(DB.outOrder[kind])) || dbFail(); }
+    catch (e) { return dbFail(); }
   },
   /** الحقول المرسلة لكل قسم — تُحفَظ كنص JSON في جدول الإعدادات. */
   setOut: function (kind) {
@@ -1735,51 +1770,49 @@ function fieldKey() { return 'f' + uid(); }
  * وحقول القسم الأصلية في موضعٍ ثالث. ثلاثة أماكن لقرارٍ واحد. الآن كلّها
  * هنا: كل حقلٍ — أصليًّا كان أو مضافًا — بسطره وزرّ ظهوره وسهمَي ترتيبه.
  */
+/**
+ * صفحة الحقول — مكانٌ واحد يحكم ما يخرج من القسم وبأي ترتيب.
+ *
+ * قائمةٌ واحدة بكل حقول الإرسال — الأصلية والمضافة معًا — بترتيبها على
+ * الورقة. لكل سطر: زرّ ظهورٍ (👁️/🚫)، وسهما ترتيبٍ يحرّكانه بين كل
+ * الحقول لا بين أقرانه فقط، و✏️🗑️ للمضاف وحده. وكان هذا موزّعًا على
+ * ثلاثة أماكن ولا ترتيب فيه للأصلية إطلاقًا.
+ */
 function renderFieldsPage(kind) {
-  var L = kindLbl(kind), list = fieldsOf(kind);
+  var L = kindLbl(kind);
+  var defs = outDefs(kind);
+  var custom = {};
+  fieldsOf(kind).forEach(function (f) { custom['x:' + f.key] = f; });
+
   var html = '<button class="btn full primary" onclick="fldNew(\'' + kind + '\')">➕ حقل جديد</button>'
-    + '<button class="btn full" onclick="goPage(\'cat:' + kind + '\')">🏷️ تصنيفات ' + esc(L.title) + '</button>'
-    + '<div class="hint">كل حقول ' + esc(L.title) + ' هنا. 👁️ يُظهر الحقل في العرض'
-    + ' والإرسال و🚫 يُخفيه، والسهمان يرتّبانه. اسم العنصر يظهر دائمًا.</div>';
-
-  // الحقول المضافة: تُرتَّب وتُعدَّل وتُحذف وتُظهَر وتُخفى
-  html += '<div class="settings-lbl">🧩 حقول أضفتَها</div>';
-  if (!list.length) {
-    html += '<div class="es" style="margin-bottom:12px">لا حقول مضافة بعد —'
-      + ' «➕ حقل جديد» يضيف حقلًا يظهر في كل عناصر هذا القسم.</div>';
-  } else {
-    html += list.map(function (f, i) {
-      return '<div class="card"><div class="row">'
-        + outEyeBtn(kind, 'x:' + f.key)
-        + '<div class="grow"><div class="name">' + esc(f.label) + '</div>'
-        + '<div class="sub">' + (f.type === 'area' ? 'نصّ طويل' : 'سطر واحد')
-        + ' · ' + (outHas(kind, 'x:' + f.key) ? 'يظهر في الإرسال' : 'مخفيّ عن الإرسال') + '</div></div>'
-        + '<button class="ic"' + (i === 0 ? ' disabled' : '')
-        + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',-1)">▲</button>'
-        + '<button class="ic"' + (i === list.length - 1 ? ' disabled' : '')
-        + ' onclick="fldMove(\'' + kind + '\',\'' + f.id + '\',1)">▼</button>'
-        + '<button class="ic" onclick="fldEdit(\'' + kind + '\',\'' + f.id + '\')">✏️</button>'
-        + '<button class="ic" onclick="fldDel(\'' + kind + '\',\'' + f.id + '\')">🗑️</button>'
-        + '</div></div>';
-    }).join('');
-  }
-
-  // الحقول الأصلية: لا تُحذف ولا تُرتَّب، لكنّ ظهورها بيد المستخدم
-  var base = (OUT_ALL[kind] || [['category', 'التصنيف'], ['img', 'الصورة']]);
-  html += '<div class="settings-lbl" style="margin-top:14px">📋 حقول ' + esc(L.title) + ' الأصلية</div>'
-    + '<div class="es" style="margin-bottom:8px">موجودة دائمًا في النموذج — وأنت تقرّر ما يخرج منها.</div>'
-    // الاسم أوّل القائمة ومقفل: يظهر دائمًا، لكنّه يُذكَر فلا تبدو القائمة ناقصة
+    + '<div class="hint">هذه هي أسطر الورقة بترتيبها. 👁️ يُظهر الحقل في العرض'
+    + ' والإرسال و🚫 يُخفيه، والسهمان يقدّمانه ويؤخّرانه.</div>'
     + '<div class="card"><div class="row">'
     + '<span class="eye on lock">🔒</span>'
     + '<div class="grow"><div class="name">' + esc(nameFieldLabel(kind)) + '</div>'
-    + '<div class="sub">يظهر دائمًا في العنوان — لا يُلغى</div></div></div></div>'
-    + base.map(function (f) {
-        return '<div class="card"><div class="row">'
-          + outEyeBtn(kind, f[0])
-          + '<div class="grow"><div class="name">' + esc(f[1]) + '</div>'
-          + '<div class="sub">' + (outHas(kind, f[0]) ? 'يظهر في الإرسال' : 'مخفيّ عن الإرسال')
-          + '</div></div></div></div>';
-      }).join('');
+    + '<div class="sub">يظهر دائمًا في العنوان — لا يُلغى ولا يُحرَّك</div></div></div></div>';
+
+  html += defs.map(function (f, i) {
+    var cf = custom[f[0]];
+    return '<div class="card"><div class="row">'
+      + outEyeBtn(kind, f[0])
+      + '<div class="grow"><div class="name">' + (cf ? '🧩 ' : '') + esc(f[1]) + '</div>'
+      + '<div class="sub">' + (outHas(kind, f[0]) ? 'سطرٌ في الورقة' : 'مخفيّ عن الإرسال')
+      + (cf ? ' · ' + (cf.type === 'area' ? 'نصّ طويل' : 'سطر واحد') + ' · أضفتَه أنت' : '')
+      + '</div></div>'
+      + '<button class="ic"' + (i === 0 ? ' disabled' : '')
+      + ' onclick="outMove(\'' + kind + '\',\'' + f[0] + '\',-1)">▲</button>'
+      + '<button class="ic"' + (i === defs.length - 1 ? ' disabled' : '')
+      + ' onclick="outMove(\'' + kind + '\',\'' + f[0] + '\',1)">▼</button>'
+      + (cf
+          ? '<button class="ic" onclick="fldEdit(\'' + kind + '\',\'' + cf.id + '\')">✏️</button>'
+            + '<button class="ic" onclick="fldDel(\'' + kind + '\',\'' + cf.id + '\')">🗑️</button>'
+          : '')
+      + '</div></div>';
+  }).join('');
+
+  html += '<button class="btn full" onclick="goPage(\'cat:' + kind + '\')">🏷️ تصنيفات '
+    + esc(L.title) + '</button>';
   h('page', html);
 }
 /** هل هذا الحقل ضمن ما يخرج في العرض والإرسال؟ */
@@ -3264,14 +3297,10 @@ function drawerOpen() {
  * الرجوع إلى الرئيسية ليتنقّل، ولا يحفظ أين يسكن كل شيء.
  */
 function renderDrawer() {
+  // كل قسمٍ يفتح على أعماله الأربعة: إدخال، إرسال، ترتيب، وحقول الإرسال.
+  // قبلها كان الضغط يذهب للقسم وحسب، وبقيّة الأعمال موزّعةً على صفحاته.
   var html = '<div class="dw-g">الأقسام</div>'
-    + KINDS.map(function (k) {
-      var L = kindLbl(k), n = coll(k).length;
-      return '<button class="dwi" onclick="drawerGo(\'' + k + '\')">'
-        + '<span class="dwi-i">' + L.icon + '</span>'
-        + '<span class="dwi-t">' + esc(L.title) + '</span>'
-        + '<span class="dwi-n">' + (n || '—') + '</span></button>';
-    }).join('')
+    + KINDS.map(function (k) { return drawerSection(k); }).join('')
     + '<div class="dw-g">أدوات</div>'
     + '<button class="dwi" onclick="drawerGo(\'sent\')"><span class="dwi-i">🕘</span>'
     + '<span class="dwi-t">آخر ما أرسلت</span>'
@@ -3292,6 +3321,27 @@ function renderDrawer() {
   h('dw-body', html + gs.map(function (g, i) { return groupCard(g, i, gs.length); }).join('')
     + '<button class="btn full" onclick="closeDrawer();goPage(\'grp:all\')">🗂️ إدارة المجموعات</button>');
 }
+/** قسمٌ في القائمة: رأسٌ يطوي ويفتح، وتحته أعماله الأربعة مسمّاة. */
+function drawerSection(k) {
+  var L = kindLbl(k), n = coll(k).length;
+  var hasLib = ((window.LIBRARY || {})[k] || []).length > 0;
+  return '<details class="dws"><summary class="dwi">'
+    + '<span class="dwi-i">' + L.icon + '</span>'
+    + '<span class="dwi-t">' + esc(L.title) + '</span>'
+    + '<span class="dwi-n">' + (n || '—') + '</span>'
+    + '<span class="dws-a">▾</span></summary><div class="dws-b">'
+    + '<button class="dwa" onclick="dwGo(\'' + k + '\',\'edit\')">📝 إضافة وتعديل العناصر</button>'
+    + (hasLib
+        ? '<button class="dwa sub" onclick="dwLib(\'' + k + '\')">📚 إضافة من المكتبة الجاهزة</button>'
+        : '')
+    + '<button class="dwa" onclick="dwGo(\'' + k + '\',\'send\')">📤 عرض وإرسال</button>'
+    + '<button class="dwa" onclick="drawerGo(\'sort:' + k + '\')">↕️ ترتيب العناصر</button>'
+    + '<button class="dwa" onclick="drawerGo(\'fld:' + k + '\')">🖨️ الحقول المرسلة وترتيبها</button>'
+    + '</div></details>';
+}
+/** يدخل القسم في الوضع المطلوب — فيرى شكل الإرسال وحده أو أدوات الإدخال. */
+window.dwGo = function (kind, m) { setMode(m); closeDrawer(); goPage(kind); };
+window.dwLib = function (kind) { setMode('edit'); closeDrawer(); openLibrary(kind); };
 window.drawerSend = function (id) { closeDrawer(); groupPreview(id); };
 window.drawerGo = function (p) { closeDrawer(); goPage(p); };
 
