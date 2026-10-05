@@ -67,6 +67,8 @@ var OUT_DEF = {
   recipes: ['ingredients', 'preparation', 'dose', 'img']
 };
 var OUT_ALL = { meds: OUT_MEDS, labs: OUT_LABS, imaging: OUT_IMAGING, recipes: OUT_RECIPES };
+/** بانيات قوائم الأقسام — تُملأ عند تعريف كل قسم أدناه. */
+var SEC_LIST = {};
 /**
  * الحقول القابلة للإرسال في قسم: الأصلية المكتوبة في الكود، ثم ما عرّفه
  * المستخدم. حقول المستخدم تُسبَق بـ«x:» فيعرف `outLines` أن قيمتها في
@@ -178,6 +180,7 @@ function applyData(data) {
   DB.img_out_done = Number(data.img_out_done || st.img_out_done || 0) || 0;
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
+  DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -199,7 +202,7 @@ function blobSave() {
 }
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode,
+  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -351,6 +354,10 @@ var Store = {
   clearSent: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.clearSent() || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setShowTitle: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('showTitle', String(DB.showTitle)) || dbFail(); } catch (e) { return dbFail(); }
   },
   setMode: function () {
     if (!NDB) { blobSave(); return true; }
@@ -767,6 +774,13 @@ function renderSettings() {
     }).join('')
     + '</div>'
     + '<div class="settings-sec">'
+    + '<div class="settings-lbl">عنوان الورقة</div>'
+    + '<label class="chk-row"><input type="checkbox" ' + (DB.showTitle ? 'checked' : '')
+    + ' onchange="toggleTitle()"> اكتب عنوانًا تلقائيًّا («قائمة تحاليل»…) أعلى الورقة</label>'
+    + '<div class="muted">مطفأ افتراضيًّا: العنوان يولّده التطبيق لا أنت، ولا يضيف للمريض شيئًا.'
+    + ' إن أردت عنوانًا، اكتبه بنفسك في حقل «اسم المريض» قبل الاسم.</div>'
+    + '</div>'
+    + '<div class="settings-sec">'
     + '<div class="settings-lbl">ترويسة الطباعة (اختيارية — اتركها فارغة إن لم ترغب)</div>'
     + '<div class="muted" style="margin-bottom:8px">ما تكتبه هنا يظهر أعلى كل ورقة مطبوعة ومع النص المنسوخ. الأسطر الفارغة لا تظهر إطلاقًا.</div>'
     + '<div class="f"><label>الاسم</label><input id="hd-name" class="inp" value="' + esc(DB.header.name) + '" placeholder="اتركه فارغًا إن لم ترغب" onchange="saveHeader()"></div>'
@@ -933,6 +947,11 @@ function outBlock(kind, title, fields) {
         + ' onchange="toggleOut(\'' + kind + '\',\'' + f[0] + '\')"> ' + esc(f[1]) + '</label>';
     }).join('') + '</div>';
 }
+window.toggleTitle = function () {
+  DB.showTitle = DB.showTitle ? 0 : 1;
+  Store.setShowTitle();
+  toast(DB.showTitle ? '✅ العنوان يظهر على الورقة' : '🚫 لا عنوان — اسم المريض والتاريخ وحدهما');
+};
 window.toggleOut = function (kind, key) {
   var arr = DB.out[kind], i = arr.indexOf(key);
   if (i >= 0) arr.splice(i, 1); else arr.push(key);
@@ -1668,6 +1687,13 @@ function secRow(kind, o) {
 function renderCustomSection(kind) {
   var L = kindLbl(kind);
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var html = sectionBar(kind, q, '🔎 ابحث…', "secItemForm('" + kind + "')");
+  if (mode() === 'send' && DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
+  h('page', html + listBox(secListHtml(kind, q)));
+}
+/** قائمة قسمٍ أنشأه المستخدم — نفس بنية الأصلية، بلا جدولٍ خاص بها. */
+function secListHtml(kind, q) {
+  var L = kindLbl(kind);
   var list = coll(kind).filter(function (o) {
     if (!q) return true;
     var hay = [o.name, o.category].concat(fieldsOf(kind).map(function (f) {
@@ -1675,29 +1701,24 @@ function renderCustomSection(kind) {
     })).join(' ').toLowerCase();
     return hay.indexOf(q) >= 0;
   });
-  var html = sectionBar(kind, q, '🔎 ابحث…', "secItemForm('" + kind + "')");
-  if (mode() === 'send' && DB.cart[kind].length) html += cartBar(kind, DB.cart[kind].length);
   if (!list.length) {
-    h('page', html + (q ? noHit(kind, q)
+    return q ? noHit(kind, q)
       : emptyBox(L.icon, 'لا شيء في ' + L.title,
-        fieldsOf(kind).length ? 'اضغط «+ إضافة» لتبدأ'
-          : 'أضِف حقولًا لهذا القسم من ⚙️ الإعدادات ← إدارة الأقسام')));
-    return;
+          fieldsOf(kind).length ? 'اضغط «➕ إضافة عنصر» لتبدأ'
+            : 'أضِف حقولًا لهذا القسم من 🧩 الحقول');
   }
-  if (q) {
-    html += list.map(function (o) { return secRow(kind, o); }).join('');
-  } else {
-    var fav = list.filter(function (o) { return o.flag; });
-    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(function (o) { return secRow(kind, o); }).join(''), true,
-      'pickFlag(&#39;' + kind + '&#39;)');
-    var gs = groupBy(list, kind), op = openByDefault(list, gs);
-    gs.forEach(function (g) {
-      html += accBlock(L.icon + ' ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(function (o) { return secRow(kind, o); }).join(''), op,
-        pickCall(kind, g.cat), kind, g.cat);
-    });
-  }
-  h('page', html);
+  if (q) return list.map(function (o) { return secRow(kind, o); }).join('');
+  var out = '';
+  var fav = list.filter(function (o) { return o.flag; });
+  if (fav.length) out += accBlock('⭐ مفضّلة', fav.map(function (o) { return secRow(kind, o); }).join(''), true,
+    'pickFlag(&#39;' + kind + '&#39;)');
+  var gs = groupBy(list, kind), op = openByDefault(list, gs);
+  gs.forEach(function (g) {
+    out += accBlock(L.icon + ' ' + g.cat + ' (' + g.items.length + ')',
+      g.items.map(function (o) { return secRow(kind, o); }).join(''), op,
+      pickCall(kind, g.cat), kind, g.cat);
+  });
+  return out;
 }
 window.secItemForm = function (kind, id) {
   var o = id ? (coll(kind).find(function (x) { return x.id === id; }) || {}) : newItem(kind);
@@ -2441,25 +2462,42 @@ function renderMeds() {
   });
   var html = sectionBar('meds', q, '🔎 ابحث بالاسم أو التصنيف…', "medForm()");
   if (mode() === 'send' && DB.cart.meds.length) html += cartBar('meds', DB.cart.meds.length);
-  if (!list.length) {
-    h('page', html + (q ? noHit('meds', q)
-      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
-    return;
-  }
-
-  if (q) {
-    html += list.map(medRow).join('');
-  } else {
-    var fav = list.filter(function (m) { return m.default_include; });
-    if (fav.length) html += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true, 'pickFlag(&#39;meds&#39;)');
-    var gs = groupBy(list, 'meds'), op = openByDefault(list, gs);
-    gs.forEach(function (g) {
-      html += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(medRow).join(''), op, pickCall('meds', g.cat), 'meds', g.cat);
-    });
-  }
-  h('page', html);
+  h('page', html + listBox(medsList(q)));
 }
+SEC_LIST.meds = medsList;
+function medsList(q) {
+  var list = DB.meds.filter(function (m) {
+    return !q || (m.trade_name + ' ' + (m.scientific_name || '') + ' ' + (m.category || '')).toLowerCase().indexOf(q) >= 0;
+  });
+  if (!list.length) {
+    return q ? noHit('meds', q)
+      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
+  }
+  if (q) return list.map(medRow).join('');
+  var out = '';
+  var fav = list.filter(function (m) { return m.default_include; });
+  if (fav.length) out += accBlock('⭐ افتراضية', fav.map(medRow).join(''), true, 'pickFlag(&#39;meds&#39;)');
+  var gs = groupBy(list, 'meds'), op = openByDefault(list, gs);
+  gs.forEach(function (g) {
+    out += accBlock('💊 ' + g.cat + ' (' + g.items.length + ')',
+      g.items.map(medRow).join(''), op, pickCall('meds', g.cat), 'meds', g.cat);
+  });
+  return out;
+}
+/**
+ * قائمة القسم تُرسَم في وعاءٍ خاص — لا مع الصفحة كلّها.
+ *
+ * كان `oninput` يعيد رسم `#page` كاملةً، فيُهدَم حقل البحث نفسه مع كل
+ * حرف ويضيع التركيز: لا يُكتب فيه إلا حرفٌ واحد. الآن الشريط يُرسَم مرّة
+ * والقائمة وحدها تُحدَّث، فيبقى الحقل ومعه مؤشّر الكتابة ولوحة المفاتيح.
+ */
+window.secSearch = function (kind) {
+  var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  h('sec-list', SEC_LIST[kind] ? SEC_LIST[kind](q) : secListHtml(kind, q));
+};
+/** وعاء القائمة — يُلحَق بالشريط فتُحدَّث وحدها بعدها. */
+function listBox(inner) { return '<div id="sec-list">' + inner + '</div>'; }
+
 /* الطيّ للقوائم الطويلة فقط. قائمة قصيرة كلها مطويّة تعني ألا يرى المستخدم
    اسم عنصر واحد — وهذا ما كان يحدث في الوصفات (نوعان مطويّان بلا أسماء). */
 function openByDefault(list, groups) { return groups.length === 1 || list.length <= 40; }
@@ -2597,7 +2635,7 @@ function sectionBar(kind, q, placeholder, addCall) {
   var html = modeBar()
     + '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="' + esc(placeholder) + '" value="' + esc(q)
-    + '" oninput="render()">';
+    + '" oninput="secSearch(\'' + kind + '\')">';
   if (mode() === 'edit') {
     html += '<button class="btn primary" onclick="' + addCall + '">➕ إضافة عنصر</button></div>'
       + editTools(kind);
@@ -2770,28 +2808,27 @@ function renderLabs() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
   var html = sectionBar('labs', q, '🔎 ابحث بالرمز أو الاسم أو التخصص…', "labForm()");
   if (mode() === 'send' && DB.cart.labs.length) html += cartBar('labs', DB.cart.labs.length);
-
+  h('page', html + listBox(labsList(q)));
+}
+SEC_LIST.labs = labsList;
+function labsList(q) {
   var list = DB.labs.filter(function (t) {
     return !q || ((t.code || '') + ' ' + t.name + ' ' + (t.category || '') + ' ' + (t.purpose || '')).toLowerCase().indexOf(q) >= 0;
   });
   if (!list.length) {
-    h('page', html + (q ? noHit('labs', q)
-      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
-    return;
+    return q ? noHit('labs', q)
+      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
   }
-
-  if (q) {
-    html += list.map(labRow).join('');
-  } else {
-    var common = list.filter(function (t) { return t.is_common; });
-    if (common.length) html += accBlock('⭐ شائعة', common.map(labRow).join(''), true, 'pickFlag(&#39;labs&#39;)');
-    var gs = groupBy(list, 'labs'), op = openByDefault(list, gs);
-    gs.forEach(function (g) {
-      html += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(labRow).join(''), op, pickCall('labs', g.cat), 'labs', g.cat);
-    });
-  }
-  h('page', html);
+  if (q) return list.map(labRow).join('');
+  var out = '';
+  var common = list.filter(function (t) { return t.is_common; });
+  if (common.length) out += accBlock('⭐ شائعة', common.map(labRow).join(''), true, 'pickFlag(&#39;labs&#39;)');
+  var gs = groupBy(list, 'labs'), op = openByDefault(list, gs);
+  gs.forEach(function (g) {
+    out += accBlock('🧪 ' + g.cat + ' (' + g.items.length + ')',
+      g.items.map(labRow).join(''), op, pickCall('labs', g.cat), 'labs', g.cat);
+  });
+  return out;
 }
 var _accSeq = 0;
 /** `pick` نداءُ «تحديد الكل» — يُوضع داخل الرأس ويمنع طيّ المجموعة عند نقره. */
@@ -2944,29 +2981,29 @@ function imgRow(t) {
 }
 function renderImaging() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var html = sectionBar('imaging', q, '🔎 ابحث بالاسم أو النوع أو المنطقة…', "imgForm()");
+  if (mode() === 'send' && DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
+  h('page', html + listBox(imagingList(q)));
+}
+SEC_LIST.imaging = imagingList;
+function imagingList(q) {
   var list = DB.imaging.filter(function (t) {
     return !q || [t.name, t.category, t.region, t.purpose, t.requirements].join(' ').toLowerCase().indexOf(q) >= 0;
   });
-  var html = sectionBar('imaging', q, '🔎 ابحث بالاسم أو النوع أو المنطقة…', "imgForm()");
-  if (mode() === 'send' && DB.cart.imaging.length) html += cartBar('imaging', DB.cart.imaging.length);
   if (!list.length) {
-    h('page', html + (q ? noHit('imaging', q)
-      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️')));
-    return;
+    return q ? noHit('imaging', q)
+      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
   }
-
-  if (q) {
-    html += list.map(imgRow).join('');
-  } else {
-    var common = list.filter(function (t) { return t.is_common; });
-    if (common.length) html += accBlock('⭐ شائعة', common.map(imgRow).join(''), true, 'pickFlag(&#39;imaging&#39;)');
-    var gs = groupBy(list, 'imaging'), op = openByDefault(list, gs);
-    gs.forEach(function (g) {
-      html += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(imgRow).join(''), op, pickCall('imaging', g.cat), 'imaging', g.cat);
-    });
-  }
-  h('page', html);
+  if (q) return list.map(imgRow).join('');
+  var out = '';
+  var common = list.filter(function (t) { return t.is_common; });
+  if (common.length) out += accBlock('⭐ شائعة', common.map(imgRow).join(''), true, 'pickFlag(&#39;imaging&#39;)');
+  var gs = groupBy(list, 'imaging'), op = openByDefault(list, gs);
+  gs.forEach(function (g) {
+    out += accBlock('📷 ' + g.cat + ' (' + g.items.length + ')',
+      g.items.map(imgRow).join(''), op, pickCall('imaging', g.cat), 'imaging', g.cat);
+  });
+  return out;
 }
 window.imgForm = function (id) {
   var t = id ? (DB.imaging.find(function (x) { return x.id === id; }) || {}) : newItem('imaging');
@@ -3040,29 +3077,29 @@ function recipeRow(r) {
 }
 function renderRecipes() {
   var q = (($('srch') || {}).value || '').trim().toLowerCase();
+  var html = sectionBar('recipes', q, '🔎 ابحث بالاسم أو النوع أو المواد…', "recipeForm()");
+  if (mode() === 'send' && DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
+  h('page', html + listBox(recipesList(q)));
+}
+SEC_LIST.recipes = recipesList;
+function recipesList(q) {
   var list = DB.recipes.filter(function (r) {
     return !q || [r.name, r.category, r.type, r.purpose, r.ingredients].join(' ').toLowerCase().indexOf(q) >= 0;
   });
-  var html = sectionBar('recipes', q, '🔎 ابحث بالاسم أو النوع أو المواد…', "recipeForm()");
-  if (mode() === 'send' && DB.cart.recipes.length) html += cartBar('recipes', DB.cart.recipes.length);
   if (!list.length) {
-    h('page', html + (q ? noHit('recipes', q)
-      : emptyOrFailed('recipes', '🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ')));
-    return;
+    return q ? noHit('recipes', q)
+      : emptyOrFailed('recipes', '🌿', 'لا توجد وصفات محفوظة', 'اضغط «+ إضافة» لتبدأ');
   }
-
-  if (q) {
-    html += list.map(recipeRow).join('');
-  } else {
-    var fav = list.filter(function (r) { return r.is_favorite; });
-    if (fav.length) html += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true, 'pickFlag(&#39;recipes&#39;)');
-    var gs = groupBy(list, 'recipes'), op = openByDefault(list, gs);
-    gs.forEach(function (g) {
-      html += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')',
-        g.items.map(recipeRow).join(''), op, pickCall('recipes', g.cat), 'recipes', g.cat);
-    });
-  }
-  h('page', html);
+  if (q) return list.map(recipeRow).join('');
+  var out = '';
+  var fav = list.filter(function (r) { return r.is_favorite; });
+  if (fav.length) out += accBlock('⭐ مفضّلة', fav.map(recipeRow).join(''), true, 'pickFlag(&#39;recipes&#39;)');
+  var gs = groupBy(list, 'recipes'), op = openByDefault(list, gs);
+  gs.forEach(function (g) {
+    out += accBlock('🌿 ' + g.cat + ' (' + g.items.length + ')',
+      g.items.map(recipeRow).join(''), op, pickCall('recipes', g.cat), 'recipes', g.cat);
+  });
+  return out;
 }
 window.recipeForm = function (id) {
   var r = id ? (DB.recipes.find(function (x) { return x.id === id; }) || {}) : newItem('recipes');
@@ -3771,8 +3808,11 @@ function printCss(scope, dense) {
     + 'color:#0f172a;font-size:' + F.base + ';line-height:' + F.lh + ';-webkit-print-color-adjust:exact}'
     + s + 'h1{font-size:' + F.h1 + ';color:#0f766e;margin:0}'
     + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
+    // خلفية سطرٍ وسطر: العين تتبع الصفّ بلا أن تزيغ، وهو أهمّ ما في قائمةٍ طويلة
     + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:' + F.pad
-    + ';margin-bottom:' + F.gap + ';page-break-inside:avoid}'
+    + ';margin-bottom:' + F.gap + ';page-break-inside:avoid;background:#ffffff}'
+    + s + '.rx-item:nth-child(even){background:#f1f5f9}'
+    + s + '.sub.solo{border-bottom:1.5pt solid #0f766e;padding-bottom:5px;margin-top:0}'
     // الرقم عمودٌ ثابت العرض فتصطفّ الأسماء تحت بعضها، والصندوق يتبع
     // اتجاه الاسم (dir=auto) فيقع الرقم في الطرف الصحيح من السطر دائمًا
     + s + '.rx-name{display:flex;gap:' + (dense ? '3pt' : '5pt') + ';align-items:baseline;'
@@ -3790,12 +3830,21 @@ function printCss(scope, dense) {
     + s + '.ft{margin-top:8pt;font-size:8pt;color:#94a3b8;text-align:center}';
 }
 /** جسم الورقة (ترويسة + عنوان + تاريخ + المحتوى) — مشترك بين الطباعة والمعاينة. */
+/**
+ * عنوان الورقة اختياري ومطفأ افتراضيًّا.
+ *
+ * «قائمة تحاليل» عنوانٌ يولّده التطبيق لا المستخدم، ولا يضيف للمريض شيئًا
+ * — فحذفُه يترك الورقة لاسم المريض وتاريخه وحدهما. ومن أراده كتبه بنفسه
+ * في حقل الاسم. ويبقى العنوان مستعمَلًا في اسم الملف وفي سجل الإرسالات.
+ */
 function docBody(title, body, who) {
-  return headerHtml()
-    + '<h1>' + esc(title) + '</h1>'
-    + '<div class="sub">' + (who ? esc(who) + ' • ' : '')
-    + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
-    + body;
+  var head = (DB.showTitle ? '<h1>' + esc(title) + '</h1>' : '')
+    + (who || !DB.showTitle
+        ? '<div class="sub' + (DB.showTitle ? '' : ' solo') + '">'
+          + (who ? esc(who) + ' • ' : '')
+          + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
+        : '');
+  return headerHtml() + head + body;
 }
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
 function printDoc(title, body, who) {
@@ -3943,9 +3992,10 @@ function buildCanvas(kind, ids, title, pics) {
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, headH);
   ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
   ctx.fillStyle = '#fff'; ctx.font = 'bold 31px Tahoma, Arial, sans-serif';
-  ctx.fillText(title, W - PAD, 46);
+  if (DB.showTitle) ctx.fillText(title, W - PAD, 46);
   ctx.font = '15px Tahoma, Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
-  ctx.fillText(new Date().toLocaleDateString('ar-SA-u-nu-latn'), W - PAD, 78);
+  // بلا عنوان تصعد سطور الاسم والتاريخ لتملأ مكانه
+  ctx.fillText(new Date().toLocaleDateString('ar-SA-u-nu-latn'), W - PAD, DB.showTitle ? 78 : 56);
 
   var y = headH;
   rows.forEach(function (r, i) {
@@ -3998,7 +4048,8 @@ function listText(kind, ids, title, who) {
   if (hd.title) lines.push(hd.title);
   if (hd.contact) lines.push(hd.contact);
   if (lines.length) lines.push('');
-  lines.push(title + (who ? ' — ' + who : '') + ' — ' + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
+  lines.push((DB.showTitle ? title + ' — ' : '') + (who ? who + ' — ' : '')
+    + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
   lines.push('');
   rowsFor(kind, ids).forEach(function (r) {
     // LRM/RLM قبل الرقم: محرف غير مرئي يثبّت ترتيب السطر في واتساب وغيره

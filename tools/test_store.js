@@ -1654,7 +1654,8 @@ run('مخرجات قسم أنشأه المستخدم: عنوان صحيح وصو
   c.pvSend('print');
   eq(A._jobs[0].name, 'النصائح', 'print job name:');
   c.pvSend('copy');
-  eq(A._clip.indexOf('النصائح') >= 0 && A._clip.indexOf('نظّف الجرح') >= 0, true, 'copied text:');
+  eq(A._clip.indexOf('نظّف الجرح') >= 0, true, 'copied text carries the item:');
+  eq(A._clip.indexOf('النصائح') < 0, true, 'and no auto title — it is off by default:');
 });
 
 run('الإضافة: «حفظ ومتابعة» يُبقيك في النموذج ويقترح التصنيف', () => {
@@ -3239,4 +3240,64 @@ run('الحقول المرسلة: حقلٌ جديد يلحق بموضعه ولا
   // ويصير قابلًا للترتيب كغيره
   c.outMove('labs', 'x:' + c.fieldsOf('labs')[0].key, -1);
   eq(c.outDefs('labs')[n0 - 1][1], 'المختبر', 'and moves like any other:');
+});
+
+/* ── البحث، والعنوان، وخلفية سطرٍ وسطر ───────────────────────────── */
+
+run('البحث: الكتابة لا تهدم الحقل — يُحدَّث القائمة وحدها', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  ['CBC', 'ESR', 'FBS'].forEach(n => {
+    const rec = { id: c.uid(), name: n, code: n, category: 'كيمياء', extra: {} };
+    c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  });
+  c.goPage('labs');
+  eq(c._els('page').innerHTML.indexOf('id="sec-list"') >= 0, true,
+     'the list lives in its own box:');
+
+  // حرفًا حرفًا، كما يكتب المستخدم
+  const el = c._els('srch');
+  const page0 = c._els('page').innerHTML;
+  'CB'.split('').forEach((ch, i) => {
+    el.value = 'CB'.slice(0, i + 1);
+    c.secSearch('labs');
+  });
+  eq(el.value, 'CB', 'the field kept every character:');
+  eq(c._els('page').innerHTML, page0, 'because the page itself was never rebuilt:');
+  eq(c._els('sec-list').innerHTML.indexOf('CBC') >= 0, true, 'and the list did filter:');
+  eq(c._els('sec-list').innerHTML.indexOf('FBS') < 0, true, 'down to the match:');
+
+  // وفي كل قسم
+  ['meds', 'imaging', 'recipes'].forEach(k => {
+    c.goPage(k);
+    eq(c._els('page').innerHTML.indexOf("secSearch('" + k + "')") >= 0, true,
+       k + ': typing updates the list, not the page:');
+  });
+});
+
+run('العنوان: مطفأ افتراضيًّا، ويظهر إن طلبه', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const rec = { id: 'L1', name: 'CBC', code: 'CBC', category: '', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart('labs', 'L1');
+
+  c.previewCart('labs'); c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('<h1>') < 0, true, 'no auto title on the paper:');
+  eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'but the items are there:');
+  eq(A._pdfs[0].name.indexOf('قائمة تحاليل') >= 0, true, 'and the file is still named by it:');
+
+  c.toggleTitle();
+  eq(c.DB.showTitle, 1, 'the user asked for it:');
+  c.pvSend('pdf');
+  eq(A._pdfs[1].html.indexOf('<h1>') >= 0, true, 'and now it is printed:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.showTitle, 1, 'and the choice is persisted:');
+});
+
+run('العرض: أسطر الورقة بخلفية سطرٍ وسطر', () => {
+  const c = load(makeBridge()); c.boot();
+  const css = c.printCss('.paper', 0);
+  eq(css.indexOf('.rx-item:nth-child(even)') >= 0, true, 'even rows get their own ground:');
+  eq(css.indexOf('background:#ffffff') >= 0, true, 'and odd ones stay white:');
 });
