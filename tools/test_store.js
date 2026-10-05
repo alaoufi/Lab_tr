@@ -399,7 +399,7 @@ run('الطباعة تُخرج الحقول المختارة فقط', () => {
   let rows = c.cartRows('meds');
   eq(rows[0].title, 'بنادول', 'sci not selected → not in title:');
   eq(rows[0].n, 1, 'and the number is a field of its own, not glued to it:');
-  eq(rows[0].lines.map(c.lineText), ['الجرعات: قرص كل ٨ ساعات', 'الاستخدامات: خفض الحرارة'], 'default fields:');
+  eq(rows[0].lines.map(c.lineText), ['قرص كل ٨ ساعات', 'خفض الحرارة'], 'default fields:');
 
   c.toggleOut('meds', 'cautions');
   c.toggleOut('meds', 'scientific_name');
@@ -424,12 +424,12 @@ run('إخراج التحاليل: الرمز يُدمج مع الاسم والب
 
   let r = c.cartRows('labs')[0];
   eq(r.title, 'FBS — سكر صائم'); eq(r.n, 1);
-  eq(r.lines.map(c.lineText), ['متطلبات التحليل: صيام ٨ ساعات']);
+  eq(r.lines.map(c.lineText), ['صيام ٨ ساعات']);   // القيم وحدها — الأسماء مطفأة
 
   c.toggleOut('labs', 'purpose');
   c.toggleOut('labs', 'prohibitions');
   r = c.cartRows('labs')[0];
-  eq(r.lines.map(c.lineText), ['الهدف من التحليل: تشخيص السكري', 'متطلبات التحليل: صيام ٨ ساعات', 'ممنوعات التحليل: ممنوع الأكل قبله'], 'canonical order:');
+  eq(r.lines.map(c.lineText), ['تشخيص السكري', 'صيام ٨ ساعات', 'ممنوع الأكل قبله'], 'canonical order:');
 });
 
 run('المكتبة الجاهزة: إضافة المحدد إلى قاعدة البيانات', () => {
@@ -610,10 +610,10 @@ run('الوصفات: السلة والحذف والإخراج', () => {
 
   let r = c.cartRows('recipes')[0];
   eq(r.title, 'خلطة الحديد', 'title is the name:');
-  eq(r.lines.map(c.lineText), ['المواد المستخدمة: تمر وطحينة', 'طريقة الإعداد: تُخلط جيدًا', 'الجرعة: ملعقة يوميًا'], 'default fields:');
+  eq(r.lines.map(c.lineText), ['تمر وطحينة', 'تُخلط جيدًا', 'ملعقة يوميًا'], 'default fields:');
 
   c.toggleOut('recipes', 'precautions');
-  eq(c.cartRows('recipes')[0].lines.slice(-1).map(c.lineText), ['الاحتياطات: حذر لمرضى السكري'], 'canonical order:');
+  eq(c.cartRows('recipes')[0].lines.slice(-1).map(c.lineText), ['حذر لمرضى السكري'], 'canonical order:');
 
   c.recipeDel(id); c._els('cb-yes').onclick();
   eq(b._t.recipes.length, 0, 'deleted:');
@@ -662,7 +662,7 @@ run('الطباعة تمر بجسر أندرويد لا بنافذة منبثق�
   eq(opened, false, 'no popup attempted:');
   eq(jobs[0].name, 'قائمة وصفات', 'job name:');
   eq(jobs[0].html.indexOf('شراب الزنجبيل') >= 0, true, 'item in document:');
-  eq(jobs[0].html.indexOf('المواد المستخدمة') >= 0, true, 'labels in document:');
+  eq(jobs[0].html.indexOf('زنجبيل') >= 0, true, 'field values in document:');
   eq(jobs[0].html.indexOf('@page{size:A4') >= 0, true, 'print stylesheet:');
 });
 
@@ -912,7 +912,7 @@ run('الأشعة: السلة والإخراج والمجموعات', () => {
 
   const r = c.cartRows('imaging')[0];
   eq(r.title, 'سونار البطن', 'title:');
-  eq(r.lines.map(c.lineText), ['المنطقة أو العضو: البطن', 'التحضير المطلوب: صيام ٦ ساعات'], 'defaults:');
+  eq(r.lines.map(c.lineText), ['البطن', 'صيام ٦ ساعات'], 'defaults:');
   eq(c.cartTitle('imaging', false), 'طلب أشعة وفحوصات', 'document title:');
 
   c.goPage('grp:imaging'); c.groupFromCart('imaging');
@@ -970,7 +970,7 @@ run('نسخ القائمة كنص', () => {
 
   c.previewCart('labs'); c.pvSend('copy');
   eq(A._clip.indexOf('FBS — سكر صائم') >= 0, true, 'item in text:');
-  eq(A._clip.indexOf('• متطلبات التحليل: صيام ٨ ساعات') >= 0, true, 'field in text:');
+  eq(A._clip.indexOf('• صيام ٨ ساعات') >= 0, true, 'field in text:');
   eq(A._clip.indexOf('<') < 0, true, 'plain text, no markup:');
 
   c.clearCart('labs'); c._els('cb-yes').onclick();
@@ -1127,7 +1127,7 @@ run('الأسطر الجديدة تصل للطباعة والنص المنسوخ
 
   c.previewCart('recipes'); c.pvSend('copy');
   const lines = A._clip.split('\n');
-  eq(lines.some(l => l.indexOf('• طريقة الإعداد: 1. اغلِ الماء') >= 0), true, 'first step on the label line:');
+  eq(lines.some(l => l.indexOf('• 1. اغلِ الماء') >= 0), true, 'first step opens the line:');
   eq(lines.some(l => l === '     2. أضف العسل'), true, 'later steps indented on their own lines:');
 });
 
@@ -1400,7 +1400,10 @@ run('الحقول الإضافية: تعريف وحفظ وطباعة', () => {
   eq(c.DB.out.meds.indexOf('x:' + keys[0]) >= 0, true, 'included by default:');
   eq(b._t.settings.out_meds.indexOf('x:' + keys[0]) >= 0, true, 'and persisted:');
   const html = c.itemsHtml('meds', [b._t.meds[0].id]);
-  eq(html.indexOf('الشركة المصنّعة') >= 0 && html.indexOf('GSK') >= 0, true, 'printed:');
+  eq(html.indexOf('GSK') >= 0, true, 'the value is printed:');
+  c.toggleLabels();                      // ومع تشغيل الأسماء يظهر اسمه معه
+  eq(c.itemsHtml('meds', [b._t.meds[0].id]).indexOf('الشركة المصنّعة') >= 0, true, 'with its label:');
+  c.toggleLabels();
   eq(html.indexOf('يُحفظ مبرّدًا') >= 0, true, 'the long one too:');
 
   // وتظهر على بطاقة العنصر في القائمة نفسها
@@ -1569,13 +1572,13 @@ run('الحقل الإضافي يظهر في العرض بلا ضبط يدوي',
   const A = androidStub(); c.window.AndroidBridge = A;
   c.toggleCart('labs', b._t.labs[0].id);
   c.previewCart('labs'); c.pvSend('pdf');
-  eq(A._pdfs[0].html.indexOf('المختبر المفضّل') >= 0, true, 'label in the sent document:');
+  eq(A._pdfs[0].html.indexOf('مختبر الشفاء') >= 0, true, 'value in the sent document:');
   eq(A._pdfs[0].html.indexOf('مختبر الشفاء') >= 0, true, 'value in the sent document:');
   eq(A._pdfs[0].html.indexOf('CBC') >= 0, true, 'alongside the built-in fields:');
 
   // نصّ الحافظة يحمله أيضًا
   c.pvSend('copy');
-  eq(A._clip.indexOf('• المختبر المفضّل: مختبر الشفاء') >= 0, true, 'in the copied text:');
+  eq(A._clip.indexOf('• مختبر الشفاء') >= 0, true, 'in the copied text:');
 
   // قسم أنشأه المستخدم
   c.secNew(); c._els('sf-title').value = 'اللقاحات'; c.secCreate();
@@ -3300,4 +3303,64 @@ run('العرض: أسطر الورقة بخلفية سطرٍ وسطر', () => {
   const css = c.printCss('.paper', 0);
   eq(css.indexOf('.rx-item:nth-child(even)') >= 0, true, 'even rows get their own ground:');
   eq(css.indexOf('background:#ffffff') >= 0, true, 'and odd ones stay white:');
+});
+
+/* ── بلا أسماء حقول، والاسم في الصورة، والتاريخ في الطرف ──────────── */
+
+run('الورقة: أسماء الحقول مطفأة افتراضيًّا وتُشغَّل عند الطلب', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const rec = { id: 'L1', name: 'CBC', code: 'CBC', category: '',
+                requirements: 'صيام ٨ ساعات', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  eq(c.DB.showLabels, 0, 'off by default:');
+  eq(c.outLines('labs', rec).map(c.lineText), ['صيام ٨ ساعات'], 'the value alone:');
+  eq(c.itemsHtml('labs', ['L1']).indexOf('متطلبات التحليل') < 0, true, 'no label on the paper:');
+
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart('labs', 'L1'); c.previewCart('labs');
+  c.pvSend('copy');
+  eq(A._clip.indexOf('متطلبات التحليل') < 0, true, 'nor in the copied text:');
+  eq(A._clip.indexOf('صيام ٨ ساعات') >= 0, true, 'though the value is there:');
+
+  c.toggleLabels();
+  eq(c.outLines('labs', rec).map(c.lineText), ['متطلبات التحليل: صيام ٨ ساعات'], 'turned on, it returns:');
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.showLabels, 1, 'and the choice is persisted:');
+});
+
+run('الصورة: اسم المريض يظهر فيها كما في الـPDF', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const rec = { id: 'L1', name: 'CBC', code: 'CBC', category: '', extra: {} };
+  c.DB.labs.push(rec); c.Store.upsert('labs', rec);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.toggleCart('labs', 'L1'); c.previewCart('labs');
+  c._els('pv-who').value = 'سعد العتيبي'; c.pvWho();
+
+  // الـPDF
+  c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('سعد العتيبي') >= 0, true, 'the name is on the paper:');
+  eq(A._pdfs[0].html.indexOf('class="who"') >= 0, true, 'in its own slot:');
+  eq(A._pdfs[0].html.indexOf('class="when"') >= 0, true, 'and the date in another:');
+  eq(A._pdfs[0].html.indexOf('•') < 0, true, 'not glued together by a bullet:');
+
+  // والصورة: اللوحة تتلقّى الاسم مستقلًّا عن العنوان المطفأ
+  const drawn = [];
+  c.window.document.createElement = function (t) {
+    if (t !== 'canvas') return { style: {}, click: function () {}, remove: function () {} };
+    return {
+      width: 0, height: 0,
+      getContext: function () {
+        return { fillText: function (txt) { drawn.push(String(txt)); },
+                 fillRect: function () {}, strokeRect: function () {}, drawImage: function () {},
+                 measureText: function (t2) { return { width: String(t2).length * 8 }; },
+                 createLinearGradient: function () { return { addColorStop: function () {} }; },
+                 font: '', direction: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '', lineWidth: 1 };
+      },
+      toDataURL: function () { return 'data:image/png;base64,STUB'; }
+    };
+  };
+  c.pvSend('img');
+  eq(drawn.indexOf('سعد العتيبي') >= 0, true, 'and the image carries it too:');
+  eq(drawn.some(function (t) { return t.indexOf('قائمة تحاليل') >= 0; }), false,
+     'while the auto title stays off:');
 });

@@ -181,6 +181,7 @@ function applyData(data) {
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
+  DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -202,7 +203,7 @@ function blobSave() {
 }
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
-  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle,
+  var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle, showLabels: DB.showLabels,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -354,6 +355,10 @@ var Store = {
   clearSent: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.clearSent() || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setShowLabels: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('showLabels', String(DB.showLabels)) || dbFail(); } catch (e) { return dbFail(); }
   },
   setShowTitle: function () {
     if (!NDB) { blobSave(); return true; }
@@ -774,11 +779,15 @@ function renderSettings() {
     }).join('')
     + '</div>'
     + '<div class="settings-sec">'
-    + '<div class="settings-lbl">عنوان الورقة</div>'
+    + '<div class="settings-lbl">شكل الورقة المرسلة</div>'
     + '<label class="chk-row"><input type="checkbox" ' + (DB.showTitle ? 'checked' : '')
     + ' onchange="toggleTitle()"> اكتب عنوانًا تلقائيًّا («قائمة تحاليل»…) أعلى الورقة</label>'
-    + '<div class="muted">مطفأ افتراضيًّا: العنوان يولّده التطبيق لا أنت، ولا يضيف للمريض شيئًا.'
-    + ' إن أردت عنوانًا، اكتبه بنفسك في حقل «اسم المريض» قبل الاسم.</div>'
+    + '<div class="muted" style="margin-bottom:8px">مطفأ افتراضيًّا: العنوان يولّده التطبيق لا أنت.'
+    + ' إن أردته، اكتبه بنفسك في حقل «اسم المريض» قبل الاسم.</div>'
+    + '<label class="chk-row"><input type="checkbox" ' + (DB.showLabels ? 'checked' : '')
+    + ' onchange="toggleLabels()"> اكتب اسم كل حقل قبل قيمته («متطلبات التحليل: صيام»)</label>'
+    + '<div class="muted">مطفأ افتراضيًّا: «صيام ٨ ساعات» أوضح للمريض من'
+    + ' «متطلبات التحليل: صيام ٨ ساعات».</div>'
     + '</div>'
     + '<div class="settings-sec">'
     + '<div class="settings-lbl">ترويسة الطباعة (اختيارية — اتركها فارغة إن لم ترغب)</div>'
@@ -951,6 +960,11 @@ window.toggleTitle = function () {
   DB.showTitle = DB.showTitle ? 0 : 1;
   Store.setShowTitle();
   toast(DB.showTitle ? '✅ العنوان يظهر على الورقة' : '🚫 لا عنوان — اسم المريض والتاريخ وحدهما');
+};
+window.toggleLabels = function () {
+  DB.showLabels = DB.showLabels ? 0 : 1;
+  Store.setShowLabels();
+  toast(DB.showLabels ? '✅ أسماء الحقول تظهر' : '🚫 القيم وحدها بلا أسماء');
 };
 window.toggleOut = function (kind, key) {
   var arr = DB.out[kind], i = arr.indexOf(key);
@@ -3736,7 +3750,8 @@ function outLines(kind, o) {
   });
   return lines;
 }
-function lineText(x) { return x.l + ': ' + x.v; }
+/** سطر الحقل كما يُرسَم ويُنسَخ — باسمه إن طلبه المستخدم، وإلا بقيمته. */
+function lineText(x) { return DB.showLabels ? x.l + ': ' + x.v : x.v; }
 /** النصّ العادي لا يحمل صورًا، فيُذكَر اسمها بدل رمزها ليبقى المعنى. */
 function plainText(v) {
   return segsOf(v).map(function (g) {
@@ -3770,7 +3785,8 @@ function itemsHtml(kind, ids) {
       + (r.img ? '<img class="rx-pic" src="' + imgData(r.img) + '" alt="">' : '')
       + r.lines.map(function (x) {
         // نصّ الحقل يمرّ بـtextHtml لا esc: الرمز {code} يصير صورةً مكانه
-        return '<div class="rx-f" dir="auto"><span class="rx-l">' + esc(x.l) + ':</span> '
+        return '<div class="rx-f" dir="auto">'
+          + (DB.showLabels ? '<span class="rx-l">' + esc(x.l) + ':</span> ' : '')
           + textHtml(x.v) + '</div>';
       }).join('') + '</div>';
   }).join('');
@@ -3807,12 +3823,15 @@ function printCss(scope, dense) {
     + body + '{' + (scope ? '' : 'margin:0;')
     + 'color:#0f172a;font-size:' + F.base + ';line-height:' + F.lh + ';-webkit-print-color-adjust:exact}'
     + s + 'h1{font-size:' + F.h1 + ';color:#0f766e;margin:0}'
-    + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;border-bottom:1.5pt solid #0f766e}'
+    // الاسم والتاريخ طرفا سطرٍ واحد، بينهما فراغ لا فاصلة
+    + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;'
+    + 'border-bottom:1.5pt solid #0f766e;display:flex;justify-content:space-between;align-items:baseline}'
+    + s + '.sub .who{font-weight:bold;color:#0f172a;font-size:' + (dense ? '10pt' : '11.5pt') + '}'
+    + s + '.sub.solo{margin-top:0}'
     // خلفية سطرٍ وسطر: العين تتبع الصفّ بلا أن تزيغ، وهو أهمّ ما في قائمةٍ طويلة
     + s + '.rx-item{border:0.6pt solid #cbd5e1;border-radius:4pt;padding:' + F.pad
     + ';margin-bottom:' + F.gap + ';page-break-inside:avoid;background:#ffffff}'
     + s + '.rx-item:nth-child(even){background:#f1f5f9}'
-    + s + '.sub.solo{border-bottom:1.5pt solid #0f766e;padding-bottom:5px;margin-top:0}'
     // الرقم عمودٌ ثابت العرض فتصطفّ الأسماء تحت بعضها، والصندوق يتبع
     // اتجاه الاسم (dir=auto) فيقع الرقم في الطرف الصحيح من السطر دائمًا
     + s + '.rx-name{display:flex;gap:' + (dense ? '3pt' : '5pt') + ';align-items:baseline;'
@@ -3838,12 +3857,11 @@ function printCss(scope, dense) {
  * في حقل الاسم. ويبقى العنوان مستعمَلًا في اسم الملف وفي سجل الإرسالات.
  */
 function docBody(title, body, who) {
+  // الاسم طرفًا والتاريخ الطرف الآخر — لا ملتصقين بفاصلة بينهما
   var head = (DB.showTitle ? '<h1>' + esc(title) + '</h1>' : '')
-    + (who || !DB.showTitle
-        ? '<div class="sub' + (DB.showTitle ? '' : ' solo') + '">'
-          + (who ? esc(who) + ' • ' : '')
-          + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</div>'
-        : '');
+    + '<div class="sub' + (DB.showTitle ? '' : ' solo') + '">'
+    + '<span class="who">' + (who ? esc(who) : '') + '</span>'
+    + '<span class="when">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</span></div>';
   return headerHtml() + head + body;
 }
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
@@ -3936,7 +3954,7 @@ function loadImgs(codes, cb) {
   });
 }
 
-function buildCanvas(kind, ids, title, pics) {
+function buildCanvas(kind, ids, title, pics, who) {
   pics = pics || {};
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
   var TITLE_F = 'bold 23px Tahoma, Arial, sans-serif';
@@ -3990,12 +4008,23 @@ function buildCanvas(kind, ids, title, pics) {
   var grad = ctx.createLinearGradient(0, 0, W, 0);
   grad.addColorStop(0, '#075e54'); grad.addColorStop(1, '#0f766e');
   ctx.fillStyle = grad; ctx.fillRect(0, 0, W, headH);
-  ctx.direction = 'rtl'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#fff'; ctx.font = 'bold 31px Tahoma, Arial, sans-serif';
-  if (DB.showTitle) ctx.fillText(title, W - PAD, 46);
+  ctx.direction = 'rtl'; ctx.textBaseline = 'middle';
+  var when = new Date().toLocaleDateString('ar-SA-u-nu-latn');
+  if (DB.showTitle) {
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 31px Tahoma, Arial, sans-serif';
+    ctx.fillText(title, W - PAD, 42);
+  }
+  // الاسم والتاريخ طرفا سطرٍ واحد — لا ملتصقين بفاصلة
+  var y2 = DB.showTitle ? 80 : 54;
+  ctx.font = (DB.showTitle ? '' : 'bold ') + (DB.showTitle ? 16 : 22)
+    + 'px Tahoma, Arial, sans-serif';
+  ctx.fillStyle = DB.showTitle ? 'rgba(255,255,255,.9)' : '#fff';
+  if (who) { ctx.textAlign = 'right'; ctx.fillText(who, W - PAD, y2); }
   ctx.font = '15px Tahoma, Arial, sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.85)';
-  // بلا عنوان تصعد سطور الاسم والتاريخ لتملأ مكانه
-  ctx.fillText(new Date().toLocaleDateString('ar-SA-u-nu-latn'), W - PAD, DB.showTitle ? 78 : 56);
+  ctx.textAlign = 'left';
+  ctx.fillText(when, PAD, y2);
+  ctx.textAlign = 'right';
 
   var y = headH;
   rows.forEach(function (r, i) {
@@ -4057,7 +4086,7 @@ function listText(kind, ids, title, who) {
     lines.push(mark + r.n + '. ' + r.title);
     r.lines.forEach(function (x) {
       var segs = plainText(x.v).split('\n');
-      lines.push('   • ' + x.l + ': ' + segs[0]);
+      lines.push('   • ' + (DB.showLabels ? x.l + ': ' : '') + segs[0]);
       for (var i = 1; i < segs.length; i++) lines.push('     ' + segs[i]);
     });
   });
@@ -4078,11 +4107,10 @@ window.copyList = function (kind, ids, title, who) {
 window.shareList = function (kind, ids, title, imgTitle, who) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
   var name = outName(title || kindLbl(kind).title, who);
-  if (who) imgTitle = (imgTitle || (kindLbl(kind).icon + ' ' + title)) + ' — ' + who;
-  var head = imgTitle || (kindLbl(kind).icon + ' ' + name);
+  var head = imgTitle || (kindLbl(kind).icon + ' ' + (title || name));
   var fname = name.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
   loadImgs(imgsUsed(kind, ids), function (pics) {
-    sendCanvas(buildCanvas(kind, ids, head, pics), fname);
+    sendCanvas(buildCanvas(kind, ids, head, pics, who), fname);
   });
 };
 /** إرسال اللوحة: جسر أندرويد، أو مشاركة الويب، أو تنزيل — كما كان. */
@@ -4145,12 +4173,11 @@ window.pvWho = function () {
   var e = $('pv-who');
   if (!PV || !e) return;
   PV.who = String(e.value || '').trim();
+  // نكتب في خانة الاسم وحدها: كتابة نصّ في `.sub` كلّها تطمس بنيتها
+  // (خانة الاسم وخانة التاريخ) فيلتصق الاثنان ويضيع التباعد بينهما
   try {
-    var sub = document.querySelector('.paper .sub');
-    if (sub) {
-      sub.textContent = (PV.who ? PV.who + ' • ' : '')
-        + new Date().toLocaleDateString('ar-SA-u-nu-latn');
-    }
+    var who = document.querySelector('.paper .sub .who');
+    if (who) who.textContent = PV.who;
   } catch (err) { /* بيئة بلا DOM كامل */ }
 };
 
@@ -4192,7 +4219,7 @@ function pvImgFill() {
       var box = $('pv-img');
       if (!box || PV_TAB !== 'img') return;
       try {
-        var c = buildCanvas(PV.kind, ids, PV.imgTitle + (PV.who ? ' — ' + PV.who : ''), pics);
+        var c = buildCanvas(PV.kind, ids, PV.imgTitle, pics, PV.who);
         box.innerHTML = '<img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '">';
       } catch (e) {
         box.innerHTML = '<div class="es">تعذّر توليد الصورة — جرّب الورقة أو الإرسال مباشرة</div>';
