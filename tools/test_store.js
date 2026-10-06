@@ -3168,7 +3168,8 @@ run('الدليل: يُزرَع كاملًا مرّةً واحدة بتصنيف�
   ], 'the four categories he asked for:');
 
   eq(c.fieldsOf('sec_dir').map(f => f.label),
-     ['الهاتف', 'التخصص أو الخدمة', 'العنوان', 'الموقع على الخريطة', 'ساعات العمل', 'ملاحظات'],
+     ['الهاتف', 'التخصص أو الخدمة', 'العنوان', 'الموقع على الخريطة',
+      'الموقع الإلكتروني', 'ساعات العمل', 'ملاحظات'],
      'and the fields a directory needs:');
   c.fieldsOf('sec_dir').forEach(f => {
     eq(c.outHas('sec_dir', 'x:' + f.key), true, f.label + ' goes out when sent:');
@@ -3261,11 +3262,59 @@ run('الموقع: الإحداثيات تصير رابطًا، والنصّ ي�
      'a shared link passes through:');
   eq(c.geoLink('geo:24.7136,46.6753'), 'geo:24.7136,46.6753', 'a geo: URI too:');
 
-  // وما ليس موقعًا لا نخترع له موقعًا
-  eq(c.geoLink('شارع الملك فهد'), '', 'an address is not a location:');
-  eq(c.geoLink('95.0, 46.0'), '', 'latitude past the pole is refused:');
-  eq(c.geoLink('24.0, 200.0'), '', 'and longitude past the meridian:');
+  // وأيُّ صيغةٍ أخرى تُقبَل: المستخدم لا يُردّ بـ«هذه ليست إحداثيات»
+  eq(c.geoLink('21.4225 39.8262'), 'https://maps.google.com/?q=21.4225,39.8262',
+     'a space is a separator too:');
+  eq(c.geoLink('21.4225;39.8262'), 'https://maps.google.com/?q=21.4225,39.8262',
+     'and a semicolon:');
+  eq(c.geoLink('maps.app.goo.gl/abc'), 'https://maps.app.goo.gl/abc',
+     'a link without https is completed, not refused:');
+  eq(c.geoParse('24°42\'49"N 46°40\'31"E').kind, 'point',
+     'degrees-minutes-seconds read as an exact point:');
+  eq(c.geoLink('24°42\'49"N 46°40\'31"E'), 'https://maps.google.com/?q=24.713611,46.675278',
+     'converted to decimals:');
+  eq(c.geoParse('7FCHXJ2V+2X').kind, 'point', 'a Plus Code is a point:');
+
+  // والعنوان المكتوب يصير بحثًا — ويُقال له إنه بحث لا نقطة
+  const addr = c.geoParse('شارع الملك فهد');
+  eq(addr.kind, 'search', 'a written address becomes a search:');
+  eq(addr.url.indexOf('https://maps.google.com/?q=') === 0, true, 'with a working link:');
+  eq(c.geoHint('شارع الملك فهد').indexOf('بحثًا') >= 0, true,
+     'and the field says so instead of pretending:');
+  eq(c.geoHint('24.7136, 46.6753').indexOf('محدَّد') >= 0, true,
+     'while an exact point says that:');
+
   eq(c.geoLink(''), '', 'empty stays empty:');
+  eq(c.geoHint(''), 'إحداثيات، أو رابط خرائط، أو Plus Code، أو العنوان مكتوبًا — كلّها تُقبَل.',
+     'and the empty field invites any of them:');
+});
+
+run('الموقع الإلكتروني: يُكتب بأي صيغة ويظهر باسمه', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+
+  eq(c.webParse('example.com').url, 'https://example.com', 'https is not required:');
+  eq(c.webParse('https://www.lab.example.com/a/b').name, 'lab.example.com',
+     'the card shows the name, not the length:');
+  eq(c.webParse('https://x.co/path').url, 'https://x.co/path', 'a full link passes through:');
+  eq(c.webParse('ليس رابطًا').url, '', 'and plain text is not invented into one:');
+  eq(c.webHint('ليس رابطًا').indexOf('⚠️') >= 0, true, 'which the field says:');
+
+  // حقلٌ من هذا النوع يصل المُرسَل برابطه كاملًا
+  c._els('cf-nf').value = 'الموقع الإلكتروني';
+  c._els('cf-nt').value = 'url';
+  c.fldInline('labs', 'cf');
+  const f = c.fieldsOf('labs').find(x => x.label === 'الموقع الإلكتروني');
+  eq(f.type, 'url', 'the type is kept:');
+
+  c.goPage('labs');
+  c._els('lf-name').value = 'مختبر';
+  c._els('lf-x-' + f.key).value = 'lab.example.com';
+  c.labSave('');
+  c.toggleCart('labs', b._t.labs[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.previewCart('labs'); c.pvSend('print');
+  eq(A._jobs[0].html.indexOf('https://lab.example.com') >= 0, true,
+     'the sent sheet carries the full link:');
 });
 
 run('الموقع: يُرسَل رابطًا في الورقة والنصّ والصورة', () => {
@@ -3340,7 +3389,8 @@ run('الموقع: لوحة النوع تكتب في حقلها هي لا في �
   eq(panel.indexOf('data-t="geo"') >= 0, true, 'location offered there too:');
   const form = c.fldFormBody({});
   eq(form.indexOf('id="ff-type"') >= 0, true, 'while the fields page keeps its own:');
-  eq(c.FLD_TYPES.length, 3, 'three types, one list:');
+  eq(c.FLD_TYPES.length, 4, 'four types, one list:');
+  eq(panel.indexOf('data-t="url"') >= 0, true, 'website offered too:');
 });
 
 run('الموقع: يصل من رقّى من إصدار الدليل الأول', () => {
@@ -3356,7 +3406,7 @@ run('الموقع: يصل من رقّى من إصدار الدليل الأول'
   const g2 = c2.fieldsOf('sec_dir').find(f => f.type === 'geo');
   eq(!!g2, true, 'the location field arrives on upgrade:');
   eq(c2.outHas('sec_dir', 'x:' + g2.key), true, 'and is sent:');
-  eq(c2.fieldsOf('sec_dir').length, 6, 'without duplicating the other five:');
+  eq(c2.fieldsOf('sec_dir').length, 7, 'without duplicating the others:');
 
   const n = b._t.fields.length;
   const c3 = load(b); c3.boot();
@@ -3415,7 +3465,10 @@ run('التحديث: لا يفتح إلا رابط التنزيل', () => {
   c.geoOpen('24.7136,46.6753');
   eq(A._opened, ['https://maps.google.com/?q=24.7136,46.6753'], 'the map opens:');
   c.geoOpen('شارع بلا إحداثيات');
-  eq(A._opened.length, 1, 'and nothing opens for what is not a location:');
+  eq(A._opened.length, 2, 'and a written address opens a map search:');
+  eq(A._opened[1].indexOf('maps.google.com') > 0, true, 'still the map, never elsewhere:');
+  c.geoOpen('');
+  eq(A._opened.length, 2, 'while an empty field opens nothing:');
 });
 
 run('التحديث: يفحص تلقائيًّا ويقارن رقمًا برقم', () => {
@@ -3815,4 +3868,27 @@ run('الاستعادة: تطبيقٌ فارغ لا يكتب نسخةً فارغ
   const names = c.backupList().map(x => x.name).sort();
   eq(names.every(n => n.indexOf('2026-10-0') > 0), true,
      'all of them his, none an empty one pushing his out:');
+});
+
+run('الدليل: حقل الموقع الإلكتروني يصل من رقّى، وبعلامته هو', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const web = c.fieldsOf('sec_dir').find(f => f.type === 'url');
+  eq(!!web, true, 'a fresh install has it:');
+  eq(web.label, 'الموقع الإلكتروني', 'named:');
+  eq(c.outHas('sec_dir', 'x:' + web.key), true, 'and it is sent:');
+
+  // مستخدمٌ نال الدليل قبل وجوده
+  b._t.fields = b._t.fields.filter(f => f.id !== web.id);
+  delete b._t.settings.dir_web;
+  const c2 = load(b); c2.boot();
+  eq(c2.fieldsOf('sec_dir').filter(f => f.type === 'url').length, 1, 'it arrives on upgrade:');
+  eq(c2.fieldsOf('sec_dir').filter(f => f.type === 'geo').length, 1, 'without a second location field:');
+  eq(c2.fieldsOf('sec_dir').length, 7, 'and nothing is duplicated:');
+
+  // ومن حذفه وحده لا يُفرَض عليه، ولا يُمَسّ حقل الخريطة
+  const w2 = c2.fieldsOf('sec_dir').find(f => f.type === 'url');
+  c2.fldDel('sec_dir', w2.id); c2._els('cb-yes').onclick();
+  const c3 = load(b); c3.boot();
+  eq(c3.fieldsOf('sec_dir').some(f => f.type === 'url'), false, 'deleted stays deleted:');
+  eq(c3.fieldsOf('sec_dir').some(f => f.type === 'geo'), true, 'and the map field is untouched:');
 });

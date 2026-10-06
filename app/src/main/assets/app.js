@@ -192,6 +192,7 @@ function applyData(data) {
   DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
   DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
   DB.dir_geo = Number(data.dir_geo || st.dir_geo || 0) || 0;            // حقل الموقع فيه
+  DB.dir_web = Number(data.dir_web || st.dir_web || 0) || 0;            // وحقل الموقع الإلكتروني
   DB.welcomed = Number(data.welcomed || st.welcomed || 0) || 0;         // شاشة الاستعادة
   DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر تنزيل طلبه
   DB.updSnoozeTo = Number(data.updSnoozeTo || st.upd_snooze || 0) || 0; // تأجيل التذكير
@@ -230,7 +231,8 @@ function snapshot() {
             // علاماتها تُعيد تشغيل ترقياتٍ قديمة فوق قرارات صاحبها
             cats_seeded: DB.cats_seeded, fields_out_done: DB.fields_out_done,
             img_out_done: DB.img_out_done,
-            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, welcomed: DB.welcomed,
+            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, dir_web: DB.dir_web,
+            welcomed: DB.welcomed,
             updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
             updAuto: DB.updAuto, updLatest: DB.updLatest,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
@@ -397,6 +399,10 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_geo', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
+  setDirWeb: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('dir_web', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
   /**
    * علامات الزرع تتبع البيانات لا الجهاز.
    *
@@ -412,6 +418,7 @@ var Store = {
       return (NDB.setSetting('cats_seeded', String(DB.cats_seeded || 0))
         && NDB.setSetting('dir_seeded', String(DB.dir_seeded || 0))
         && NDB.setSetting('dir_geo', String(DB.dir_geo || 0))
+        && NDB.setSetting('dir_web', String(DB.dir_web || 0))
         && NDB.setSetting('fields_out_done', String(DB.fields_out_done || 0))
         && NDB.setSetting('img_out_done', String(DB.img_out_done || 0))) || dbFail();
     } catch (e) { return dbFail(); }
@@ -847,6 +854,7 @@ async function boot() {
   seedCats();            // تصنيفات الأقسام الأصلية أولًا: شرطها «لا تصنيف بعد»،
   seedDirectory();       // فلو سبقها زرعُ الدليل لامتنعت عن الزرع إلى الأبد
   backfillDirGeo();
+  backfillDirWeb();
   backfillFieldOut();
   backfillImgOut();
   // عدّاد التذكير يبدأ من أول تشغيل: النسخة التي بين يديك هي آخر ما فحصت
@@ -2159,11 +2167,16 @@ function extraRow(kind, o) {
   return fieldsOf(kind).map(function (f) {
     var v = x[f.key];
     if (!v) return '';
-    // الموقع يُفتح من البطاقة نفسها: قراءته إحداثياتٍ لا تفيد أحدًا
-    var u = f.type === 'geo' ? geoLink(v) : '';
-    var body = u
-      ? '<a class="geo-a" href="#" onclick="return geoTap(event,\'' + jsq(u) + '\')">📍 افتح الخريطة</a>'
-      : esc(v);
+    // الموقع والرابط يُفتحان من البطاقة: قراءة إحداثياتٍ أو رابطٍ طويل
+    // لا تفيد أحدًا — المفيد أن تُضغَط فتفتح
+    var body = esc(v);
+    if (f.type === 'geo') {
+      var u = geoLink(v);
+      if (u) body = '<a class="geo-a" href="#" onclick="return geoTap(event,\'' + jsq(u) + '\')">📍 افتح الخريطة</a>';
+    } else if (f.type === 'url') {
+      var w = webParse(v);
+      if (w.url) body = '<a class="geo-a" href="#" onclick="return webTap(event,\'' + jsq(w.url) + '\')">🌐 ' + esc(w.name) + '</a>';
+    }
     return '<div class="xf"><span class="xf-l">' + esc(f.label) + ':</span> ' + body + '</div>';
   }).join('');
 }
@@ -2246,7 +2259,8 @@ window.fldEye = function (kind, key) {
 var FLD_TYPES = [
   ['text', 'سطر واحد'],
   ['area', 'نصّ طويل'],
-  ['geo', '📍 موقع على الخريطة']
+  ['geo', '📍 موقع على الخريطة'],
+  ['url', '🌐 موقع إلكتروني']
 ];
 function fldTypeLbl(t) {
   for (var i = 0; i < FLD_TYPES.length; i++) if (FLD_TYPES[i][0] === t) return FLD_TYPES[i][1];
@@ -2410,26 +2424,118 @@ window.imgSel = function (pfx) {
  * ولا شيء من هذا يفتح اتصالًا: الرابط نصٌّ نكتبه ونرسله، ومن يضغطه هو
  * تطبيق الخرائط عند المستلِم أو عندك.
  */
-var GEO_NUM = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,،]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
-function geoLink(v) {
-  var s = String(v == null ? '' : v).trim();
-  if (!s) return '';
-  var m = s.match(GEO_NUM);
-  if (m) {
-    var la = parseFloat(m[1]), lo = parseFloat(m[2]);
-    if (la < -90 || la > 90 || lo < -180 || lo > 180) return '';
-    return 'https://maps.google.com/?q=' + m[1] + ',' + m[2];
+/* زوج إحداثيات: الفاصل فاصلة عربية أو لاتينية أو فاصلة منقوطة أو مسافة
+   أو شرطة مائلة — الناس ينسخون من تطبيقاتٍ شتّى بأشكالٍ شتّى. */
+var GEO_PAIR = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*(?:[,،;\/]|\s)\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
+/* رمز Plus Code من خرائط جوجل: 7FCHXJ2V+2X */
+var GEO_PLUS = /^\s*[23456789CFGHJMPQRVWX]{4,8}\+[23456789CFGHJMPQRVWX]{2,3}\b/i;
+/* نطاق يُكتب بلا بروتوكول: maps.app.goo.gl/xyz */
+var BARE_URL = /^[a-z0-9][a-z0-9-]*(\.[a-z0-9-]+)+(\/\S*)?$/i;
+
+function inRange(la, lo) { return la >= -90 && la <= 90 && lo >= -180 && lo <= 180; }
+/** درجات ودقائق وثوانٍ: 24°42'49"N 46°40'31"E */
+function geoDms(s) {
+  var re = /(\d{1,3})\s*°\s*(\d{1,2})\s*['′]\s*(\d{1,2}(?:\.\d+)?)\s*["″]?\s*([NSEWnsew])?/g;
+  var m, out = [];
+  while ((m = re.exec(s)) !== null && out.length < 2) {
+    var v = Number(m[1]) + Number(m[2]) / 60 + Number(m[3]) / 3600;
+    var hemi = (m[4] || '').toUpperCase();
+    if (hemi === 'S' || hemi === 'W') v = -v;
+    out.push(Math.round(v * 1e6) / 1e6);
   }
-  if (/^https?:\/\/\S+$/i.test(s) || /^geo:\S+$/i.test(s)) return s;
-  return '';
+  return (out.length === 2 && inRange(out[0], out[1])) ? out : null;
 }
-/** نصّ تحت الحقل يقول بصراحة: هل سيصل هذا موقعًا يُفتح أم سطرَ نصّ؟ */
-function geoHint(v) {
+
+/**
+ * الموقع يقبل **أي صيغة**.
+ *
+ * الناس يصلهم الموقع كما اتّفق: إحداثيات ينسخونها، أو رابطًا يشاركهم به
+ * أحد، أو رمز Plus Code، أو عنوانًا مكتوبًا بالعربية. ردُّ أيٍّ منها
+ * بـ«هذه ليست إحداثيات» يحوّل حقلًا نافعًا إلى عقبة. فكلّها تُقبَل،
+ * ويقول الحقل أيَّ شيءٍ فهِم — والفرق يُقال للمستخدم لا يُخفى عنه:
+ *
+ *   point  — نقطةٌ بعينها (إحداثيات أو درجات): تفتح الخريطة عليها.
+ *   link   — رابطٌ كما هو: يفتحه تطبيق الخرائط أو المتصفّح.
+ *   search — نصٌّ: يُرسَل بحثًا في الخرائط عنه، فيُراجَع قبل الإرسال.
+ */
+function geoParse(v) {
   var s = String(v == null ? '' : v).trim();
-  if (!s) return 'الصق إحداثيات (24.7136, 46.6753) أو رابط موقع من تطبيق الخرائط.';
-  return geoLink(s)
-    ? '✅ سيُرسَل رابطًا يفتح الخريطة عند من يستلمه.'
-    : '⚠️ ليست إحداثيات ولا رابطًا — سيُرسَل نصًّا كما كتبته.';
+  if (!s) return { url: '', kind: '' };
+
+  var m = s.match(GEO_PAIR);
+  if (m && inRange(parseFloat(m[1]), parseFloat(m[2]))) {
+    return { url: 'https://maps.google.com/?q=' + m[1] + ',' + m[2], kind: 'point' };
+  }
+  var d = geoDms(s);
+  if (d) return { url: 'https://maps.google.com/?q=' + d[0] + ',' + d[1], kind: 'point' };
+
+  if (/^geo:\S+$/i.test(s)) return { url: s, kind: 'link' };
+  if (/^https?:\/\/\S+$/i.test(s)) return { url: s, kind: 'link' };
+  // رابطٌ بلا بروتوكول: نكمله ولا نردّه
+  if (BARE_URL.test(s)) return { url: 'https://' + s, kind: 'link' };
+
+  // Plus Code وما بقي: بحثٌ في الخرائط عن النصّ كما كتبه
+  return {
+    url: 'https://maps.google.com/?q=' + encodeURIComponent(s),
+    kind: GEO_PLUS.test(s) ? 'point' : 'search'
+  };
+}
+function geoLink(v) { return geoParse(v).url; }
+/** نصّ تحت الحقل يقول بصراحة ماذا فهِم التطبيق وماذا سيُرسَل. */
+function geoHint(v) {
+  var g = geoParse(v);
+  if (!g.kind) return 'إحداثيات، أو رابط خرائط، أو Plus Code، أو العنوان مكتوبًا — كلّها تُقبَل.';
+  if (g.kind === 'point') return '✅ موقعٌ محدَّد — يفتح الخريطة عليه مباشرةً.';
+  if (g.kind === 'link') return '✅ رابط — يفتحه تطبيق الخرائط عند من يستلمه.';
+  return '🔎 سيُرسَل بحثًا في الخرائط عن هذا النص. اضغط 📍 لتتأكّد أنه المكان الصحيح.';
+}
+
+/* ── 🌐 الموقع الإلكتروني ─────────────────────────────────────────────
+ * حقلٌ للرابط، يُكتب بأي صيغة (بالبروتوكول أو بدونه)، ويظهر على البطاقة
+ * **باسمه لا بطوله**: `www.example.com/a/b/c` تُقرأ `example.com`.
+ * والمُرسَل يحمل الرابط كاملًا — المستلِم يحتاجه لا اسمه.
+ */
+function webParse(v) {
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return { url: '', name: '' };
+  var u = '';
+  if (/^https?:\/\/\S+$/i.test(s)) u = s;
+  else if (BARE_URL.test(s)) u = 'https://' + s;
+  if (!u) return { url: '', name: '' };
+  var h = u.match(/^https?:\/\/([^\/?#]+)/i);
+  return { url: u, name: h ? h[1].replace(/^www\./i, '') : u };
+}
+function webHint(v) {
+  var w = webParse(v);
+  if (!String(v || '').trim()) return 'مثال: example.com — ولا يلزم كتابة https.';
+  return w.url ? '✅ ' + w.url : '⚠️ ليس عنوان موقع — سيُرسَل نصًّا كما كتبته.';
+}
+window.webEcho = function (id) {
+  var el = $(id), out = $(id + '-e');
+  if (el && out) out.innerHTML = esc(webHint(el.value));
+};
+window.webOpen = function (v) {
+  var w = webParse(v);
+  if (!w.url) return toast('ليس عنوان موقع', 'er');
+  openOut(w.url);
+};
+window.webOpenFrom = function (id) { var el = $(id); webOpen(el ? el.value : ''); };
+window.webTap = function (e, u) {
+  if (e) {
+    if (e.stopPropagation) e.stopPropagation();
+    if (e.preventDefault) e.preventDefault();
+  }
+  webOpen(u);
+  return false;
+};
+function webField(id, label, val) {
+  return '<div class="f"><label>' + esc(label) + '</label>'
+    + '<div class="georow">'
+    + '<input id="' + id + '" class="inp" dir="ltr" value="' + esc(val || '') + '"'
+    + ' placeholder="example.com" oninput="webEcho(\'' + id + '\')">'
+    + '<button type="button" class="btn geo-b" onclick="webOpenFrom(\'' + id + '\')"'
+    + ' title="افتح الموقع">🌐</button></div>'
+    + '<div class="es" id="' + id + '-e">' + esc(webHint(val)) + '</div></div>';
 }
 window.geoEcho = function (id) {
   var el = $(id), out = $(id + '-e');
@@ -2480,6 +2586,7 @@ function oneExtra(pfx, f, val) {
   var id = pfx + '-x-' + f.key;
   if (f.type === 'area') return taField(id, f.label, val || '');
   if (f.type === 'geo') return geoField(id, f.label, val || '');
+  if (f.type === 'url') return webField(id, f.label, val || '');
   return '<div class="f"><label>' + esc(f.label) + '</label>'
     + '<input id="' + id + '" class="inp" value="' + esc(val || '') + '"></div>';
 }
@@ -2763,6 +2870,7 @@ var DIR_FIELDS = [
   ['التخصص أو الخدمة', 'text'],
   ['العنوان', 'area'],
   ['الموقع على الخريطة', 'geo'],
+  ['الموقع الإلكتروني', 'url'],
   ['ساعات العمل', 'text'],
   ['ملاحظات', 'area']
 ];
@@ -2792,15 +2900,25 @@ function seedDirectory() {
  */
 function backfillDirGeo() {
   if (DB.dir_geo) return;
-  if (secOf(DIR_KIND) && !fieldsOf(DIR_KIND).some(function (f) { return f.type === 'geo'; })) {
-    var f = { id: uid(), kind: DIR_KIND, key: fieldKey(),
-              label: 'الموقع على الخريطة', type: 'geo' };
-    DB.fields.push(f); Store.saveField(f);
-    DB.out[DIR_KIND] = (DB.out[DIR_KIND] || []).concat('x:' + f.key);
-    Store.setOut(DIR_KIND);
-  }
+  dirAddField('geo', 'الموقع على الخريطة');
   DB.dir_geo = 1;
   Store.setDirGeo();
+}
+/** مثلها لحقل الموقع الإلكتروني — بعلامته هو، فحذفُ أحدهما لا يمسّ الآخر. */
+function backfillDirWeb() {
+  if (DB.dir_web) return;
+  dirAddField('url', 'الموقع الإلكتروني');
+  DB.dir_web = 1;
+  Store.setDirWeb();
+}
+/** يُلحق حقلًا بالدليل إن كان قائمًا ولم يكن فيه حقلٌ من نوعه. */
+function dirAddField(type, label) {
+  if (!secOf(DIR_KIND)) return;
+  if (fieldsOf(DIR_KIND).some(function (f) { return f.type === type; })) return;
+  var f = { id: uid(), kind: DIR_KIND, key: fieldKey(), label: label, type: type };
+  DB.fields.push(f); Store.saveField(f);
+  DB.out[DIR_KIND] = (DB.out[DIR_KIND] || []).concat('x:' + f.key);
+  Store.setOut(DIR_KIND);
 }
 
 /** الزرع مرّة واحدة فقط: حذف المستخدم لتصنيف مزروع لا يعيده الإقلاع التالي.
@@ -4282,6 +4400,9 @@ function outLines(kind, o) {
     if (f[2] === 'geo') {
       var u = geoLink(v);
       if (u) { line.v = u; line.url = u; }
+    } else if (f[2] === 'url') {
+      var w = webParse(v);
+      if (w.url) { line.v = w.url; line.url = w.url; }
     }
     lines.push(line);
   });
