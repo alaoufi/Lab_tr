@@ -10,18 +10,41 @@ android {
         applicationId "me.alaoufi.dalili"
         minSdk 24
         targetSdk 34
-        versionCode 43
-        versionName "5.2"
+        versionCode 44
+        versionName "5.3"
+    }
+
+    /*
+     * مفتاح توقيع ثابت داخل المستودع — وهذا ليس تفصيلًا تنظيميًّا.
+     *
+     * أندرويد يرفض تثبيت حزمةٍ فوق أخرى إن اختلف مفتاح توقيعها، ومهما
+     * كان الرقم أعلى. وقد كان البناء يوقّع بمفتاح «debug» الذي يُولَّد
+     * تلقائيًّا في `~/.android/debug.keystore` على **جهاز البناء** — فإن
+     * بُني على جهازٍ آخر (أو بيئةٍ مؤقّتة تُعاد تهيئتها) وُلِّد مفتاحٌ
+     * جديد، فصارت الحزمة لا تُثبَّت فوق سابقتها، ولا علاج إلا إلغاء
+     * التثبيت — أي فقدان البيانات لمن لم ينسخها.
+     *
+     * وقع هذا فعلًا بين ٤٫٩ و٥٫٠. المفتاح هنا يمنع تكراره إلى الأبد.
+     *
+     * المفتاح في المستودع عمدًا: البناء يقع في بيئاتٍ مؤقّتة، ومفتاحٌ
+     * خارجها يعني العودة إلى المشكلة نفسها. وهو تطبيق شخصي يُثبَّت من
+     * مستودع صاحبه لا من متجر. من أراد سرّيّة المفتاح فليضعه في أسرار
+     * البيئة ويقرأه هنا من متغيّر — والمهم ألّا يتغيّر.
+     */
+    signingConfigs {
+        release {
+            storeFile file('../keystore/dalili-release.jks')
+            storePassword 'dalili2026'
+            keyAlias 'dalili'
+            keyPassword 'dalili2026'
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            // توقيع تجريبي (debug) حتى يُثبَّت مباشرة بلا إعداد إضافي.
-            // لتوزيعه لاحقًا رسميًا أنشئ مفتاح توقيع خاص بك عبر Android Studio
-            // (Build > Generate Signed Bundle / APK) واستبدل هذا القسم.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
     }
 

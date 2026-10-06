@@ -3736,3 +3736,165 @@ run('التحديث: المحاولة تُعدّ ولو لم يصل جواب', (
   const c2 = load(b); c2.window.AndroidBridge = A; c2.boot();
   eq(A._checks, 1, 'and a relaunch does not hammer the network:');
 });
+
+/* ── 🔑 الهجرة من ٤٫٩: نسخةٌ قديمة تُستورَد في تثبيتٍ جديد ─────────────
+   اختلاف مفتاح التوقيع بين ٤٫٩ و٥٫٠ يفرض إلغاء التثبيت مرّةً واحدة،
+   فالطريق الوحيد لبيانات المستخدم هو ملف النسخة الاحتياطية. هذه
+   الاختبارات تثبت أن الطريق سالك — لا شيء يضيع في العبور. */
+
+/** نسخة بالشكل الذي كان يكتبه `snapshot()` في ٤٫٩ — بلا دليل ولا موقع. */
+function backup49() {
+  return {
+    meds: [{ id: 'm1', trade_name: 'بنادول', scientific_name: 'Paracetamol',
+             category: 'مسكنات', doses: '٥٠٠ ملغ', extra: { fA: 'شركة س' } }],
+    labs: [{ id: 'l1', name: 'صورة دم كاملة', code: 'CBC', category: 'أمراض الدم',
+             requirements: 'صيام ٨ ساعات' }],
+    imaging: [{ id: 'i1', name: 'رنين المفصل', category: 'رنين' }],
+    recipes: [{ id: 'r1', name: 'شراب الزنجبيل', category: 'سعال' }],
+    sec_custom: [{ id: 'x1', name: 'لقاح الإنفلونزا', category: 'موسمية',
+                   extra: { fB: 'سنويًّا' } }],
+    sections: [
+      { id: 'meds', title: 'العلاجات', icon: '💊', builtin: 1 },
+      { id: 'labs', title: 'التحاليل', icon: '🧪', builtin: 1 },
+      { id: 'imaging', title: 'الأشعة والفحوصات', icon: '📷', builtin: 1 },
+      { id: 'recipes', title: 'الوصفات العلاجية', icon: '🌿', builtin: 1 },
+      { id: 'sec_custom', title: 'اللقاحات', icon: '💉', builtin: 0 }
+    ],
+    fields: [
+      { id: 'f1', kind: 'meds', key: 'fA', label: 'الشركة المصنّعة', type: 'text' },
+      { id: 'f2', kind: 'sec_custom', key: 'fB', label: 'التكرار', type: 'text' }
+    ],
+    cats: [
+      { id: 'c1', kind: 'meds', name: 'مسكنات' },
+      { id: 'c2', kind: 'labs', name: 'أمراض الدم' },
+      { id: 'c3', kind: 'imaging', name: 'رنين' },
+      { id: 'c4', kind: 'recipes', name: 'سعال' },
+      { id: 'c5', kind: 'sec_custom', name: 'موسمية' }
+    ],
+    groups: [{ id: 'g1', kind: 'labs', name: 'فحص دوري', items: ['l1'] }],
+    images: [{ id: 'im1', code: 'inj', name: 'موضع الحقن', data: 'data:image/png;base64,AA' }],
+    sent: [{ id: 's1', kind: 'labs', title: 'تحاليل', who: 'سعد', ids: ['l1'], ts: 1 }],
+    cart: { meds: ['m1'], labs: [], imaging: [], recipes: [], sec_custom: [] },
+    out: { labs: ['category', 'code', 'requirements'] },
+    outOrder: { labs: ['code', 'category', 'requirements'] },
+    header: { name: 'د. محمد', title: 'استشاري', contact: '0500000000' },
+    showLabels: 1, showTitle: 0, mode: 'edit',
+    pin_hash: 'HASH49'
+  };
+}
+
+/** يستورد `data` في سياقٍ جديد كما يفعل زرّ الاستيراد بالضبط. */
+function importInto(c, data) {
+  const fake = { files: [{}] };
+  c.FileReader = function () {
+    return {
+      readAsText() { this.result = JSON.stringify(data); this.onload.call(this); },
+      set onload(f) { this._f = f; }, get onload() { return this._f; }
+    };
+  };
+  vm.runInContext('window.FileReader = FileReader;', c);
+  c.importBackup(fake);
+  c._els('dz-in').value = 'استبدال'; c.dzCheck();
+  c._els('cb-yes').onclick();
+}
+
+run('الهجرة: نسخة ٤٫٩ تُستورَد في تثبيتٍ جديد بلا فقد', () => {
+  const b = makeBridge(); const c = load(b); c.boot();   // تثبيت نظيف ٥٫٣
+  const old = backup49();
+  importInto(c, old);
+
+  // الأقسام الأصلية وعناصرها
+  eq(c.DB.meds.map(x => x.trade_name), ['بنادول'], 'meds survived:');
+  eq(c.DB.labs.map(x => x.code), ['CBC'], 'labs survived:');
+  eq(c.DB.imaging.length, 1, 'imaging survived:');
+  eq(c.DB.recipes.length, 1, 'recipes survived:');
+
+  // القسم الذي أنشأه هو، بعناصره وحقله
+  eq(!!c.secOf('sec_custom'), true, 'his own section survived:');
+  eq(c.DB.sec_custom.map(x => x.name), ['لقاح الإنفلونزا'], 'with its items:');
+  eq(c.DB.sec_custom[0].extra.fB, 'سنويًّا', 'and their extra-field values:');
+  eq(c.fieldsOf('sec_custom').map(f => f.label), ['التكرار'], 'and the field itself:');
+  eq(c.DB.meds[0].extra.fA, 'شركة س', 'extra values on built-ins too:');
+
+  // كل ما حوله
+  eq(c.DB.cats.length, 5, 'categories:');
+  eq(c.DB.groups.map(g => g.name), ['فحص دوري'], 'saved groups:');
+  eq(c.DB.images.map(i => i.code), ['inj'], 'image library:');
+  eq(c.DB.sent.length, 1, 'send history:');
+  eq(c.DB.header.name, 'د. محمد', 'letterhead:');
+  eq(c.DB.out.labs, ['category', 'code', 'requirements'], 'sent-field choices:');
+  eq(c.DB.outOrder.labs, ['code', 'category', 'requirements'], 'and their order:');
+  eq(c.DB.showLabels, 1, 'display preferences:');
+  eq(c.DB.pin_hash, 'HASH49', 'and the lock stays his:');
+
+  // وكل ذلك في القاعدة لا في الذاكرة وحدها
+  eq(b._t.meds.length, 1, 'written to the database:');
+  eq(b._t.items.filter(i => i.section === 'sec_custom').length, 1, 'custom items too:');
+  eq(b._t.groups.length, 1, 'groups too:');
+});
+
+run('الهجرة: ما بعد الاستيراد — الدليل يصل ولا يطرد شيئًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  importInto(c, backup49());
+
+  // إعادة تشغيلٍ بعد الاستيراد: هنا تعمل الزراعات على بياناتٍ مستوردة
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.meds.length, 1, 'his data is still there after a restart:');
+  eq(c2.DB.sec_custom.length, 1, 'including his own section:');
+  eq(c2.DB.cats.filter(x => x.kind === 'meds').length, 1,
+     'and his categories are not re-seeded over:');
+
+  // والدليل الجديد يصل لأن النسخة القديمة لا تعرفه
+  eq(!!c2.secOf('sec_dir'), true, 'the directory arrives for him too:');
+  eq(c2.fieldsOf('sec_dir').some(f => f.type === 'geo'), true, 'with the location field:');
+  eq(c2.DB.cats.filter(x => x.kind === 'sec_dir').length, 4, 'and its four categories:');
+
+  // ثم يُرسِل كما كان يفعل — لا شيء انكسر في الطريق
+  const A = androidStub(); c2.window.AndroidBridge = A;
+  c2.toggleCart('labs', 'l1');
+  c2.previewCart('labs'); c2.pvSend('print');
+  eq(A._jobs[0].html.indexOf('صورة دم كاملة') >= 0, true, 'and sending still works:');
+  eq(A._jobs[0].html.indexOf('صيام ٨ ساعات') >= 0, true, 'with his field values:');
+});
+
+run('الهجرة: استيرادٌ ثانٍ فوق الأول لا يضاعف شيئًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  importInto(c, backup49());
+  const c2 = load(b); c2.boot();
+  importInto(c2, backup49());   // من يعيدها مرّتين خوفًا
+  eq(c2.DB.meds.length, 1, 'no duplicates:');
+  eq(c2.DB.cats.length, 5, 'nor duplicated categories:');
+  eq(c2.DB.sec_custom.length, 1, 'nor items:');
+});
+
+run('الهجرة: من حذف الدليل ثم استعاد نسخته لا يُفرَض عليه', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.secDel('sec_dir');
+  c._els('dz-in').value = 'دليل العناوين'; c.dzCheck();
+  c._els('cb-yes').onclick();
+  eq(!!c.secOf('sec_dir'), false, 'deleted:');
+
+  const mine = c.snapshot();                 // نسخةٌ من بعد الحذف
+  eq(mine.dir_seeded, 1, 'the backup records that it was already offered:');
+
+  const b2 = makeBridge(); const c2 = load(b2); c2.boot();
+  eq(!!c2.secOf('sec_dir'), true, 'a clean install has it:');
+  importInto(c2, mine);
+  const c3 = load(b2); c3.boot();
+  eq(!!c3.secOf('sec_dir'), false, 'and restoring his backup keeps his decision:');
+});
+
+run('الهجرة: شاشة الإنقاذ تستعيد مثلها', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  A.writeBackup(JSON.stringify(backup49()), '2026-01-01');
+
+  c.doRestore('dalili-2026-01-01.json');
+  eq(c.DB.meds.length, 1, 'data restored:');
+  eq(Number(b._t.settings.dir_seeded), 0, 'and the seed flags follow the file:');
+
+  const c2 = load(b); c2.boot();
+  eq(!!c2.secOf('sec_dir'), true, 'so the directory arrives on the next launch:');
+  eq(c2.DB.meds.length, 1, 'beside his restored data:');
+});

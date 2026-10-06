@@ -381,6 +381,25 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_geo', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
+  /**
+   * علامات الزرع تتبع البيانات لا الجهاز.
+   *
+   * كانت تبقى في `settings` بعد الاستعادة، فمن استورد نسخةً أقدم من
+   * ميزةٍ مزروعة وجد علامةَ «زُرِعت» قائمةً وبياناتٍ لا أثر فيها لها —
+   * فلا تُزرَع أبدًا. الاستعادة تكتبها من الملف المستورد: ما لا يعرفه
+   * الملف يُزرَع من جديد، وما قرّره صاحبه فيه (حذفُ قسمٍ مزروع مثلًا)
+   * يبقى محترَمًا.
+   */
+  setSeedFlags: function () {
+    if (!NDB) { blobSave(); return true; }
+    try {
+      return (NDB.setSetting('cats_seeded', String(DB.cats_seeded || 0))
+        && NDB.setSetting('dir_seeded', String(DB.dir_seeded || 0))
+        && NDB.setSetting('dir_geo', String(DB.dir_geo || 0))
+        && NDB.setSetting('fields_out_done', String(DB.fields_out_done || 0))
+        && NDB.setSetting('img_out_done', String(DB.img_out_done || 0))) || dbFail();
+    } catch (e) { return dbFail(); }
+  },
   setUpdAt: function () {
     if (!NDB) { blobSave(); return true; }
     try {
@@ -599,6 +618,7 @@ function doRestore(name) {
   Store.ok = true;
   applyData(data);
   Store.replaceAll();
+  Store.setSeedFlags();
   KINDS.forEach(function (k) { Store.setOut(k); });
   Store.setHeader();
   closeModal(); goHome(); toast('✅ تمت الاستعادة');
@@ -1364,6 +1384,7 @@ window.importBackup = function (input) {
           });
         });
           Store.replaceAll();
+          Store.setSeedFlags();      // العلامات تتبع الملف المستورد
           KINDS.forEach(function (k) { Store.setOut(k); });
           closeModal(); render(); toast('✅ تم الاستيراد');
         }
