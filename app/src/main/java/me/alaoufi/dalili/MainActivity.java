@@ -48,6 +48,9 @@ public class MainActivity extends ComponentActivity {
      */
     private static final String UPDATE_URL =
             "https://raw.githubusercontent.com/alaoufi/Lab_tr/HEAD/dist/version.json";
+    /** حزمة التحديث نفسها — من المستودع ذاته، وتُفحَص قبل أن تُعرَض للتثبيت. */
+    private static final String UPDATE_APK_URL =
+            "https://raw.githubusercontent.com/alaoufi/Lab_tr/HEAD/dist/dalili.apk";
     /** المضيفات المقبولة بعد أي تحويل — ما عداها يُرفَض ولا يُقرأ. */
     private static final String[] UPDATE_HOSTS = {
             "raw.githubusercontent.com", "objects.githubusercontent.com", "github.com"
@@ -285,6 +288,167 @@ public class MainActivity extends ComponentActivity {
                     if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
                 }
             }).start();
+        }
+
+        /**
+         * تنزيل حزمة التحديث نفسها — فيبقى على المستخدم ضغطةُ تثبيتٍ واحدة.
+         *
+         * <p>التنزيل وحده لا يكفي: حزمةٌ تُثبَّت فوق تطبيقٍ فيه بيانات
+         * مرضى لا تُقبَل لأنها وصلت من عنوانٍ صحيح. لذلك لا تُعرَض للتثبيت
+         * حتى تجتاز أربعة:
+         *
+         * <ol>
+         *   <li>المضيف ضمن {@link MainActivity#UPDATE_HOSTS} بعد أي تحويل.</li>
+         *   <li>الملف حزمةٌ فعلًا (ترويسة ZIP) واسم الحزمة اسمنا.</li>
+         *   <li>رقم إصدارها <b>أعلى</b> من المثبَّت — لا نُنزِل تراجعًا.</li>
+         *   <li><b>توقيعها هو توقيعنا بعينه.</b> وهذا أهمّها: حزمةٌ بتوقيعٍ
+         *       آخر لن يقبلها أندرويد فوق تطبيقنا أصلًا، فظهورها يعني أن
+         *       ما وصلنا ليس ما نظنّه — نحذفها ولا نعرضها.</li>
+         * </ol>
+         *
+         * <p>والتثبيت نفسه بيد المستخدم: نسلّم الملف لمثبِّت النظام فيُظهر
+         * شاشته المعتادة. لا تثبيت صامت.
+         */
+        @JavascriptInterface
+        public void downloadUpdate() {
+            new Thread(() -> {
+                HttpURLConnection c = null;
+                File out = null;
+                try {
+                    File dir = new File(getCacheDir(), "update");
+                    if (!dir.exists() && !dir.mkdirs()) { dlResult("error", 0, "تعذّر تجهيز مكان التنزيل"); return; }
+                    out = new File(dir, "dalili.apk");
+
+                    c = (HttpURLConnection) new URL(UPDATE_APK_URL).openConnection();
+                    c.setRequestMethod("GET");
+                    c.setConnectTimeout(15000);
+                    c.setReadTimeout(30000);
+                    c.setInstanceFollowRedirects(true);
+                    c.setRequestProperty("User-Agent", "dalili");
+                    int code = c.getResponseCode();
+                    String host = c.getURL() == null ? "" : String.valueOf(c.getURL().getHost());
+                    if (code != 200 || !allowedHost(host)) { dlResult("error", 0, "تعذّر الوصول للحزمة"); return; }
+
+                    long total = c.getContentLength();
+                    dlResult("start", 0, "");
+                    long got = 0;
+                    int lastPct = -1;
+                    try (InputStream in = c.getInputStream();
+                         FileOutputStream fo = new FileOutputStream(out)) {
+                        byte[] buf = new byte[16384];
+                        int n;
+                        while ((n = in.read(buf)) > 0) {
+                            fo.write(buf, 0, n);
+                            got += n;
+                            if (got > 80L * 1024 * 1024) throw new Exception("too big");
+                            int pct = total > 0 ? (int) (got * 100 / total) : 0;
+                            if (pct != lastPct && pct % 5 == 0) { lastPct = pct; dlResult("progress", pct, ""); }
+                        }
+                    }
+
+                    String bad = verifyApk(out);
+                    if (bad != null) {
+                        //noinspection ResultOfMethodCallIgnored
+                        out.delete();
+                        dlResult("error", 0, bad);
+                        return;
+                    }
+                    dlResult("ready", 100, "");
+                } catch (Exception e) {
+                    Log.e("DaliliApp", "downloadUpdate failed", e);
+                    if (out != null) //noinspection ResultOfMethodCallIgnored
+                        out.delete();
+                    dlResult("error", 0, "تعذّر التنزيل");
+                } finally {
+                    if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
+                }
+            }).start();
+        }
+
+        /** يعيد سببَ الرفض، أو {@code null} إن كانت الحزمة سليمةً وأحدث. */
+        private String verifyApk(File f) {
+            try {
+                if (f.length() < 100000) return "الملف المنزَّل ليس حزمة";
+                try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                    byte[] head = new byte[4];
+                    if (in.read(head) != 4 || head[0] != 'P' || head[1] != 'K') return "الملف المنزَّل ليس حزمة";
+                }
+                int flags = android.os.Build.VERSION.SDK_INT >= 28
+                        ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                        : android.content.pm.PackageManager.GET_SIGNATURES;
+                PackageInfo got = getPackageManager().getPackageArchiveInfo(f.getAbsolutePath(), flags);
+                if (got == null) return "الملف المنزَّل ليس حزمة";
+                if (!getPackageName().equals(got.packageName)) return "الحزمة المنزَّلة لتطبيق آخر";
+
+                long theirs = android.os.Build.VERSION.SDK_INT >= 28
+                        ? got.getLongVersionCode() : got.versionCode;
+                if (theirs <= versionCode()) return "ليست أحدث من المثبَّت";
+
+                PackageInfo mine = getPackageManager().getPackageInfo(getPackageName(), flags);
+                if (!sameSigner(mine, got)) return "توقيع الحزمة المنزَّلة مختلف — لم تُقبَل";
+                return null;
+            } catch (Exception e) {
+                Log.e("DaliliApp", "verifyApk failed", e);
+                return "تعذّر فحص الحزمة";
+            }
+        }
+
+        private boolean sameSigner(PackageInfo a, PackageInfo b) {
+            android.content.pm.Signature[] x = signersOf(a), y = signersOf(b);
+            if (x == null || y == null || x.length == 0 || y.length == 0) return false;
+            for (android.content.pm.Signature s : y) {
+                boolean found = false;
+                for (android.content.pm.Signature t : x) if (t.equals(s)) { found = true; break; }
+                if (!found) return false;
+            }
+            return true;
+        }
+
+        private android.content.pm.Signature[] signersOf(PackageInfo p) {
+            if (android.os.Build.VERSION.SDK_INT >= 28 && p.signingInfo != null) {
+                return p.signingInfo.hasMultipleSigners()
+                        ? p.signingInfo.getApkContentsSigners()
+                        : p.signingInfo.getSigningCertificateHistory();
+            }
+            //noinspection deprecation
+            return p.signatures;
+        }
+
+        /** يسلّم الحزمة المنزَّلة لمثبِّت النظام — شاشته هي من تسأل وتثبّت. */
+        @JavascriptInterface
+        public void installUpdate() {
+            runOnUiThread(() -> {
+                try {
+                    File f = new File(new File(getCacheDir(), "update"), "dalili.apk");
+                    if (!f.exists()) { toastJs("لا توجد حزمة منزَّلة"); return; }
+                    Uri uri = FileProvider.getUriForFile(
+                            MainActivity.this, "me.alaoufi.dalili.fileprovider", f);
+                    Intent i = new Intent(Intent.ACTION_VIEW);
+                    i.setDataAndType(uri, "application/vnd.android.package-archive");
+                    i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    Log.e("DaliliApp", "installUpdate failed", e);
+                    toastJs("تعذّر فتح المثبِّت");
+                }
+            });
+        }
+
+        private void dlResult(String state, int pct, String msg) {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("state", state);
+                o.put("pct", pct);
+                o.put("msg", msg == null ? "" : msg);
+                final String payload = o.toString();
+                runOnUiThread(() -> {
+                    try {
+                        webView.evaluateJavascript(
+                                "window.onUpdateDownload && window.onUpdateDownload("
+                                        + org.json.JSONObject.quote(payload) + ")", null);
+                    } catch (Exception ignored) { }
+                });
+            } catch (Exception ignored) { }
         }
 
         private void updateResult(String json) {

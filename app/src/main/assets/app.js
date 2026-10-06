@@ -1050,8 +1050,44 @@ window.onUpdateInfo = function (json) {
     DB.updLatest = { code: Number(o.code), name: String(o.name || ''), notes: String(o.notes || '') };
   }
   Store.setUpdState();
-  render();
+  // إصدارٌ أحدث: يُنزَّل من تلقائه فلا يبقى على المستخدم إلا التثبيت
+  if (updNewer()) updDownload();
+  else { DL = { state: '', pct: 0, msg: '' }; render(); }
 };
+
+/* ── 📥 التنزيل التلقائي ────────────────────────────────────────────
+ * «ينزّل حتى لو لم يكن آخر إصدار» كان عيبًا: الزرّ يفتح رابط الحزمة بلا
+ * أن يسأل هل فيها جديد. الآن لا تنزيل إلا بعد فحصٍ يقول «نعم» — ولا
+ * طلبَ من المستخدم: يقع وحده، ويبقى عليه ضغطة التثبيت وحدها (أندرويد
+ * لا يسمح بأقلّ منها: شاشة المثبِّت لا تُتجاوَز).
+ *
+ * الحالة في الذاكرة لا في القاعدة: ملف التنزيل في ذاكرةٍ مؤقّتة قد
+ * يمسحها النظام، فحالةٌ محفوظة تقول «جاهز» وقد لا يكون.
+ */
+var DL = { state: '', pct: 0, msg: '' };
+function updDownload() {
+  var b = window.AndroidBridge;
+  if (!b || typeof b.downloadUpdate !== 'function') { render(); return false; }
+  if (DL.state === 'start' || DL.state === 'progress' || DL.state === 'ready') { render(); return false; }
+  DL = { state: 'start', pct: 0, msg: '' };
+  render();
+  try { b.downloadUpdate(); } catch (e) { DL = { state: 'error', pct: 0, msg: 'تعذّر التنزيل' }; }
+  return true;
+}
+window.onUpdateDownload = function (json) {
+  var o = {};
+  try { o = JSON.parse(json) || {}; } catch (e) { o = {}; }
+  DL = { state: String(o.state || ''), pct: Number(o.pct) || 0, msg: String(o.msg || '') };
+  render();
+  if (DL.state === 'ready') toast('✅ نزل التحديث — اضغط «ثبّت الآن»');
+};
+window.updInstall = function () {
+  var b = window.AndroidBridge;
+  if (!b || typeof b.installUpdate !== 'function') return toast('غير متاح هنا', 'er');
+  b.installUpdate();
+};
+/** إعادة محاولةٍ يدوية بعد فشل — لا تنزيل ابتدائي بلا جديد. */
+window.updRetry = function () { DL = { state: '', pct: 0, msg: '' }; updDownload(); };
 /** فحصٌ تلقائي عند الإقلاع — مرّة في اليوم على الأكثر، وبإذنه. */
 function updAutoCheck() {
   if (!DB.updAuto) return;
@@ -1086,16 +1122,66 @@ window.updLater = function () {
   Store.setUpdAt();
   render();
 };
+/** وصف حالة التنزيل كما تُعرَض في الشريط وفي الإعدادات معًا. */
+function dlText() {
+  if (DL.state === 'start') return '⏳ يُنزَّل…';
+  if (DL.state === 'progress') return '⏳ يُنزَّل… ' + DL.pct + '٪';
+  if (DL.state === 'ready') return '✅ نزل وجاهز للتثبيت.';
+  if (DL.state === 'error') return '⚠️ ' + (DL.msg || 'تعذّر التنزيل');
+  return '';
+}
+function dlActions() {
+  if (DL.state === 'ready') {
+    return '<button class="btn white sm" onclick="updInstall()">⬇️ ثبّت الآن</button>';
+  }
+  if (DL.state === 'error') {
+    return '<button class="btn white sm" onclick="updRetry()">↻ أعد المحاولة</button>'
+      + '<button class="btn white sm" onclick="updNow()">🌐 نزّله من المتصفّح</button>';
+  }
+  return '';
+}
+/**
+ * صندوق الحالة في الإعدادات. ثلاث حالاتٍ لا تختلط: جديدٌ يُنزَّل، أو
+ * أنت على الأحدث، أو لم يصل جوابٌ بعد. ولا زرَّ تنزيلٍ إلا حيث ينفع.
+ */
+function updStateBox() {
+  var n = updNewer();
+  if (n) {
+    return '<div class="rec-note" style="margin:10px 0">🆕 صدر الإصدار '
+      + esc(n.name || n.code) + '.'
+      + (n.notes ? '<br>' + esc(n.notes) : '')
+      + (dlText() ? '<br><b>' + esc(dlText()) + '</b>' : '')
+      + '</div>'
+      + (DL.state === 'ready'
+          ? '<button class="btn full primary" onclick="updInstall()">⬇️ ثبّت الآن</button>'
+          : DL.state === 'error'
+            ? '<button class="btn full" onclick="updRetry()">↻ أعد محاولة التنزيل</button>'
+              + '<button class="btn full" style="margin-top:8px" onclick="updNow()">🌐 نزّله من المتصفّح</button>'
+            : '');
+  }
+  if (DB.updCheckedAt && DB.updLatest) {
+    return '<div class="ok-note">✅ أنت على آخر إصدار — لا شيء لتنزّله.</div>';
+  }
+  return '<div class="muted" style="margin:10px 0">لم يصل جوابُ فحصٍ بعد.</div>';
+}
 function updBanner() {
   if (!updDue()) return '';
   var n = updNewer();
-  return '<div class="updbar' + (n ? ' new' : '') + '"><div class="updbar-t">'
-    + (n
-        ? '🆕 صدر الإصدار ' + esc(n.name || ('رقم ' + n.code)) + '.'
-          + (n.notes ? '<div class="updbar-n">' + esc(n.notes) + '</div>' : '')
-        : '🔄 مضى ' + updDays() + ' يومًا على آخر تحديث — ربّما صدرت نسخة أحدث.')
+  if (!n) {
+    // لا جديد: تذكيرٌ بالفحص وحده — ولا زرَّ تنزيلٍ بلا داعٍ له
+    return '<div class="updbar"><div class="updbar-t">🔄 مضى ' + updDays()
+      + ' يومًا بلا فحصٍ ناجح — ربّما صدرت نسخة أحدث.</div><div class="updbar-a">'
+      + '<button class="btn white sm" onclick="updCheck(1)">🔍 افحص الآن</button>'
+      + '<button class="btn white sm" onclick="updLater()">لاحقًا</button>'
+      + '</div></div>';
+  }
+  var acts = dlActions();
+  return '<div class="updbar new"><div class="updbar-t">'
+    + '🆕 صدر الإصدار ' + esc(n.name || ('رقم ' + n.code)) + '.'
+    + (n.notes ? '<div class="updbar-n">' + esc(n.notes) + '</div>' : '')
+    + (dlText() ? '<div class="updbar-n">' + esc(dlText()) + '</div>' : '')
     + '</div><div class="updbar-a">'
-    + '<button class="btn white sm" onclick="updNow()">📥 نزّله الآن</button>'
+    + acts
     + '<button class="btn white sm" onclick="updLater()">لاحقًا</button>'
     + '</div></div>';
 }
@@ -1172,23 +1258,19 @@ function renderSettings() {
     + '<span class="ver-v">' + esc(DB.updLatest ? (DB.updLatest.name || DB.updLatest.code) : '—') + '</span></div>'
     + '<div class="ver"><span class="ver-l">آخر فحص</span>'
     + '<span class="ver-v">' + esc(DB.updChecking ? 'يفحص…' : updStamp(DB.updCheckedAt)) + '</span></div>'
-    + (updNewer()
-        ? '<div class="rec-note" style="margin:10px 0">🆕 صدر الإصدار '
-          + esc(updNewer().name || updNewer().code) + '.'
-          + (updNewer().notes ? '<br>' + esc(updNewer().notes) : '') + '</div>'
-        : updDue()
-          ? '<div class="rec-note" style="margin:10px 0">🔄 مضى ' + updDays()
-            + ' يومًا — ربّما صدرت نسخة أحدث.</div>' : '')
-    + '<button class="btn full primary" onclick="updNow()">📥 نزّل آخر إصدار</button>'
+    + updStateBox()
     + '<button class="btn full" style="margin-top:8px" onclick="updCheck(1)">🔍 افحص الآن</button>'
     + '<label class="chk-row"><input type="checkbox" ' + (DB.updAuto ? 'checked' : '')
     + ' onchange="updToggleAuto()"> 🔄 افحص تلقائيًّا عند فتح التطبيق (مرّة في اليوم)</label>'
-    + '<div class="muted">الفحص هو الاتصال <b>الوحيد</b> الذي يجريه التطبيق:'
+    + '<div class="muted">لا يُنزَّل شيء إلا بعد فحصٍ يقول إن هناك إصدارًا أحدث —'
+    + ' وعندها يُنزَّل <b>وحده</b> بلا أن تطلب، ويبقى عليك ضغطة «ثبّت الآن»'
+    + ' (أندرويد لا يسمح بأقلّ منها، وشاشة المثبِّت هي من تسأل).'
+    + ' والحزمة المنزَّلة لا تُعرَض للتثبيت حتى يُتحقَّق من اسمها ورقمها'
+    + ' <b>وتوقيعها أنه توقيع تطبيقك بعينه</b>.'
+    + '<br><br>والفحص هو الاتصال <b>الوحيد</b> الذي يجريه التطبيق من تلقائه:'
     + ' يطلب ملفًّا صغيرًا فيه رقم آخر إصدار، <b>ولا يرسل معه شيئًا</b> —'
     + ' لا معرّف جهاز ولا حرفًا من بيانات مرضاك. وإن أوقفتَه هنا فلن يتصل بشيء أبدًا،'
-    + ' ويبقى التذكير كل ' + UPD_DAYS + ' يومًا وحده.'
-    + ' والتنزيل نفسه يقع في متصفّح جهازك لا في التطبيق: تفتح الملف فيُثبَّت فوق'
-    + ' نسختك، وبياناتك تبقى كما هي.</div></div>'
+    + ' ويبقى التذكير كل ' + UPD_DAYS + ' يومًا وحده.</div></div>'
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
     + '<div class="ver"><span class="ver-l">إصدار التطبيق</span>'
     + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'

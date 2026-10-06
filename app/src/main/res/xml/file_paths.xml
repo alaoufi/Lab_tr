@@ -4,4 +4,6 @@
     <cache-path name="shared" path="shared/" />
     <!-- ملفات النسخ الاحتياطي التلقائي (مجلد التطبيق الخاص، بلا صلاحيات) -->
     <external-files-path name="backups" path="backups/" />
+    <!-- حزمة التحديث المنزَّلة — يقرؤها مثبِّت النظام وحده عبر إذنٍ مؤقّت -->
+    <cache-path name="update" path="update/" />
 </paths>

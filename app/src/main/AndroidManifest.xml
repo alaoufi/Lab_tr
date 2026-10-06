@@ -14,6 +14,13 @@
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      تثبيت التحديث المنزَّل: يفتح شاشة مثبِّت النظام المعتادة ولا يثبّت
+      صامتًا. والحزمة لا تصل هذه الخطوة حتى يُتحقَّق من اسمها ورقمها
+      و**توقيعها** أنه توقيعنا بعينه (MainActivity.verifyApk).
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"

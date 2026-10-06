@@ -637,8 +637,10 @@ function androidStub() {
   const files = {};
   const stub = {
     _files: files, _clip: null, _jobs: [], _pdfs: [], _imgs: [], _shared: null, _picked: false,
-    _opened: [],
+    _opened: [], _dls: 0, _installs: 0,
     openExternal: u => { stub._opened.push(u); },
+    downloadUpdate: () => { stub._dls++; },
+    installUpdate: () => { stub._installs++; },
     _dir: 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
     printHtml: (html, name) => stub._jobs.push({ html, name }),
     sharePdf: (html, name) => stub._pdfs.push({ html, name }),
@@ -3891,4 +3893,83 @@ run('الدليل: حقل الموقع الإلكتروني يصل من رقّى
   const c3 = load(b); c3.boot();
   eq(c3.fieldsOf('sec_dir').some(f => f.type === 'url'), false, 'deleted stays deleted:');
   eq(c3.fieldsOf('sec_dir').some(f => f.type === 'geo'), true, 'and the map field is untouched:');
+});
+
+/* ── 📥 لا تنزيل إلا لجديد، وبلا طلب ─────────────────────────────── */
+
+function updCtx(installed) {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub();
+  A.appVersionCode = () => installed;
+  A.checkUpdate = () => { A._checks = (A._checks || 0) + 1; };
+  c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  return { b, c, A };
+}
+
+run('التنزيل: لا يقع إطلاقًا ما لم يكن هناك أحدث', () => {
+  const { c, A } = updCtx(47);
+
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 47, name: '5.6' }));
+  eq(A._dls, 0, 'same version downloads nothing:');
+  eq(c.updNewer(), null, 'because there is nothing newer:');
+
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 46, name: '5.5' }));
+  eq(A._dls, 0, 'an older published build downloads nothing either:');
+
+  c.onUpdateInfo(JSON.stringify({ ok: false }));
+  eq(A._dls, 0, 'and a failed check downloads nothing:');
+
+  // ولا يعرض الإعدادات زرَّ تنزيل حين لا جديد
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 47, name: '5.6' }));
+  const box = c.updStateBox();
+  eq(box.indexOf('أنت على آخر إصدار') >= 0, true, 'settings say he is up to date:');
+  eq(box.indexOf('<button') < 0, true, 'and offer no download button at all:');
+  eq(c.updBanner(), '', 'and the home page stays quiet:');
+});
+
+run('التنزيل: يقع وحده عند وجود أحدث — بلا طلب', () => {
+  const { c, A } = updCtx(47);
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 48, name: '5.7', notes: 'جديد' }));
+  eq(A._dls, 1, 'a newer build downloads itself, unasked:');
+  eq(c.DL.state, 'start', 'and the UI says so:');
+
+  c.onUpdateDownload(JSON.stringify({ state: 'progress', pct: 45 }));
+  eq(c.DL.pct, 45, 'progress is shown:');
+  eq(c.updBanner().indexOf('٤٥٪') >= 0 || c.updBanner().indexOf('45٪') >= 0, true,
+     'on the banner too:');
+
+  c.onUpdateDownload(JSON.stringify({ state: 'ready', pct: 100 }));
+  eq(c.updBanner().indexOf('ثبّت الآن') >= 0, true, 'then one tap is left — install:');
+  eq(A._installs, 0, 'nothing installs by itself:');
+  c.updInstall();
+  eq(A._installs, 1, 'until he asks for it:');
+});
+
+run('التنزيل: لا يُعاد وهو جارٍ، ويُعاد بعد فشل', () => {
+  const { c, A } = updCtx(47);
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 48, name: '5.7' }));
+  eq(A._dls, 1, 'started once:');
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 48, name: '5.7' }));
+  eq(A._dls, 1, 'a second check while downloading does not start another:');
+
+  c.onUpdateDownload(JSON.stringify({ state: 'error', msg: 'تعذّر التنزيل' }));
+  eq(c.updBanner().indexOf('أعد المحاولة') >= 0, true, 'a failure offers a retry:');
+  eq(c.updBanner().indexOf('المتصفّح') >= 0, true, 'and the browser as a way out:');
+  c.updRetry();
+  eq(A._dls, 2, 'and the retry really retries:');
+});
+
+run('التنزيل: حالته لا تُحفظ — الملف في ذاكرةٍ مؤقّتة', () => {
+  const { b, c, A } = updCtx(47);
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 48, name: '5.7' }));
+  c.onUpdateDownload(JSON.stringify({ state: 'ready', pct: 100 }));
+  eq(c.DL.state, 'ready', 'ready now:');
+
+  const c2 = load(b); c2.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c2);
+  c2.boot();
+  eq(c2.DL.state, '', 'but a restart claims nothing — the cache may be gone:');
+  eq(c2.updBanner().indexOf('ثبّت الآن') < 0, true, 'so no install button it cannot honour:');
 });
