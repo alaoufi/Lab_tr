@@ -177,8 +177,15 @@ function applyData(data) {
   });
   DB.cats = Array.isArray(data.cats) ? data.cats : [];
   DB.cats_seeded = Number(data.cats_seeded || st.cats_seeded || 0) || 0;
-  DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || 0) || 0;
-  DB.img_out_done = Number(data.img_out_done || st.img_out_done || 0) || 0;
+  /*
+   * ترقيتا «أدرِج الحقول/الصورة في المُرسَل» تقعان مرّةً لمن عرّف حقولًا
+   * قبل وجودهما. ونسخةٌ احتياطية تحمل `out` تحمل **قرار صاحبها** فيما
+   * يُرسَل: من ألغى تأشير حقل ثم استعاد نسخته يجب ألّا تُعيده له ترقيةٌ
+   * قديمة. فحين يأتي `out` صريحًا ولا علامةَ معه، نعدّ الترقية واقعةً.
+   */
+  var hasOut = !!(data.out && Object.keys(data.out).length);
+  DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || (hasOut ? 1 : 0)) || 0;
+  DB.img_out_done = Number(data.img_out_done || st.img_out_done || (hasOut ? 1 : 0)) || 0;
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
@@ -218,6 +225,10 @@ function blobSave() {
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle, showLabels: DB.showLabels,
+            // علاماتُ الزرع والترقيات تُحفَظ مع البيانات: استعادةٌ بلا
+            // علاماتها تُعيد تشغيل ترقياتٍ قديمة فوق قرارات صاحبها
+            cats_seeded: DB.cats_seeded, fields_out_done: DB.fields_out_done,
+            img_out_done: DB.img_out_done,
             dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo,
             updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
             updAuto: DB.updAuto, updLatest: DB.updLatest,
