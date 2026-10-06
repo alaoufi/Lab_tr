@@ -855,6 +855,8 @@ function androidStub() {
   const files = {};
   const stub = {
     _files: files, _clip: null, _jobs: [], _pdfs: [], _imgs: [], _shared: null, _picked: false,
+    _opened: [],
+    openExternal: u => { stub._opened.push(u); },
     _dir: 'مجلد التطبيق الخاص (يزول مع إلغاء التثبيت)',
     printHtml: (html, name) => stub._jobs.push({ html, name }),
     sharePdf: (html, name) => stub._pdfs.push({ html, name }),
@@ -3384,7 +3386,7 @@ run('الدليل: يُزرَع كاملًا مرّةً واحدة بتصنيف�
   ], 'the four categories he asked for:');
 
   eq(c.fieldsOf('sec_dir').map(f => f.label),
-     ['الهاتف', 'التخصص أو الخدمة', 'العنوان', 'ساعات العمل', 'ملاحظات'],
+     ['الهاتف', 'التخصص أو الخدمة', 'العنوان', 'الموقع على الخريطة', 'ساعات العمل', 'ملاحظات'],
      'and the fields a directory needs:');
   c.fieldsOf('sec_dir').forEach(f => {
     eq(c.outHas('sec_dir', 'x:' + f.key), true, f.label + ' goes out when sent:');
@@ -3456,4 +3458,180 @@ run('الدليل: المستخدم القديم يناله دون أن تُمَ
   eq(c.DB.labs.length, 1, 'his labs are untouched:');
   eq(c.DB.cats.filter(x => x.kind === 'labs').length, 1, 'and his own categories:');
   eq(c.DB.cats.filter(x => x.kind === 'sec_dir').length, 4, 'with the directory’s four beside them:');
+});
+
+/* ── 📍 الموقع على الخريطة ─────────────────────────────────────────── */
+
+run('الموقع: الإحداثيات تصير رابطًا، والنصّ يبقى نصًّا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+
+  eq(c.geoLink('24.7136, 46.6753'), 'https://maps.google.com/?q=24.7136,46.6753',
+     'coordinates become a link:');
+  eq(c.geoLink('24.7136،46.6753'), 'https://maps.google.com/?q=24.7136,46.6753',
+     'with an Arabic comma too:');
+  eq(c.geoLink('  21.4225 , 39.8262  '), 'https://maps.google.com/?q=21.4225,39.8262',
+     'spaces trimmed:');
+  eq(c.geoLink('-26.2041,28.0473'), 'https://maps.google.com/?q=-26.2041,28.0473',
+     'negatives kept:');
+
+  // رابطٌ شاركه به أحدهم يبقى كما هو — لا نعيد بناء ما لا نفهمه
+  eq(c.geoLink('https://maps.app.goo.gl/abc123'), 'https://maps.app.goo.gl/abc123',
+     'a shared link passes through:');
+  eq(c.geoLink('geo:24.7136,46.6753'), 'geo:24.7136,46.6753', 'a geo: URI too:');
+
+  // وما ليس موقعًا لا نخترع له موقعًا
+  eq(c.geoLink('شارع الملك فهد'), '', 'an address is not a location:');
+  eq(c.geoLink('95.0, 46.0'), '', 'latitude past the pole is refused:');
+  eq(c.geoLink('24.0, 200.0'), '', 'and longitude past the meridian:');
+  eq(c.geoLink(''), '', 'empty stays empty:');
+});
+
+run('الموقع: يُرسَل رابطًا في الورقة والنصّ والصورة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const geo = c.fieldsOf('sec_dir').find(f => f.type === 'geo');
+  eq(!!geo, true, 'the directory has a location field:');
+
+  c.goPage('sec_dir');
+  c._els('cf-name').value = 'مختبر الشفاء';
+  c._els('cf-x-' + geo.key).value = '24.7136, 46.6753';
+  c.secItemSave('sec_dir', '');
+  const id = c.DB.sec_dir[0].id;
+  eq(c.DB.sec_dir[0].extra[geo.key], '24.7136, 46.6753', 'stored as he typed it:');
+
+  c.toggleCart('sec_dir', id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  const URL = 'https://maps.google.com/?q=24.7136,46.6753';
+
+  c.previewCart('sec_dir'); c.pvSend('print');
+  eq(A._jobs[0].html.indexOf(URL) >= 0, true, 'the paper carries the link, not the raw pair:');
+  eq(A._jobs[0].html.indexOf('>24.7136, 46.6753<') < 0, true, 'coordinates alone would open nothing:');
+
+  c.previewCart('sec_dir'); c.pvSend('copy');
+  eq(A._clip.indexOf(URL) >= 0, true, 'the copied text carries it — tappable in WhatsApp:');
+
+  // والصورة ترسمه نصًّا: لا تُضغَط، لكنها تُقرأ وتُكتَب
+  const drawn = [];
+  c.window.document.createElement = function (t) {
+    if (t !== 'canvas') return { style: {}, click: function () {}, remove: function () {} };
+    return {
+      width: 0, height: 0,
+      getContext: function () {
+        return { fillText: function (txt) { drawn.push(String(txt)); },
+                 fillRect: function () {}, strokeRect: function () {}, drawImage: function () {},
+                 measureText: function (t2) { return { width: String(t2).length * 8 }; },
+                 createLinearGradient: function () { return { addColorStop: function () {} }; },
+                 font: '', direction: '', textAlign: '', textBaseline: '', fillStyle: '', strokeStyle: '', lineWidth: 1 };
+      },
+      toDataURL: function () { return 'data:image/png;base64,STUB'; }
+    };
+  };
+  c.previewCart('sec_dir'); c.pvSend('img');
+  eq(drawn.some(t => t.indexOf('maps.google.com') >= 0), true, 'the image shows it too:');
+});
+
+run('الموقع: حقلٌ كأي حقل — يُخفى ويُرتَّب ويُضاف لأي قسم', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const geo = c.fieldsOf('sec_dir').find(f => f.type === 'geo');
+
+  // يُخفى عن الإرسال كغيره
+  eq(c.outHas('sec_dir', 'x:' + geo.key), true, 'sent by default:');
+  c.fldEye('sec_dir', 'x:' + geo.key);
+  eq(c.outHas('sec_dir', 'x:' + geo.key), false, 'and hidden when he says so:');
+
+  // ويُضاف لأي قسم آخر من داخل النموذج نفسه
+  c._els('cf-nf').value = 'موقع الصيدلية';
+  c._els('cf-nt').value = 'geo';
+  c.fldInline('meds', 'cf');
+  const f = c.fieldsOf('meds').find(x => x.label === 'موقع الصيدلية');
+  eq(!!f, true, 'added to another section:');
+  eq(f.type, 'geo', 'with the type he picked — not silently a one-liner:');
+  eq(b._t.fields.find(x => x.id === f.id).type, 'geo', 'persisted as such:');
+});
+
+run('الموقع: لوحة النوع تكتب في حقلها هي لا في حقل غيرها', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  // العيب الذي كان: الأزرار في كل اللوحات تكتب في `ff-type` وحده، فاختيار
+  // النوع داخل نموذج العنصر (`cf-nt`) بلا أثر — كل حقل يخرج «سطرًا واحدًا».
+  const panel = c.addFieldPanel('cf', 'meds');
+  eq(panel.indexOf('id="cf-nt"') >= 0, true, 'the panel owns its own hidden input:');
+  eq(panel.indexOf('id="ff-type"') < 0, true, 'and does not borrow the fields page’s:');
+  eq(panel.indexOf('data-t="geo"') >= 0, true, 'location offered there too:');
+  const form = c.fldFormBody({});
+  eq(form.indexOf('id="ff-type"') >= 0, true, 'while the fields page keeps its own:');
+  eq(c.FLD_TYPES.length, 3, 'three types, one list:');
+});
+
+run('الموقع: يصل من رقّى من إصدار الدليل الأول', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  // نحاكي مستخدمًا نال الدليل قبل أن يوجد حقل الموقع
+  const geo = c.fieldsOf('sec_dir').find(f => f.type === 'geo');
+  b._t.fields = b._t.fields.filter(f => f.id !== geo.id);
+  b._t.settings.out_sec_dir = JSON.stringify(
+    JSON.parse(b._t.settings.out_sec_dir).filter(k => k !== 'x:' + geo.key));
+  delete b._t.settings.dir_geo;
+
+  const c2 = load(b); c2.boot();
+  const g2 = c2.fieldsOf('sec_dir').find(f => f.type === 'geo');
+  eq(!!g2, true, 'the location field arrives on upgrade:');
+  eq(c2.outHas('sec_dir', 'x:' + g2.key), true, 'and is sent:');
+  eq(c2.fieldsOf('sec_dir').length, 6, 'without duplicating the other five:');
+
+  const n = b._t.fields.length;
+  const c3 = load(b); c3.boot();
+  eq(b._t.fields.length, n, 'a third launch adds nothing more:');
+});
+
+run('الموقع: من حذف الحقل لا يُفرَض عليه ثانيةً', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const geo = c.fieldsOf('sec_dir').find(f => f.type === 'geo');
+  c.fldDel('sec_dir', geo.id);
+  c._els('cb-yes').onclick();
+  eq(c.fieldsOf('sec_dir').some(f => f.type === 'geo'), false, 'deleted as asked:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.fieldsOf('sec_dir').some(f => f.type === 'geo'), false,
+     'and the next launch does not bring it back:');
+});
+
+/* ── 🔄 التحديث ───────────────────────────────────────────────────── */
+
+run('التحديث: زرٌّ واحد يفتح التنزيل ويصفّر العدّاد', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const A = androidStub(); c.window.AndroidBridge = A;
+
+  eq(c.DB.updAt > 0, true, 'the counter starts at first launch:');
+  eq(c.updDue(), false, 'so nothing nags on day one:');
+  eq(b._t.settings.upd_at, String(c.DB.updAt), 'persisted:');
+
+  c.DB.updAt = Date.now() - 40 * 864e5; c.Store.setUpdAt();
+  eq(c.updDue(), true, 'after forty days it speaks up:');
+  eq(c.renderHome === undefined, false, 'and the home page can say so:');
+
+  c.updNow();
+  eq(A._opened, ['https://github.com/alaoufi/Lab_tr/raw/HEAD/dist/dalili.apk'],
+     'one tap hands the link to the browser:');
+  eq(c.updDue(), false, 'and the counter resets:');
+  eq(Number(b._t.settings.upd_at) > Date.now() - 5000, true, 'saved, so it survives a restart:');
+});
+
+run('التحديث: «لاحقًا» تؤجّل أسبوعًا لا تُسكِت إلى الأبد', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.DB.updAt = Date.now() - 40 * 864e5; c.Store.setUpdAt();
+  eq(c.updDue(), true, 'due:');
+
+  c.updLater();
+  eq(c.updDue(), false, 'quiet for now:');
+  eq(c.updDays(), 23, 'but only seven days of quiet:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.updDays(), 23, 'and the delay survives a restart:');
+});
+
+run('التحديث: لا يفتح إلا رابط التنزيل', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.geoOpen('24.7136,46.6753');
+  eq(A._opened, ['https://maps.google.com/?q=24.7136,46.6753'], 'the map opens:');
+  c.geoOpen('شارع بلا إحداثيات');
+  eq(A._opened.length, 1, 'and nothing opens for what is not a location:');
 });

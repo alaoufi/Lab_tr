@@ -84,7 +84,8 @@ function nameFieldLabel(kind) {
 }
 function outDefs(kind) {
   var base = OUT_ALL[kind] ? OUT_ALL[kind].slice() : [['category', 'التصنيف'], ['img', 'الصورة']];
-  var all = base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label]; }));
+  // العنصر الثالث نوعُ الحقل — يحتاجه بناء السطر المرسَل (الموقع رابطًا)
+  var all = base.concat(fieldsOf(kind).map(function (f) { return ['x:' + f.key, f.label, f.type]; }));
   return applyOutOrder(kind, all);
 }
 /**
@@ -183,6 +184,8 @@ function applyData(data) {
   DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
   DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
   DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
+  DB.dir_geo = Number(data.dir_geo || st.dir_geo || 0) || 0;            // حقل الموقع فيه
+  DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر فحص للتحديث
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -205,7 +208,7 @@ function blobSave() {
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle, showLabels: DB.showLabels,
-            dir_seeded: DB.dir_seeded,
+            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, updAt: DB.updAt,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -361,6 +364,14 @@ var Store = {
   setDirSeeded: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setDirGeo: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('dir_geo', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setUpdAt: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('upd_at', String(DB.updAt)) || dbFail(); } catch (e) { return dbFail(); }
   },
   setShowLabels: function () {
     if (!NDB) { blobSave(); return true; }
@@ -653,8 +664,11 @@ async function boot() {
   pruneOrphans();
   seedCats();            // تصنيفات الأقسام الأصلية أولًا: شرطها «لا تصنيف بعد»،
   seedDirectory();       // فلو سبقها زرعُ الدليل لامتنعت عن الزرع إلى الأبد
+  backfillDirGeo();
   backfillFieldOut();
   backfillImgOut();
+  // عدّاد التذكير يبدأ من أول تشغيل: النسخة التي بين يديك هي آخر ما فحصت
+  if (!DB.updAt) { DB.updAt = Date.now(); Store.setUpdAt(); }
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
@@ -766,6 +780,59 @@ function appVersion() {
   return 'معاينة في المتصفح';
 }
 
+/* ── 🔄 التحديث ──────────────────────────────────────────────────────
+ * التطبيق بلا صلاحية إنترنت — وهذا اختيارٌ لا نقص: لا يستطيع أن يتصل
+ * بشيء، فلا يستطيع أن يسأل «هل صدر إصدار جديد؟». ما يستطيعه أن يسلّم
+ * الرابط لمتصفّح النظام بضغطة واحدة فيُنزَّل هناك، وأن يذكّرك إذا طال
+ * العهد. الفرق للمستخدم: ضغطتان بدل البحث عن الرابط في كل مرّة.
+ */
+var APK_URL = 'https://github.com/alaoufi/Lab_tr/raw/HEAD/dist/dalili.apk';
+var UPD_DAYS = 30;
+/** فتح رابطٍ خارج التطبيق — المتصفّح أو الخرائط يتولّاه، لا نحن. */
+function openOut(url) {
+  var b = window.AndroidBridge;
+  if (b && typeof b.openExternal === 'function') {
+    try { b.openExternal(url); return true; } catch (e) { /* يسقط للبديل */ }
+  }
+  try { window.open(url, '_blank'); return true; } catch (e) { }
+  toast('تعذّر فتح الرابط', 'er');
+  return false;
+}
+function updDays() {
+  if (!DB.updAt) return 0;
+  return Math.floor((Date.now() - DB.updAt) / 864e5);
+}
+/** هل مضى ما يكفي ليُحتمَل صدور إصدار جديد؟ */
+function updDue() { return !!DB.updAt && updDays() >= UPD_DAYS; }
+function updStamp(t) {
+  if (!t) return '—';
+  try { return new Date(t).toLocaleDateString('ar-SA-u-nu-latn'); }
+  catch (e) { return new Date(t).toISOString().slice(0, 10); }
+}
+/** يفتح صفحة التنزيل ويصفّر العدّاد — الفتح نفسه هو «الفحص». */
+window.updNow = function () {
+  DB.updAt = Date.now();
+  Store.setUpdAt();
+  openOut(APK_URL);
+  render();
+  toast('📥 يُنزَّل في المتصفّح — افتح الملف لتثبيته');
+};
+/** «لاحقًا» تؤجّل أسبوعًا لا تُسكِت التذكير إلى الأبد. */
+window.updLater = function () {
+  DB.updAt = Date.now() - (UPD_DAYS - 7) * 864e5;
+  Store.setUpdAt();
+  render();
+};
+function updBanner() {
+  if (!updDue()) return '';
+  return '<div class="updbar"><div class="updbar-t">🔄 مضى ' + updDays()
+    + ' يومًا على آخر تحديث — ربّما صدرت نسخة أحدث.</div>'
+    + '<div class="updbar-a">'
+    + '<button class="btn white sm" onclick="updNow()">📥 حدّث الآن</button>'
+    + '<button class="btn white sm" onclick="updLater()">لاحقًا</button>'
+    + '</div></div>';
+}
+
 function renderSettings() {
   var hasPin = !!DB.pin_hash;
   var lib = window.LIBRARY || { labs: [], meds: [] };
@@ -831,6 +898,19 @@ function renderSettings() {
     + '<label class="btn full" style="display:block;text-align:center;margin-top:8px;cursor:pointer">⬆️ استيراد نسخة احتياطية'
     + '<input type="file" accept="application/json" onchange="importBackup(this)" style="display:none"></label>'
     + '</div>'
+    + '<div class="settings-sec"><div class="settings-lbl">تحديث التطبيق</div>'
+    + '<div class="ver"><span class="ver-l">المثبَّت عندك</span>'
+    + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
+    + '<div class="ver"><span class="ver-l">آخر تحديث طلبتَه</span>'
+    + '<span class="ver-v">' + esc(updStamp(DB.updAt)) + '</span></div>'
+    + (updDue()
+        ? '<div class="rec-note" style="margin:10px 0">🔄 مضى ' + updDays()
+          + ' يومًا — ربّما صدرت نسخة أحدث.</div>' : '')
+    + '<button class="btn full primary" onclick="updNow()">📥 نزّل آخر إصدار</button>'
+    + '<div class="muted">التطبيق لا يملك صلاحية إنترنت، فلا يستطيع أن يفحص بنفسه'
+    + ' هل صدر إصدار جديد. هذا الزر يسلّم رابط التنزيل لمتصفّح جهازك فينزّله هناك،'
+    + ' ثم تفتح الملف لتثبيته فوق نسختك — بياناتك تبقى كما هي. ونذكّرك كل '
+    + UPD_DAYS + ' يومًا.</div></div>'
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
     + '<div class="ver"><span class="ver-l">إصدار التطبيق</span>'
     + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
@@ -1397,6 +1477,8 @@ function renderHome() {
       + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>';
   }
 
+  html += updBanner();
+
   // الوضع ظاهرٌ من الرئيسية أيضًا: يُعرَف قبل الدخول لا بعده
   html += modeBar();
 
@@ -1799,7 +1881,13 @@ function extraRow(kind, o) {
   var x = (o && o.extra) || {};
   return fieldsOf(kind).map(function (f) {
     var v = x[f.key];
-    return v ? '<div class="xf"><span class="xf-l">' + esc(f.label) + ':</span> ' + esc(v) + '</div>' : '';
+    if (!v) return '';
+    // الموقع يُفتح من البطاقة نفسها: قراءته إحداثياتٍ لا تفيد أحدًا
+    var u = f.type === 'geo' ? geoLink(v) : '';
+    var body = u
+      ? '<a class="geo-a" href="#" onclick="return geoTap(event,\'' + jsq(u) + '\')">📍 افتح الخريطة</a>'
+      : esc(v);
+    return '<div class="xf"><span class="xf-l">' + esc(f.label) + ':</span> ' + body + '</div>';
   }).join('');
 }
 /** مفتاح ثابت لا يتغيّر بتغيّر التسمية، فلا تضيع القيم عند إعادة التسمية. */
@@ -1840,7 +1928,7 @@ function renderFieldsPage(kind) {
       + outEyeBtn(kind, f[0])
       + '<div class="grow"><div class="name">' + (cf ? '🧩 ' : '') + esc(f[1]) + '</div>'
       + '<div class="sub">' + (outHas(kind, f[0]) ? 'سطرٌ في الورقة' : 'مخفيّ عن الإرسال')
-      + (cf ? ' · ' + (cf.type === 'area' ? 'نصّ طويل' : 'سطر واحد') + ' · أضفتَه أنت' : '')
+      + (cf ? ' · ' + fldTypeLbl(cf.type) + ' · أضفتَه أنت' : '')
       + '</div></div>'
       + '<button class="ic"' + (i === 0 ? ' disabled' : '')
       + ' onclick="outMove(\'' + kind + '\',\'' + f[0] + '\',-1)">▲</button>'
@@ -1874,22 +1962,45 @@ window.fldEye = function (kind, key) {
   render();
   toast(outHas(kind, key) ? '👁️ يظهر في العرض والإرسال' : '🚫 أُخفي عن العرض والإرسال');
 };
-function fldFormBody(f) {
-  var t = f.type || 'text';
-  return '<div class="f"><label>اسم الحقل *</label>'
-    + '<input id="ff-label" class="inp" value="' + esc(f.label || '') + '" placeholder="مثال: الشركة المصنّعة"></div>'
-    + '<div class="f"><label>نوع الحقل</label><div class="segs">'
-    + [['text', 'سطر واحد'], ['area', 'نصّ طويل']].map(function (o) {
+/**
+ * أنواع الحقول — مصدرٌ واحد تقرؤه لوحتا الإضافة وصفحة الحقول معًا، فلا
+ * يُضاف نوعٌ في مكانٍ ويغيب عن الآخر.
+ */
+var FLD_TYPES = [
+  ['text', 'سطر واحد'],
+  ['area', 'نصّ طويل'],
+  ['geo', '📍 موقع على الخريطة']
+];
+function fldTypeLbl(t) {
+  for (var i = 0; i < FLD_TYPES.length; i++) if (FLD_TYPES[i][0] === t) return FLD_TYPES[i][1];
+  return FLD_TYPES[0][1];
+}
+/** أزرار اختيار النوع — `hid` معرّف الحقل المخفيّ الذي تكتب فيه. */
+function fldTypeSegs(t, hid) {
+  return '<div class="f"><label>نوع الحقل</label><div class="segs">'
+    + FLD_TYPES.map(function (o) {
       return '<button type="button" class="seg' + (t === o[0] ? ' on' : '') + '"'
         + ' data-t="' + o[0] + '" onclick="fldPickType(this)">' + o[1] + '</button>';
     }).join('')
-    + '</div><input type="hidden" id="ff-type" value="' + t + '"></div>';
+    + '</div><input type="hidden" id="' + hid + '" value="' + esc(t) + '"></div>';
+}
+function fldFormBody(f) {
+  return '<div class="f"><label>اسم الحقل *</label>'
+    + '<input id="ff-label" class="inp" value="' + esc(f.label || '') + '" placeholder="مثال: الشركة المصنّعة"></div>'
+    + fldTypeSegs(f.type || 'text', 'ff-type');
 }
 window.fldPickType = function (btn) {
   var kids = btn.parentNode.children;
   for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
   btn.className = 'seg on';
-  var hidden = $('ff-type'); if (hidden) hidden.value = btn.getAttribute('data-t');
+  /* الحقل المخفيّ جارُ الأزرار، لا ذو معرّفٍ ثابت: نفس اللوحة تُفتح من
+     صفحة الحقول (`ff-type`) ومن داخل نموذج العنصر (`<pfx>-nt`)، فربطُها
+     بمعرّفٍ واحد كان يجعل اختيار النوع في الثانية بلا أثر — كل حقل
+     يُضاف من داخل النموذج يخرج «سطرًا واحدًا» مهما اخترت. */
+  var box = btn.parentNode.parentNode;
+  var hidden = (box && box.querySelector) ? box.querySelector('input[type=hidden]') : null;
+  if (!hidden) hidden = $('ff-type');
+  if (hidden) hidden.value = btn.getAttribute('data-t');
 };
 window.fldNew = function (kind) {
   openModal('➕ حقل جديد', fldFormBody({})
@@ -2013,9 +2124,85 @@ window.imgSel = function (pfx) {
 };
 
 /** حقول المستخدم داخل نموذج العنصر — تُقرأ وتُكتب في o.extra. */
+/* ── 📍 الموقع على الخريطة ───────────────────────────────────────────
+ * العنوان المكتوب يصف المكان، والرابط يفتحه — والمريض يحتاج الاثنين.
+ * نقبل ما يصل المستخدمَ فعلًا: إحداثيات ينسخها من تطبيق الخرائط، أو
+ * رابطًا يشاركه به أحد. وما عدا ذلك يبقى نصًّا كما كُتب — لا نخترع
+ * موقعًا لا نعرفه ولا نرسل رابطًا يقود إلى مكانٍ خطأ.
+ *
+ * ولا شيء من هذا يفتح اتصالًا: الرابط نصٌّ نكتبه ونرسله، ومن يضغطه هو
+ * تطبيق الخرائط عند المستلِم أو عندك.
+ */
+var GEO_NUM = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*[,،]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
+function geoLink(v) {
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  var m = s.match(GEO_NUM);
+  if (m) {
+    var la = parseFloat(m[1]), lo = parseFloat(m[2]);
+    if (la < -90 || la > 90 || lo < -180 || lo > 180) return '';
+    return 'https://maps.google.com/?q=' + m[1] + ',' + m[2];
+  }
+  if (/^https?:\/\/\S+$/i.test(s) || /^geo:\S+$/i.test(s)) return s;
+  return '';
+}
+/** نصّ تحت الحقل يقول بصراحة: هل سيصل هذا موقعًا يُفتح أم سطرَ نصّ؟ */
+function geoHint(v) {
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return 'الصق إحداثيات (24.7136, 46.6753) أو رابط موقع من تطبيق الخرائط.';
+  return geoLink(s)
+    ? '✅ سيُرسَل رابطًا يفتح الخريطة عند من يستلمه.'
+    : '⚠️ ليست إحداثيات ولا رابطًا — سيُرسَل نصًّا كما كتبته.';
+}
+window.geoEcho = function (id) {
+  var el = $(id), out = $(id + '-e');
+  if (el && out) out.innerHTML = esc(geoHint(el.value));
+};
+/** يفتح الموقع في تطبيق الخرائط عبر نيّة نظام — لا اتصال من التطبيق. */
+window.geoOpen = function (v) {
+  var u = geoLink(v);
+  if (!u) return toast('لا يوجد موقع يُفتح — الصق إحداثيات أو رابطًا', 'er');
+  openOut(u);
+};
+window.geoOpenFrom = function (id) { var el = $(id); geoOpen(el ? el.value : ''); };
+/**
+ * ضغطة الوصلة على البطاقة: البطاقة نفسها تستمع للضغط — تفتح التعديل في
+ * وضع الإدخال وتؤشّر في وضع الإرسال — فبلا إيقاف التصعيد يفتح الموقعُ
+ * نموذجًا خلفه أو يؤشّر عنصرًا لم يقصده أحد.
+ */
+window.geoTap = function (e, u) {
+  if (e) {
+    if (e.stopPropagation) e.stopPropagation();
+    if (e.preventDefault) e.preventDefault();
+  }
+  geoOpen(u);
+  return false;
+};
+/**
+ * تمرير نصّ إلى سلسلةٍ مفردة داخل سمة HTML: `esc` وحدها لا تكفي هنا،
+ * فهي تحوّل `'` إلى `&#39;` ويفكّها المتصفّح *قبل* أن يقرأ جافاسكربت
+ * السلسلة — فتنكسر. نهرّب لجافاسكربت أولًا ثم لـHTML.
+ */
+function jsq(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    .replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+}
+function geoField(id, label, val) {
+  return '<div class="f"><label>' + esc(label) + '</label>'
+    + '<div class="georow">'
+    + '<input id="' + id + '" class="inp" dir="ltr" value="' + esc(val || '') + '"'
+    + ' placeholder="24.7136, 46.6753" oninput="geoEcho(\'' + id + '\')">'
+    + '<button type="button" class="btn geo-b" onclick="geoOpenFrom(\'' + id + '\')"'
+    + ' title="افتح في الخرائط">📍</button></div>'
+    + '<div class="es" id="' + id + '-e">' + esc(geoHint(val)) + '</div></div>';
+}
 function oneExtra(pfx, f, val) {
   var id = pfx + '-x-' + f.key;
   if (f.type === 'area') return taField(id, f.label, val || '');
+  if (f.type === 'geo') return geoField(id, f.label, val || '');
   return '<div class="f"><label>' + esc(f.label) + '</label>'
     + '<input id="' + id + '" class="inp" value="' + esc(val || '') + '"></div>';
 }
@@ -2036,10 +2223,7 @@ function addFieldPanel(pfx, kind) {
     + '<div class="more-b">'
     + '<div class="f"><label>اسم الحقل</label>'
     + '<input id="' + pfx + '-nf" class="inp" placeholder="مثال: الشركة المصنّعة"></div>'
-    + '<div class="f"><label>نوعه</label><div class="segs">'
-    + '<button type="button" class="seg on" data-t="text" onclick="fldPickType(this)">سطر واحد</button>'
-    + '<button type="button" class="seg" data-t="area" onclick="fldPickType(this)">نصّ طويل</button>'
-    + '</div><input type="hidden" id="' + pfx + '-nt" value="text"></div>'
+    + fldTypeSegs('text', pfx + '-nt')
     + '<button type="button" class="btn primary full" onclick="fldInline(\'' + kind + '\',\'' + pfx + '\')">'
     + 'أضِف الحقل الآن</button>'
     + '<div class="es">يُضاف للقسم كله ويظهر في الإرسال، ويبقى ما كتبته هنا كما هو.</div>'
@@ -2301,6 +2485,7 @@ var DIR_FIELDS = [
   ['الهاتف', 'text'],
   ['التخصص أو الخدمة', 'text'],
   ['العنوان', 'area'],
+  ['الموقع على الخريطة', 'geo'],
   ['ساعات العمل', 'text'],
   ['ملاحظات', 'area']
 ];
@@ -2322,6 +2507,23 @@ function seedDirectory() {
   }
   DB.dir_seeded = 1;
   Store.setDirSeeded();
+}
+/**
+ * من نال الدليل قبل أن يوجد حقل الموقع يناله الآن — مرّةً واحدة تحرسها
+ * `dir_geo`، فلا تُعاد إضافته لمن حذفه. وما رتّبه أو أخفاه لا يُمَسّ:
+ * الحقل يلحق بآخر القائمة لا يتصدّرها.
+ */
+function backfillDirGeo() {
+  if (DB.dir_geo) return;
+  if (secOf(DIR_KIND) && !fieldsOf(DIR_KIND).some(function (f) { return f.type === 'geo'; })) {
+    var f = { id: uid(), kind: DIR_KIND, key: fieldKey(),
+              label: 'الموقع على الخريطة', type: 'geo' };
+    DB.fields.push(f); Store.saveField(f);
+    DB.out[DIR_KIND] = (DB.out[DIR_KIND] || []).concat('x:' + f.key);
+    Store.setOut(DIR_KIND);
+  }
+  DB.dir_geo = 1;
+  Store.setDirGeo();
 }
 
 /** الزرع مرّة واحدة فقط: حذف المستخدم لتصنيف مزروع لا يعيده الإقلاع التالي.
@@ -3796,7 +3998,15 @@ function outLines(kind, o) {
   defs.forEach(function (f) {
     if (f[0] === merged || sel.indexOf(f[0]) < 0) return;
     var v = String(outValue(o, f[0])).trim();
-    if (v) lines.push({ l: f[1], v: v });
+    if (!v) return;
+    var line = { l: f[1], v: v };
+    /* الموقع يُرسَل رابطًا لا إحداثيات: «24.7136, 46.6753» لا تفتح شيئًا
+       في واتساب، والرابط يُضغَط فيفتح الخريطة على المكان مباشرةً. */
+    if (f[2] === 'geo') {
+      var u = geoLink(v);
+      if (u) { line.v = u; line.url = u; }
+    }
+    lines.push(line);
   });
   return lines;
 }
@@ -3837,7 +4047,9 @@ function itemsHtml(kind, ids) {
         // نصّ الحقل يمرّ بـtextHtml لا esc: الرمز {code} يصير صورةً مكانه
         return '<div class="rx-f" dir="auto">'
           + (DB.showLabels ? '<span class="rx-l">' + esc(x.l) + ':</span> ' : '')
-          + textHtml(x.v) + '</div>';
+          // الموقع وصلةٌ تُضغَط في ملف الـPDF، ونصّه هو الرابط نفسه
+          + (x.url ? '<a class="rx-u" href="' + esc(x.url) + '">' + esc(x.v) + '</a>' : textHtml(x.v))
+          + '</div>';
       }).join('') + '</div>';
   }).join('');
 }
@@ -3889,6 +4101,8 @@ function printCss(scope, dense) {
     + s + '.rx-n{flex:none;min-width:' + (dense ? '7pt' : '9pt') + ';text-align:start;color:#64748b}'
     + s + '.rx-t{flex:1;min-width:0}'
     + s + '.rx-f{font-size:' + F.line + ';margin:0.5pt 0;line-height:' + F.lh + ';white-space:pre-wrap}'
+    // الموقع وصلة: تُضغَط في الـPDF، وتُقرأ عنوانًا كاملًا على الورق المطبوع
+    + s + '.rx-u{color:#0f766e;text-decoration:underline;word-break:break-all}'
     + s + '.rx-l{color:#475569;font-weight:bold}'
     + s + '.rx-pic{display:block;max-width:' + (dense ? '38mm' : '52mm')
     + ';max-height:' + (dense ? '30mm' : '42mm') + ';margin:2pt 0;border:0.4pt solid #cbd5e1;border-radius:3pt}'

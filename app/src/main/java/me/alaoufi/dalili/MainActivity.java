@@ -170,6 +170,38 @@ public class MainActivity extends ComponentActivity {
         }
 
         /**
+         * فتح رابط خارج التطبيق — موقعٍ على الخرائط، أو صفحة تنزيل التحديث.
+         *
+         * <p>هذا <b>لا</b> يفتح اتصالًا من التطبيق ولا يحتاج صلاحية إنترنت:
+         * نسلّم العنوان لنظام أندرويد عبر {@code ACTION_VIEW} فيختار له
+         * التطبيق المناسب (الخرائط أو المتصفّح)، والاتصال — إن وقع — يقع
+         * هناك بصلاحيات ذلك التطبيق لا بصلاحياتنا.
+         *
+         * <p>المخططات مقصورة على ثلاثة: {@code http}/{@code https}/{@code geo}.
+         * العنوان يأتي ممّا كتبه المستخدم في حقل الموقع، و{@code intent:} أو
+         * {@code file:} في يد نيّةٍ صريحة بابٌ لا داعي لفتحه.
+         */
+        @JavascriptInterface
+        public void openExternal(String url) {
+            final String u = url == null ? "" : url.trim();
+            final String low = u.toLowerCase(java.util.Locale.US);
+            if (!low.startsWith("http://") && !low.startsWith("https://") && !low.startsWith("geo:")) {
+                toastJs("رابط غير مدعوم");
+                return;
+            }
+            runOnUiThread(() -> {
+                try {
+                    Intent i = new Intent(Intent.ACTION_VIEW, Uri.parse(u));
+                    i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(i);
+                } catch (Exception e) {
+                    Log.e("DaliliApp", "openExternal failed", e);
+                    toastJs("لا يوجد تطبيق يفتح هذا الرابط");
+                }
+            });
+        }
+
+        /**
          * الطباعة داخل WebView: {@code window.open} لا يعمل هنا إطلاقًا (لا نوافذ
          * منبثقة)، فكان زر الطباعة صامتًا. الحل الصحيح تمرير صفحة HTML جاهزة إلى
          * PrintManager عبر عارض مؤقت — فيظهر مربع الطباعة القياسي بخيار
