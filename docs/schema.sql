@@ -167,7 +167,8 @@ CREATE TABLE fields (
     kind        TEXT    NOT NULL,               -- القسم (sections.id)
     key         TEXT    NOT NULL,               -- المفتاح داخل extra
     label       TEXT    NOT NULL,               -- ما يراه المستخدم
-    type        TEXT    NOT NULL,               -- 'text' | 'area'
+    type        TEXT    NOT NULL,               -- text|area|geo|url|choice
+    opts        TEXT,                            -- خيارات choice: سطر لكل خيار
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
 
@@ -236,6 +237,10 @@ CREATE UNIQUE INDEX idx_images_code ON images(code);
 --    fields_out_done '1' بعد إدراج الحقول الإضافية القديمة في المرسلة
 --    dense         '1' ورقة مضغوطة (خط أصغر وهوامش أضيق)
 --    fmt           الصيغة المفضّلة للإرسال: pdf | img | print | copy
+--    compact       '1' عرض الأقسام بالأسماء فقط
+--    dir_seeded / dir_geo / dir_web / dir_spec   علامات زرع دليل العناوين وحقوله
+--    welcomed      '1' بعد اختياره في شاشة الاستعادة
+--    upd_*         حالة فحص التحديث (انظر DATABASE.md)
 -- ─────────────────────────────────────────────────────────────────────────────
 CREATE TABLE settings (
     key    TEXT PRIMARY KEY,
@@ -308,6 +313,9 @@ CREATE INDEX idx_sent_ts       ON sent(ts);
 --  الإصدار ٨ → ٩
 --      CREATE TABLE IF NOT EXISTS images (…);         -- مكتبة الصور
 --      ALTER TABLE <kind> ADD COLUMN img TEXT;        -- للأربعة وitems
+--
+--  الإصدار ٩ → ١٠
+--      ALTER TABLE fields ADD COLUMN opts TEXT;       -- خيارات حقل الاختيار
 --
 --  ملاحظة مهمة: onCreate صار ينادي addExtraColumns وaddImgColumns في آخره،
 --  فلا يفترق التثبيت الجديد عن المُرقّى. قبل ذلك كان الجهاز المثبَّت حديثًا

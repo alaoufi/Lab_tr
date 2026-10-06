@@ -25,7 +25,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
     private static final String TAG = "DaliliDb";
-    private static final int DB_VERSION = 9;
+    private static final int DB_VERSION = 10;
 
     /**
      * الأقسام الأصلية الأربعة — وهي أيضًا أسماء جداولها.
@@ -229,7 +229,8 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "kind TEXT NOT NULL,"      // القسم الذي ينتمي له الحقل
                 + "key TEXT NOT NULL,"       // المفتاح داخل extra
                 + "label TEXT NOT NULL,"     // ما يراه المستخدم
-                + "type TEXT NOT NULL,"      // text | area
+                + "type TEXT NOT NULL,"      // text | area | geo | url | choice
+                + "opts TEXT,"               // خيارات حقل الاختيار، سطرًا لكل خيار
                 + "sort_order INTEGER NOT NULL DEFAULT 0)");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_fields_kind ON fields(kind)");
     }
@@ -344,7 +345,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             addCols(db, "items", new String[]{"flag", "sort_order"}, "INTEGER NOT NULL DEFAULT 0");
             addCols(db, "sections", new String[]{"title", "icon"}, "TEXT");
             addCols(db, "sections", new String[]{"builtin", "sort_order"}, "INTEGER NOT NULL DEFAULT 0");
-            addCols(db, "fields", new String[]{"kind", "key", "label", "type"}, "TEXT");
+            addCols(db, "fields", new String[]{"kind", "key", "label", "type", "opts"}, "TEXT");
             addCols(db, "fields", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
             addCols(db, "cats", new String[]{"kind", "name"}, "TEXT");
             addCols(db, "cats", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
@@ -445,6 +446,10 @@ public class DaliliDb extends SQLiteOpenHelper {
         if (oldVersion < 9) {
             createImages(db);    // مكتبة الصور
             addImgColumns(db);   // صورة العنصر (رمز من المكتبة)
+        }
+        if (oldVersion < 10) {
+            // خيارات حقل الاختيار (التخصص مثلًا) — سطرًا لكل خيار
+            addCols(db, "fields", new String[]{"opts"}, "TEXT");
         }
     }
 
@@ -567,6 +572,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("key", str(c, "key"));
                 o.put("label", str(c, "label"));
                 o.put("type", str(c, "type"));
+                o.put("opts", str(c, "opts"));
                 arr.put(o);
             }
         } finally { c.close(); }
@@ -651,6 +657,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         v.put("key", o.optString("key", ""));
         v.put("label", o.optString("label", ""));
         v.put("type", o.optString("type", "text"));
+        v.put("opts", o.optString("opts", ""));
         if (order >= 0) v.put("sort_order", order);
         if (db.update("fields", v, "id=?", new String[]{id}) == 0) {
             v.put("id", id);

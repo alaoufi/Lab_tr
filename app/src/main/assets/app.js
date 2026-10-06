@@ -193,6 +193,8 @@ function applyData(data) {
   DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
   DB.dir_geo = Number(data.dir_geo || st.dir_geo || 0) || 0;            // حقل الموقع فيه
   DB.dir_web = Number(data.dir_web || st.dir_web || 0) || 0;            // وحقل الموقع الإلكتروني
+  DB.dir_spec = Number(data.dir_spec || st.dir_spec || 0) || 0;         // والتخصص قائمةً
+  DB.compact = Number(data.compact || st.compact || 0) || 0;            // الأسماء فقط
   DB.welcomed = Number(data.welcomed || st.welcomed || 0) || 0;         // شاشة الاستعادة
   DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر تنزيل طلبه
   DB.updSnoozeTo = Number(data.updSnoozeTo || st.upd_snooze || 0) || 0; // تأجيل التذكير
@@ -231,7 +233,7 @@ function snapshot() {
             // علاماتها تُعيد تشغيل ترقياتٍ قديمة فوق قرارات صاحبها
             cats_seeded: DB.cats_seeded, fields_out_done: DB.fields_out_done,
             img_out_done: DB.img_out_done,
-            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, dir_web: DB.dir_web,
+            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, dir_web: DB.dir_web, dir_spec: DB.dir_spec, compact: DB.compact,
             welcomed: DB.welcomed,
             updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
             updAuto: DB.updAuto, updLatest: DB.updLatest,
@@ -403,6 +405,14 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_web', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
+  setCompact: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('compact', String(DB.compact)) || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setDirSpec: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('dir_spec', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
   /**
    * علامات الزرع تتبع البيانات لا الجهاز.
    *
@@ -419,6 +429,7 @@ var Store = {
         && NDB.setSetting('dir_seeded', String(DB.dir_seeded || 0))
         && NDB.setSetting('dir_geo', String(DB.dir_geo || 0))
         && NDB.setSetting('dir_web', String(DB.dir_web || 0))
+        && NDB.setSetting('dir_spec', String(DB.dir_spec || 0))
         && NDB.setSetting('fields_out_done', String(DB.fields_out_done || 0))
         && NDB.setSetting('img_out_done', String(DB.img_out_done || 0))) || dbFail();
     } catch (e) { return dbFail(); }
@@ -824,6 +835,10 @@ function pageMeta(p) {
   if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
   if (p === 'diag') return { icon: '🩺', title: 'فحص قاعدة البيانات' };
   if (p === 'welcome') return { icon: '♻️', title: 'استعادة بياناتك' };
+  if (p.indexOf('view:') === 0) {
+    var vk = p.split(':')[1];
+    return { icon: '👁️', title: kindLbl(vk).title };
+  }
   if (p.indexOf('sort:') === 0) return { icon: '↕️', title: 'ترتيب ' + kindLbl(p.slice(5)).title };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
@@ -855,6 +870,7 @@ async function boot() {
   seedDirectory();       // فلو سبقها زرعُ الدليل لامتنعت عن الزرع إلى الأبد
   backfillDirGeo();
   backfillDirWeb();
+  backfillDirSpec();
   backfillFieldOut();
   backfillImgOut();
   // عدّاد التذكير يبدأ من أول تشغيل: النسخة التي بين يديك هي آخر ما فحصت
@@ -1810,6 +1826,10 @@ function render() {
   else if (p === 'imgs') renderImagesPage();
   else if (p === 'diag') renderDiag();
   else if (p === 'welcome') renderWelcome();
+  else if (p.indexOf('view:') === 0) {
+    var vp = p.split(':');
+    renderViewPage(vp[1], vp.slice(2).join(':'));
+  }
   else if (p.indexOf('sort:') === 0) renderSortPage(p.slice(5));
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
@@ -2342,7 +2362,8 @@ var FLD_TYPES = [
   ['text', 'سطر واحد'],
   ['area', 'نصّ طويل'],
   ['geo', '📍 موقع على الخريطة'],
-  ['url', '🌐 موقع إلكتروني']
+  ['url', '🌐 موقع إلكتروني'],
+  ['choice', '📋 اختيار من قائمة']
 ];
 function fldTypeLbl(t) {
   for (var i = 0; i < FLD_TYPES.length; i++) if (FLD_TYPES[i][0] === t) return FLD_TYPES[i][1];
@@ -2360,8 +2381,57 @@ function fldTypeSegs(t, hid) {
 function fldFormBody(f) {
   return '<div class="f"><label>اسم الحقل *</label>'
     + '<input id="ff-label" class="inp" value="' + esc(f.label || '') + '" placeholder="مثال: الشركة المصنّعة"></div>'
-    + fldTypeSegs(f.type || 'text', 'ff-type');
+    + fldTypeSegs(f.type || 'text', 'ff-type')
+    + optsField('ff-opts', f.opts);
 }
+/** خياراتُ حقل الاختيار: سطرٌ لكل خيار — أبسط ما يُكتَب ويُقرَأ. */
+function optsField(id, opts) {
+  return '<div class="f"><label>خيارات القائمة <span class="sub">(سطر لكل خيار —'
+    + ' لحقل «اختيار من قائمة» وحده)</span></label>'
+    + '<textarea id="' + id + '" class="inp ta" rows="4"'
+    + ' placeholder="باطنة&#10;علاج طبيعي&#10;جلدية">' + esc(opts || '') + '</textarea></div>';
+}
+function optsList(f) {
+  return String((f && f.opts) || '').split('\n')
+    .map(function (x) { return x.trim(); })
+    .filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+}
+/**
+ * حقل الاختيار في نموذج العنصر: قائمة بخياراته وآخرها «قيمة جديدة».
+ * والقيمة الجديدة **تُضاف للقائمة** فلا يُعاد كتابتها في المرّة التالية —
+ * قائمة التخصصات تبنيها وأنت تعمل، لا قبل أن تبدأ.
+ */
+function choiceField(id, f, val) {
+  var cur = String(val || '').trim();
+  var names = optsList(f);
+  var known = !cur || names.indexOf(cur) >= 0;
+  return '<div class="f"><label>' + esc(f.label) + '</label>'
+    + '<select id="' + id + '-sel" class="inp sel" onchange="choiceSel(\'' + id + '\')">'
+    + '<option value=""' + (cur ? '' : ' selected') + '>— بلا تحديد —</option>'
+    + names.map(function (n) {
+      return '<option value="' + esc(n) + '"' + (cur === n ? ' selected' : '') + '>' + esc(n) + '</option>';
+    }).join('')
+    + '<option value="' + CAT_NEW + '"' + (known ? '' : ' selected') + '>➕ قيمة جديدة…</option>'
+    + '</select>'
+    + '<input id="' + id + '-new" class="inp" style="margin-top:7px'
+    + (known ? ';display:none' : '') + '" value="' + (known ? '' : esc(cur)) + '"'
+    + ' placeholder="اكتبها وتُضاف للقائمة" oninput="choiceNew(\'' + id + '\')">'
+    + '<input type="hidden" id="' + id + '" value="' + esc(cur) + '"></div>';
+}
+window.choiceSel = function (id) {
+  var sel = $(id + '-sel'), nw = $(id + '-new'), hid = $(id);
+  if (!sel || !hid) return;
+  if (catIsNew(sel)) {
+    if (nw) { nw.style.display = ''; hid.value = nw.value.trim(); nw.focus(); }
+  } else {
+    if (nw) { nw.style.display = 'none'; nw.value = ''; }
+    hid.value = sel.value;
+  }
+};
+window.choiceNew = function (id) {
+  var nw = $(id + '-new'), hid = $(id);
+  if (nw && hid) hid.value = nw.value.trim();
+};
 window.fldPickType = function (btn) {
   var kids = btn.parentNode.children;
   for (var i = 0; i < kids.length; i++) kids[i].className = 'seg';
@@ -2384,7 +2454,8 @@ window.fldCreate = function (kind) {
   var label = (($('ff-label') || {}).value || '').trim();
   if (!label) return toast('اسم الحقل مطلوب', 'er');
   var f = { id: uid(), kind: kind, key: fieldKey(), label: label,
-            type: ($('ff-type') || {}).value || 'text' };
+            type: ($('ff-type') || {}).value || 'text',
+            opts: (($('ff-opts') || {}).value || '').trim() };
   DB.fields.push(f); Store.saveField(f);
   // يُدرَج في الحقول المرسلة فورًا: من أنشأ حقلًا يريده أن يظهر، ولو لم
   // يُدرَج لبقي ما يكتبه فيه غائبًا عن الطباعة والصورة بلا سبب ظاهر.
@@ -2405,6 +2476,7 @@ window.fldSave = function (id) {
   // المفتاح لا يتغيّر — إعادة التسمية لا تفقد القيم المحفوظة
   f.label = label;
   f.type = ($('ff-type') || {}).value || f.type;
+  f.opts = (($('ff-opts') || {}).value || '').trim();
   Store.saveField(f);
   closeModal(); render(); toast('✅ حُفظ الحقل');
 };
@@ -2669,6 +2741,7 @@ function oneExtra(pfx, f, val) {
   if (f.type === 'area') return taField(id, f.label, val || '');
   if (f.type === 'geo') return geoField(id, f.label, val || '');
   if (f.type === 'url') return webField(id, f.label, val || '');
+  if (f.type === 'choice') return choiceField(id, f, val || '');
   return '<div class="f"><label>' + esc(f.label) + '</label>'
     + '<input id="' + id + '" class="inp" value="' + esc(val || '') + '"></div>';
 }
@@ -2690,6 +2763,7 @@ function addFieldPanel(pfx, kind) {
     + '<div class="f"><label>اسم الحقل</label>'
     + '<input id="' + pfx + '-nf" class="inp" placeholder="مثال: الشركة المصنّعة"></div>'
     + fldTypeSegs('text', pfx + '-nt')
+    + optsField(pfx + '-no', '')
     + '<button type="button" class="btn primary full" onclick="fldInline(\'' + kind + '\',\'' + pfx + '\')">'
     + 'أضِف الحقل الآن</button>'
     + '<div class="es">يُضاف للقسم كله ويظهر في الإرسال، ويبقى ما كتبته هنا كما هو.</div>'
@@ -2699,11 +2773,13 @@ window.fldInline = function (kind, pfx) {
   var lbl = (($(pfx + '-nf') || {}).value || '').trim();
   if (!lbl) return toast('اسم الحقل مطلوب', 'er');
   var f = { id: uid(), kind: kind, key: fieldKey(), label: lbl,
-            type: (($(pfx + '-nt') || {}).value) || 'text' };
+            type: (($(pfx + '-nt') || {}).value) || 'text',
+            opts: (($(pfx + '-no') || {}).value || '').trim() };
   DB.fields.push(f); Store.saveField(f);
   DB.out[kind] = (DB.out[kind] || []).concat('x:' + f.key);
   Store.setOut(kind);
   var nf = $(pfx + '-nf'); if (nf) nf.value = '';   // جاهزة للتالي أيًّا كان ما يلي
+  var no = $(pfx + '-no'); if (no) no.value = '';
   // نحقن الحقل بدل إعادة رسم النموذج، حفاظًا على ما أدخله المستخدم
   try {
     var box = $(pfx + '-xf');
@@ -2720,7 +2796,14 @@ function readExtra(pfx, kind) {
   fieldsOf(kind).forEach(function (f) {
     var el = $(pfx + '-x-' + f.key);
     var v = el ? String(el.value || '').trim() : '';
-    if (v) out[f.key] = v;
+    if (!v) return;
+    out[f.key] = v;
+    // قيمةٌ جديدة في حقل اختيار تلتحق بقائمته: التخصصات تُبنى أثناء
+    // العمل لا قبله، فلا يُعاد كتابة «علاج طبيعي» في كل عنوان.
+    if (f.type === 'choice' && optsList(f).indexOf(v) < 0) {
+      f.opts = (f.opts ? f.opts + '\n' : '') + v;
+      Store.saveField(f);
+    }
   });
   return out;
 }
@@ -2947,9 +3030,17 @@ var DIR_CATS = [
   'الأجهزة والمنتجات الطبية'
 ];
 /* الهاتف أولًا بعد الاسم: هو ما يُطلب من دليلٍ قبل كل شيء. */
+/* تخصصاتٌ مبدئية — تُختار من قائمة بدل كتابتها في كل عنوان، وتنمو
+   القائمة بما يكتبه صاحبها من جديد. */
+var DIR_SPECS = [
+  'باطنة', 'أطفال', 'نساء وولادة', 'جراحة عامة', 'عظام', 'جلدية',
+  'أسنان', 'عيون', 'أنف وأذن وحنجرة', 'قلب', 'مخ وأعصاب', 'نفسية',
+  'كلى ومسالك', 'غدد وسكّري', 'أورام', 'أشعة', 'مختبر',
+  'علاج طبيعي', 'تغذية', 'صيدلية', 'طب بديل', 'أسرة وطوارئ'
+].join('\n');
 var DIR_FIELDS = [
   ['الهاتف', 'text'],
-  ['التخصص أو الخدمة', 'text'],
+  ['التخصص أو الخدمة', 'choice', DIR_SPECS],
   ['العنوان', 'area'],
   ['الموقع على الخريطة', 'geo'],
   ['الموقع الإلكتروني', 'url'],
@@ -2965,7 +3056,8 @@ function seedDirectory() {
     KINDS = DB.sections.map(function (x) { return x.id; });
     Store.saveSection(sec);
     DIR_FIELDS.forEach(function (d) {
-      var f = { id: uid(), kind: DIR_KIND, key: fieldKey(), label: d[0], type: d[1] };
+      var f = { id: uid(), kind: DIR_KIND, key: fieldKey(), label: d[0], type: d[1],
+                opts: d[2] || '' };
       DB.fields.push(f); Store.saveField(f);
       DB.out[DIR_KIND].push('x:' + f.key);
     });
@@ -2985,6 +3077,28 @@ function backfillDirGeo() {
   dirAddField('geo', 'الموقع على الخريطة');
   DB.dir_geo = 1;
   Store.setDirGeo();
+}
+/**
+ * من نال الدليل وحقلُ تخصّصه نصٌّ حرّ: يصير قائمةً، **وما كتبه يبقى**.
+ * القيم نصوصٌ في الحالتين فالتحويل بلا فقد، والقائمة تبدأ بالتخصصات
+ * المبدئية مضافًا إليها ما كتبه هو فعلًا في عناوينه.
+ */
+function backfillDirSpec() {
+  if (DB.dir_spec) return;
+  var f = fieldsOf(DIR_KIND).find(function (x) { return x.label === 'التخصص أو الخدمة'; });
+  if (f && f.type === 'text') {
+    var used = (DB[DIR_KIND] || []).map(function (o) {
+      return String(((o.extra || {})[f.key]) || '').trim();
+    }).filter(Boolean);
+    var all = DIR_SPECS.split('\n').concat(used).filter(function (x, i, a) {
+      return x && a.indexOf(x) === i;
+    });
+    f.type = 'choice';
+    f.opts = all.join('\n');
+    Store.saveField(f);
+  }
+  DB.dir_spec = 1;
+  Store.setDirSpec();
 }
 /** مثلها لحقل الموقع الإلكتروني — بعلامته هو، فحذفُ أحدهما لا يمسّ الآخر. */
 function backfillDirWeb() {
@@ -3361,9 +3475,14 @@ function modeBar() {
     + '</div><div class="modehint">' + MODES[m].hint + '</div>';
 }
 /** أدوات البناء — تظهر في وضع الإدخال وحده، حيث مكانها. */
+function compactBtn() {
+  return '<button class="btn sm' + (DB.compact ? ' on' : '') + '" onclick="toggleCompact()">'
+    + (DB.compact ? '📄 بالتفاصيل' : '📜 الأسماء فقط') + '</button>';
+}
 function editTools(kind) {
   var hasLib = ((window.LIBRARY || {})[kind] || []).length > 0;
   return '<div class="etools">'
+    + compactBtn()
     + '<button class="btn sm" onclick="goPage(\'cat:' + kind + '\')">🏷️ التصنيفات</button>'
     + '<button class="btn sm" onclick="goPage(\'fld:' + kind + '\')">🧩 الحقول</button>'
     + (hasLib ? '<button class="btn sm" onclick="openLibrary(\'' + kind + '\')">📚 المكتبة</button>' : '')
@@ -3398,24 +3517,109 @@ function sectionBar(kind, q, placeholder, addCall) {
  * في الإرسال: مربع تأشير واسمٌ وحسب، فالصفّ كلّه يؤشّر.
  * في الإدخال: تعديل وتكرار وحذف، بلا مربع تأشير يشوّش.
  */
+/**
+ * بطاقة العنصر. في وضع «الأسماء فقط» تُطوى تفاصيلها ويبقى اسمها —
+ * قائمةٌ من عشرين عنصرًا لكلٍّ ستة حقول تملأ شاشاتٍ قبل أن تُقرأ، فطيُّها
+ * يجعل القسم كلّه في نظرةٍ واحدة. والضغط عليها يفتح **عرضًا لا تعديلًا**:
+ * أكثر ما يُفعَل بعنصرٍ هو النظر فيه، لا تغييره.
+ */
 function itemCard(kind, o, body, editCall, delCall) {
   var sending = mode() === 'send';
   var on = DB.cart[kind].indexOf(o.id) >= 0;
-  return '<div class="card' + (on && sending ? ' sel' : '') + '"><div class="row">'
+  var slim = !!DB.compact;
+  var tap = sending ? 'toggleCart(\'' + kind + '\',\'' + o.id + '\')'
+                    : (slim ? 'goPage(\'view:' + kind + ':' + o.id + '\')' : editCall);
+  return '<div class="card' + (on && sending ? ' sel' : '') + (slim ? ' slim' : '') + '"><div class="row">'
     + (sending
         ? '<label class="pvck"><input type="checkbox" ' + (on ? 'checked' : '')
           + ' onchange="toggleCart(\'' + kind + '\',\'' + o.id + '\')"></label>'
         : '')
-    + '<div class="grow"' + (sending
-        ? ' onclick="toggleCart(\'' + kind + '\',\'' + o.id + '\')"'
-        : ' onclick="' + editCall + '"') + '>' + body + '</div>'
-    + thumb(o)
-    + (sending ? '' : orderBtns(kind, o)
-        + '<button class="ic" onclick="' + editCall + '">✏️</button>'
-        + '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
-        + '<button class="ic" onclick="' + delCall + '">🗑️</button>')
+    + '<div class="grow" onclick="' + tap + '">'
+    + (slim ? '<div class="name" dir="auto">' + esc(outTitle(kind, o)) + '</div>' : body)
+    + '</div>'
+    + (slim ? '' : thumb(o))
+    + (sending
+        ? (slim ? '<button class="ic" onclick="goPage(\'view:' + kind + ':' + o.id + '\')" title="عرض">👁️</button>' : '')
+        : orderBtns(kind, o)
+          + '<button class="ic" onclick="' + editCall + '">✏️</button>'
+          + (slim ? '' : '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
+              + '<button class="ic" onclick="' + delCall + '">🗑️</button>'))
     + '</div></div>';
 }
+/* ── 👁️ صفحة العرض ───────────────────────────────────────────────────
+ * عرضٌ بلا تعديل: كل ما في العنصر مقروءًا، وأزرار التعديل والتكرار
+ * والحذف تحته. فمن أراد النظر لا يخاطر بتغييرٍ بإصبعٍ زائد، ومن أراد
+ * التعديل فعلى بُعد ضغطة.
+ */
+var EDIT_OF = {
+  meds: function (id) { medForm(id); },
+  labs: function (id) { labForm(id); },
+  imaging: function (id) { imgForm(id); },
+  recipes: function (id) { recipeForm(id); }
+};
+var DEL_OF = {
+  meds: function (id) { medDel(id); },
+  labs: function (id) { labDel(id); },
+  imaging: function (id) { imgDel(id); },
+  recipes: function (id) { recipeDel(id); }
+};
+window.editOpen = function (kind, id) {
+  (EDIT_OF[kind] || function (i) { secItemForm(kind, i); })(id);
+};
+window.delOpen = function (kind, id) {
+  (DEL_OF[kind] || function (i) { secItemDel(kind, i); })(id);
+};
+/** أسطر العنصر كما تُعرَض — كل الحقول، لا المرسَلة وحدها. */
+function viewLines(kind, o) {
+  var defs = outDefs(kind), out = [];
+  defs.forEach(function (f) {
+    if (f[0] === 'img') return;
+    var v = String(outValue(o, f[0])).trim();
+    if (!v) return;
+    var body = textHtml(v);
+    if (f[2] === 'geo') {
+      var u = geoLink(v);
+      if (u) body = '<a class="geo-a" href="#" onclick="return geoTap(event,\'' + jsq(u) + '\')">📍 افتح الخريطة</a>';
+    } else if (f[2] === 'url') {
+      var w = webParse(v);
+      if (w.url) body = '<a class="geo-a" href="#" onclick="return webTap(event,\'' + jsq(w.url) + '\')">🌐 ' + esc(w.name) + '</a>';
+    }
+    out.push('<div class="vrow"><div class="vl">' + esc(f[1]) + '</div>'
+      + '<div class="vv" dir="auto">' + body + '</div></div>');
+  });
+  return out.join('');
+}
+function renderViewPage(kind, id) {
+  var o = coll(kind) && coll(kind).find(function (x) { return x.id === id; });
+  if (!o) {
+    h('page', '<div class="empty"><div class="ei">🔎</div>'
+      + '<div class="et">لم يعد هذا العنصر موجودًا</div></div>');
+    return;
+  }
+  var on = DB.cart[kind].indexOf(id) >= 0;
+  var lines = viewLines(kind, o);
+  h('page',
+    '<div class="vcard">'
+    + '<div class="vname" dir="auto">' + esc(outTitle(kind, o))
+    + (o.flag ? ' <span class="star">★</span>' : '') + '</div>'
+    + (o.img && imgByCode(o.img) ? '<img class="vpic" src="' + imgData(o.img) + '" alt="">' : '')
+    + (lines || '<div class="muted">لا شيء مكتوب في حقوله بعد.</div>')
+    + '</div>'
+    + '<button class="btn full ' + (on ? '' : 'primary') + '" onclick="toggleCart(\'' + kind + '\',\'' + id + '\');render()">'
+    + (on ? '✅ محدَّد للإرسال — اضغط لإلغائه' : '📤 أضِفه لما سأرسله') + '</button>'
+    + '<div class="vacts">'
+    + '<button class="btn" onclick="editOpen(\'' + kind + '\',\'' + id + '\')">✏️ تعديل</button>'
+    + '<button class="btn" onclick="dupItem(\'' + kind + '\',\'' + id + '\')">⧉ تكرار</button>'
+    + '<button class="btn" onclick="delOpen(\'' + kind + '\',\'' + id + '\')">🗑️ حذف</button>'
+    + '</div>');
+}
+/** تبديل «الأسماء فقط» — إعدادٌ واحد يسري على كل الأقسام. */
+window.toggleCompact = function () {
+  DB.compact = DB.compact ? 0 : 1;
+  Store.setCompact();
+  render();
+  toast(DB.compact ? '📜 الأسماء فقط — اضغط الاسم لتراه' : '📄 بالتفاصيل');
+};
 /**
  * أسهم الترتيب — على البطاقة نفسها، ظاهرةً أوّل ما تُفتح القائمة.
  *

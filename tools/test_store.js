@@ -3391,7 +3391,7 @@ run('الموقع: لوحة النوع تكتب في حقلها هي لا في �
   eq(panel.indexOf('data-t="geo"') >= 0, true, 'location offered there too:');
   const form = c.fldFormBody({});
   eq(form.indexOf('id="ff-type"') >= 0, true, 'while the fields page keeps its own:');
-  eq(c.FLD_TYPES.length, 4, 'four types, one list:');
+  eq(c.FLD_TYPES.length, 5, 'five types, one list:');
   eq(panel.indexOf('data-t="url"') >= 0, true, 'website offered too:');
 });
 
@@ -3972,4 +3972,120 @@ run('التنزيل: حالته لا تُحفظ — الملف في ذاكرةٍ
   c2.boot();
   eq(c2.DL.state, '', 'but a restart claims nothing — the cache may be gone:');
   eq(c2.updBanner().indexOf('ثبّت الآن') < 0, true, 'so no install button it cannot honour:');
+});
+
+/* ── 📋 حقل الاختيار، و📜 الأسماء فقط، و👁️ العرض ──────────────────── */
+
+run('الاختيار: التخصص قائمةٌ تنمو بما يُكتب فيها', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const spec = c.fieldsOf('sec_dir').find(f => f.label === 'التخصص أو الخدمة');
+  eq(spec.type, 'choice', 'the specialty is a list, not free text:');
+  const opts = c.optsList(spec);
+  eq(opts.indexOf('باطنة') >= 0 && opts.indexOf('علاج طبيعي') >= 0, true,
+     'seeded with real specialties (' + opts.length + '):');
+  eq(b._t.fields.find(f => f.id === spec.id).opts.indexOf('باطنة') >= 0, true, 'persisted:');
+
+  // قيمةٌ ليست في القائمة تلتحق بها فلا تُكتب مرّتين
+  c.goPage('sec_dir');
+  c._els('cf-name').value = 'مركز النطق';
+  c._els('cf-x-' + spec.key).value = 'تخاطب';
+  c.secItemSave('sec_dir', '');
+  const after = c.optsList(c.fieldsOf('sec_dir').find(f => f.id === spec.id));
+  eq(after.indexOf('تخاطب') >= 0, true, 'a new value joins the list:');
+  eq(b._t.fields.find(f => f.id === spec.id).opts.indexOf('تخاطب') >= 0, true, 'and is saved:');
+
+  // ولا تتكرّر لو أُعيدت
+  c._els('cf-name').value = 'مركز آخر';
+  c._els('cf-x-' + spec.key).value = 'تخاطب';
+  c.secItemSave('sec_dir', '');
+  const again = c.optsList(c.fieldsOf('sec_dir').find(f => f.id === spec.id));
+  eq(again.filter(x => x === 'تخاطب').length, 1, 'and never twice:');
+});
+
+run('الاختيار: من كان تخصّصه نصًّا يصير قائمةً بلا فقد', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const spec = c.fieldsOf('sec_dir').find(f => f.label === 'التخصص أو الخدمة');
+  // نحاكي الإصدار السابق: نصٌّ حرّ، وعنوانٌ كُتب فيه تخصّص غير مألوف
+  spec.type = 'text'; spec.opts = ''; c.Store.saveField(spec);
+  const rec = { id: 'D1', name: 'عيادة', category: '', extra: {} };
+  rec.extra[spec.key] = 'تقويم نطق';
+  c.DB.sec_dir.push(rec); c.Store.upsert('sec_dir', rec);
+  delete b._t.settings.dir_spec;
+
+  const c2 = load(b); c2.boot();
+  const s2 = c2.fieldsOf('sec_dir').find(f => f.label === 'التخصص أو الخدمة');
+  eq(s2.type, 'choice', 'it becomes a list on upgrade:');
+  eq(c2.optsList(s2).indexOf('تقويم نطق') >= 0, true,
+     'and what he already wrote is in it:');
+  eq(c2.optsList(s2).indexOf('باطنة') >= 0, true, 'beside the defaults:');
+  eq(c2.DB.sec_dir[0].extra[s2.key], 'تقويم نطق', 'his value is untouched:');
+
+  const c3 = load(b); c3.boot();
+  eq(c3.optsList(c3.fieldsOf('sec_dir').find(f => f.label === 'التخصص أو الخدمة')).length,
+     c2.optsList(s2).length, 'and the conversion does not repeat:');
+});
+
+run('الأسماء فقط: تطوي التفاصيل وتفتح العرض لا التعديل', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  c._els('lf-name').value = 'صورة دم كاملة';
+  c._els('lf-code').value = 'CBC';
+  c._els('lf-requirements').value = 'صيام ٨ ساعات';
+  c.labSave('');
+  const id = b._t.labs[0].id;
+
+  c.setMode('edit'); c.goPage('labs');
+  let html = c._els('page').innerHTML;
+  eq(html.indexOf('صيام ٨ ساعات') >= 0, true, 'details show by default:');
+
+  c.toggleCompact();
+  eq(c.DB.compact, 1, 'compact on:');
+  eq(b._t.settings.compact, '1', 'and remembered:');
+  html = c._els('page').innerHTML;
+  eq(html.indexOf('صيام ٨ ساعات') < 0, true, 'details folded away:');
+  eq(html.indexOf('صورة دم كاملة') >= 0, true, 'but the name stays:');
+  eq(html.indexOf("view:labs:" + id) >= 0, true, 'and tapping it opens the view, not the editor:');
+
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.compact, 1, 'and it survives a restart:');
+});
+
+run('العرض: يُظهر كل شيء ولا يغيّر شيئًا، والتعديل بضغطة', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  c._els('lf-name').value = 'صورة دم كاملة';
+  c._els('lf-code').value = 'CBC';
+  c._els('lf-requirements').value = 'صيام ٨ ساعات';
+  c.labSave('');
+  const id = b._t.labs[0].id;
+
+  c.goPage('view:labs:' + id);
+  const html = c._els('page').innerHTML;
+  eq(html.indexOf('صورة دم كاملة') >= 0, true, 'the name:');
+  eq(html.indexOf('صيام ٨ ساعات') >= 0, true, 'and every field, even one he hid from sending:');
+  eq(html.indexOf('✏️ تعديل') >= 0, true, 'with edit a tap away:');
+  eq(html.indexOf('🗑️ حذف') >= 0, true, 'and delete:');
+
+  // العرض لا يغيّر العنصر
+  eq(b._t.labs[0].name, 'صورة دم كاملة', 'and looking changed nothing:');
+  eq(b._t.labs.length, 1, 'nor added anything:');
+
+  // عنصرٌ حُذف: الصفحة تقولها ولا تنهار
+  c.goPage('view:labs:ghost');
+  eq(c._els('page').innerHTML.indexOf('لم يعد') >= 0, true,
+     'a deleted item says so instead of crashing:');
+});
+
+run('العرض: يحمل الحقول المخفيّة عن الإرسال أيضًا', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  c.goPage('labs');
+  c._els('lf-name').value = 'سكر صائم';
+  c._els('lf-purpose').value = 'متابعة السكري';
+  c.labSave('');
+  const id = b._t.labs[0].id;
+  eq(c.outHas('labs', 'purpose'), false, '«الهدف» is not among the sent fields:');
+
+  c.goPage('view:labs:' + id);
+  eq(c._els('page').innerHTML.indexOf('متابعة السكري') >= 0, true,
+     'yet still visible when he looks at it:');
 });
