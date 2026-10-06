@@ -25,8 +25,13 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.core.content.FileProvider;
 
+import org.json.JSONObject;
+
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
 /**
  * تطبيق «دليلي» — واجهة WebView تُحمِّل الملفات المدمجة داخل الحزمة نفسها
@@ -36,6 +41,23 @@ import java.io.FileOutputStream;
  * SQLite محلية للتخزين الدائم.
  */
 public class MainActivity extends ComponentActivity {
+
+    /**
+     * العنوان الوحيد الذي يتصل به هذا التطبيق، مكتوبًا هنا لا يأتي من
+     * الواجهة. ملفٌّ صغير فيه رقم آخر إصدار منشور ولا شيء غيره.
+     */
+    private static final String UPDATE_URL =
+            "https://raw.githubusercontent.com/alaoufi/Lab_tr/HEAD/dist/version.json";
+    /** المضيفات المقبولة بعد أي تحويل — ما عداها يُرفَض ولا يُقرأ. */
+    private static final String[] UPDATE_HOSTS = {
+            "raw.githubusercontent.com", "objects.githubusercontent.com", "github.com"
+    };
+    private static boolean allowedHost(String host) {
+        if (host == null) return false;
+        String h = host.toLowerCase(java.util.Locale.US);
+        for (String a : UPDATE_HOSTS) if (a.equals(h)) return true;
+        return false;
+    }
 
     private WebView webView;
     private DaliliDb db;
@@ -110,6 +132,32 @@ public class MainActivity extends ComponentActivity {
             }
         });
 
+        /*
+         * الواجهة محبوسة في assets. صار للتطبيق صلاحية إنترنت (لفحص
+         * التحديث وحده)، فلم يعد كافيًا أن نقول «لا يوجد في الصفحة رابط
+         * خارجي»: نمنع الوصول منعًا. أي تنقّل أو موردٍ ليس `file://`
+         * يُرفَض هنا — فلا صفحةٌ تُحمَّل من الشبكة ولا خطٌّ يُجلَب من CDN
+         * ولو أُقحم في الأصول يومًا. والروابط الخارجية طريقها
+         * `openExternal` وحدها: تطبيقٌ آخر يفتحها بصلاحياته لا بصلاحياتنا.
+         */
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest req) {
+                Uri u = req == null ? null : req.getUrl();
+                return u == null || !"file".equalsIgnoreCase(String.valueOf(u.getScheme()));
+            }
+
+            @Override
+            public android.webkit.WebResourceResponse shouldInterceptRequest(
+                    WebView view, android.webkit.WebResourceRequest req) {
+                Uri u = req == null ? null : req.getUrl();
+                if (u != null && "file".equalsIgnoreCase(String.valueOf(u.getScheme()))) return null;
+                Log.w("DaliliApp", "blocked non-file request: " + u);
+                return new android.webkit.WebResourceResponse(
+                        "text/plain", "UTF-8", new java.io.ByteArrayInputStream(new byte[0]));
+            }
+        });
+
         webView.loadUrl("file:///android_asset/index.html");
 
         // زر الرجوع في الجهاز يُسلَّم أولًا للواجهة: تغلق المودال أو ترجع
@@ -128,6 +176,12 @@ public class MainActivity extends ComponentActivity {
                         });
             }
         });
+    }
+
+    /** رقم إصدار الحزمة المثبَّتة — مصدره `versionCode` في build.gradle. */
+    private long versionCode() throws Exception {
+        PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
+        return android.os.Build.VERSION.SDK_INT >= 28 ? pi.getLongVersionCode() : pi.versionCode;
     }
 
     /** يُعلم الواجهة أن موضع النسخ تغيّر لتُحدِّث صفحة الإعدادات. */
@@ -160,13 +214,88 @@ public class MainActivity extends ComponentActivity {
         public String appVersion() {
             try {
                 PackageInfo pi = getPackageManager().getPackageInfo(getPackageName(), 0);
-                long code = android.os.Build.VERSION.SDK_INT >= 28
-                        ? pi.getLongVersionCode() : pi.versionCode;
-                return pi.versionName + " (" + code + ")";
+                return pi.versionName + " (" + versionCode() + ")";
             } catch (Exception e) {
                 Log.e("DaliliApp", "appVersion failed", e);
                 return "";
             }
+        }
+
+        /** رقم الإصدار وحده — الواجهة تقارنه برقم آخر إصدار منشور. */
+        @JavascriptInterface
+        public long appVersionCode() {
+            try { return versionCode(); }
+            catch (Exception e) { return 0L; }
+        }
+
+        /**
+         * فحص وجود إصدار أحدث — الاستعمال <b>الوحيد</b> لصلاحية الإنترنت
+         * في هذا التطبيق.
+         *
+         * <p>ما يخرج من الجهاز: طلب {@code GET} واحد لا يحمل شيئًا — لا
+         * معرّف جهاز، ولا إحصاءات، ولا حرفًا من قاعدة البيانات. والعنوان
+         * ثابتٌ في {@link MainActivity#UPDATE_URL} ولا يأتي من الواجهة،
+         * فلا يستطيع شيء في JS أن يوجّه الاتصال إلى غيره.
+         *
+         * <p>وبعد أي تحويل يُتحقَّق من المضيف ثانيةً: تحويلٌ إلى خارج
+         * قائمة {@link MainActivity#UPDATE_HOSTS} يُرفَض ولا يُقرأ.
+         *
+         * <p>كل فشلٍ صامت: الفحص خدمةٌ إضافية، فتعذّره لا يعني شيئًا
+         * للمستخدم إلا أن يبقى على نسخته.
+         */
+        @JavascriptInterface
+        public void checkUpdate() {
+            new Thread(() -> {
+                HttpURLConnection c = null;
+                try {
+                    c = (HttpURLConnection) new URL(UPDATE_URL).openConnection();
+                    c.setRequestMethod("GET");
+                    c.setConnectTimeout(8000);
+                    c.setReadTimeout(8000);
+                    c.setUseCaches(false);
+                    c.setInstanceFollowRedirects(true);
+                    c.setRequestProperty("Accept", "application/json");
+                    // لا نرسل شيئًا يُعرَف به الجهاز أو المستخدم
+                    c.setRequestProperty("User-Agent", "dalili");
+                    int code = c.getResponseCode();
+                    String host = c.getURL() == null ? "" : String.valueOf(c.getURL().getHost());
+                    if (code != 200 || !allowedHost(host)) { updateResult(null); return; }
+
+                    StringBuilder sb = new StringBuilder();
+                    try (InputStream in = c.getInputStream()) {
+                        byte[] buf = new byte[2048];
+                        int n, total = 0;
+                        while ((n = in.read(buf)) > 0 && total < 8192) {
+                            sb.append(new String(buf, 0, n, "UTF-8"));
+                            total += n;
+                        }
+                    }
+                    // نقرأه هنا لا في الواجهة: ما يصل JS أرقامٌ تحقّقنا منها
+                    JSONObject o = new JSONObject(sb.toString());
+                    JSONObject out = new JSONObject();
+                    out.put("ok", true);
+                    out.put("code", o.optLong("versionCode", 0));
+                    out.put("name", o.optString("versionName", ""));
+                    out.put("notes", o.optString("notes", ""));
+                    updateResult(out.toString());
+                } catch (Exception e) {
+                    Log.e("DaliliApp", "checkUpdate failed", e);
+                    updateResult(null);
+                } finally {
+                    if (c != null) try { c.disconnect(); } catch (Exception ignored) { }
+                }
+            }).start();
+        }
+
+        private void updateResult(String json) {
+            final String payload = json == null ? "{\"ok\":false}" : json;
+            runOnUiThread(() -> {
+                try {
+                    webView.evaluateJavascript(
+                            "window.onUpdateInfo && window.onUpdateInfo("
+                                    + org.json.JSONObject.quote(payload) + ")", null);
+                } catch (Exception ignored) { }
+            });
         }
 
         /**

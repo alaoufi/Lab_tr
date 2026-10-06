@@ -185,7 +185,17 @@ function applyData(data) {
   DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
   DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
   DB.dir_geo = Number(data.dir_geo || st.dir_geo || 0) || 0;            // حقل الموقع فيه
-  DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر فحص للتحديث
+  DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر تنزيل طلبه
+  DB.updSnoozeTo = Number(data.updSnoozeTo || st.upd_snooze || 0) || 0; // تأجيل التذكير
+  DB.updCheckedAt = Number(data.updCheckedAt || st.upd_checked || 0) || 0;
+  DB.updTriedAt = Number(data.updTriedAt || st.upd_tried || 0) || 0;
+  DB.updAuto = (data.updAuto != null ? Number(data.updAuto)
+                : (st.upd_auto != null ? Number(st.upd_auto) : 1)) ? 1 : 0;
+  DB.updLatest = (function () {
+    var v = data.updLatest;
+    if (!v && st.upd_latest) { try { v = JSON.parse(st.upd_latest); } catch (e) { v = null; } }
+    return (v && Number(v.code)) ? { code: Number(v.code), name: String(v.name || ''), notes: String(v.notes || '') } : null;
+  }());
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -208,7 +218,9 @@ function blobSave() {
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle, showLabels: DB.showLabels,
-            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, updAt: DB.updAt,
+            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo,
+            updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
+            updAuto: DB.updAuto, updLatest: DB.updLatest,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -371,7 +383,20 @@ var Store = {
   },
   setUpdAt: function () {
     if (!NDB) { blobSave(); return true; }
-    try { return NDB.setSetting('upd_at', String(DB.updAt)) || dbFail(); } catch (e) { return dbFail(); }
+    try {
+      return (NDB.setSetting('upd_at', String(DB.updAt))
+        && NDB.setSetting('upd_snooze', String(DB.updSnoozeTo || 0))) || dbFail();
+    } catch (e) { return dbFail(); }
+  },
+  /** حالة الفحص: وقته، وآخر إصدارٍ عرفناه، وهل الفحص التلقائي مُفعَّل. */
+  setUpdState: function () {
+    if (!NDB) { blobSave(); return true; }
+    try {
+      return (NDB.setSetting('upd_checked', String(DB.updCheckedAt || 0))
+        && NDB.setSetting('upd_tried', String(DB.updTriedAt || 0))
+        && NDB.setSetting('upd_latest', JSON.stringify(DB.updLatest || {}))
+        && NDB.setSetting('upd_auto', String(DB.updAuto ? 1 : 0))) || dbFail();
+    } catch (e) { return dbFail(); }
   },
   setShowLabels: function () {
     if (!NDB) { blobSave(); return true; }
@@ -669,6 +694,7 @@ async function boot() {
   backfillImgOut();
   // عدّاد التذكير يبدأ من أول تشغيل: النسخة التي بين يديك هي آخر ما فحصت
   if (!DB.updAt) { DB.updAt = Date.now(); Store.setUpdAt(); }
+  updAutoCheck();
   autoBackup(false);
   if (DB.pin_hash) showLock();
   else showApp();
@@ -781,13 +807,15 @@ function appVersion() {
 }
 
 /* ── 🔄 التحديث ──────────────────────────────────────────────────────
- * التطبيق بلا صلاحية إنترنت — وهذا اختيارٌ لا نقص: لا يستطيع أن يتصل
- * بشيء، فلا يستطيع أن يسأل «هل صدر إصدار جديد؟». ما يستطيعه أن يسلّم
- * الرابط لمتصفّح النظام بضغطة واحدة فيُنزَّل هناك، وأن يذكّرك إذا طال
- * العهد. الفرق للمستخدم: ضغطتان بدل البحث عن الرابط في كل مرّة.
+ * الفحص هو الاستعمال الوحيد لصلاحية الإنترنت في هذا التطبيق: طلبٌ واحد
+ * لملفٍّ صغير فيه رقم آخر إصدار منشور، لا يحمل معه شيئًا — لا معرّف جهاز
+ * ولا حرفًا من بيانات المرضى. والعنوان ثابتٌ في جافا لا يأتي من هنا.
+ *
+ * والتنزيل نفسه لا يقع في التطبيق: نسلّم الرابط لمتصفّح النظام.
  */
 var APK_URL = 'https://github.com/alaoufi/Lab_tr/raw/HEAD/dist/dalili.apk';
-var UPD_DAYS = 30;
+var UPD_DAYS = 30;          // تذكيرٌ احتياطي حين يتعذّر الفحص أو يُطفَأ
+var UPD_EVERY = 864e5;      // لا نفحص أكثر من مرّة في اليوم
 /** فتح رابطٍ خارج التطبيق — المتصفّح أو الخرائط يتولّاه، لا نحن. */
 function openOut(url) {
   var b = window.AndroidBridge;
@@ -802,8 +830,74 @@ function updDays() {
   if (!DB.updAt) return 0;
   return Math.floor((Date.now() - DB.updAt) / 864e5);
 }
-/** هل مضى ما يكفي ليُحتمَل صدور إصدار جديد؟ */
-function updDue() { return !!DB.updAt && updDays() >= UPD_DAYS; }
+/** رقم الحزمة المثبَّتة — صفرٌ في المتصفّح حيث لا حزمة أصلًا. */
+function installedCode() {
+  var b = window.AndroidBridge;
+  if (b && typeof b.appVersionCode === 'function') {
+    try { return Number(b.appVersionCode()) || 0; } catch (e) { return 0; }
+  }
+  return 0;
+}
+/** إصدارٌ أحدث معروفٌ بالفحص — لا تخمين: رقمٌ مقابل رقم. */
+function updNewer() {
+  var mine = installedCode(), there = Number((DB.updLatest || {}).code || 0);
+  return (mine && there && there > mine) ? DB.updLatest : null;
+}
+/**
+ * هل نعرض تذكيرًا؟ إمّا إصدارٌ أحدث تحقّقنا منه، وإمّا — حين يتعذّر
+ * الفحص أو يُطفَأ — مرورُ شهرٍ بلا تحديث. الثاني احتياطٌ لا يستغني عنه
+ * من لا شبكة عنده أصلًا.
+ */
+function updDue() {
+  if (DB.updSnoozeTo && Date.now() < DB.updSnoozeTo) return false;
+  if (updNewer()) return true;
+  return !!DB.updAt && updDays() >= UPD_DAYS;
+}
+/**
+ * الفحص. يأتي الجواب لاحقًا في `onUpdateInfo` — الطلب على خيطٍ آخر في
+ * جافا فلا يُجمّد الواجهة.
+ */
+window.updCheck = function (loud) {
+  var b = window.AndroidBridge;
+  if (!b || typeof b.checkUpdate !== 'function') {
+    if (loud) toast('الفحص غير متاح هنا', 'er');
+    return false;
+  }
+  DB.updChecking = 1;
+  /* نسجّل المحاولة لا الجواب: طلبٌ لا يعود أبدًا (قُتِلت العملية وهو
+     معلّق) كان سيجعل كل فتحةٍ تطلب من جديد. والمعروض للمستخدم يبقى وقت
+     الجواب — لا نقول «فُحِص» لشيء لم يصل. */
+  DB.updTriedAt = Date.now();
+  Store.setUpdState();
+  if (loud) toast('🔍 يفحص…');
+  try { b.checkUpdate(); } catch (e) { DB.updChecking = 0; return false; }
+  return true;
+};
+/** جواب جافا: أرقامٌ تحقّقت منها هي، لا نصٌّ خام من الشبكة. */
+window.onUpdateInfo = function (json) {
+  DB.updChecking = 0;
+  var o = {};
+  try { o = JSON.parse(json) || {}; } catch (e) { o = {}; }
+  DB.updCheckedAt = Date.now();
+  if (o.ok && Number(o.code)) {
+    DB.updLatest = { code: Number(o.code), name: String(o.name || ''), notes: String(o.notes || '') };
+  }
+  Store.setUpdState();
+  render();
+};
+/** فحصٌ تلقائي عند الإقلاع — مرّة في اليوم على الأكثر، وبإذنه. */
+function updAutoCheck() {
+  if (!DB.updAuto) return;
+  var last = Math.max(DB.updTriedAt || 0, DB.updCheckedAt || 0);
+  if (last && Date.now() - last < UPD_EVERY) return;
+  updCheck(false);
+}
+window.updToggleAuto = function () {
+  DB.updAuto = DB.updAuto ? 0 : 1;
+  Store.setUpdState();
+  render();
+  toast(DB.updAuto ? '🔄 سيفحص تلقائيًّا مرّة في اليوم' : '🚫 أُوقِف الفحص التلقائي');
+};
 function updStamp(t) {
   if (!t) return '—';
   try { return new Date(t).toLocaleDateString('ar-SA-u-nu-latn'); }
@@ -812,6 +906,7 @@ function updStamp(t) {
 /** يفتح صفحة التنزيل ويصفّر العدّاد — الفتح نفسه هو «الفحص». */
 window.updNow = function () {
   DB.updAt = Date.now();
+  DB.updSnoozeTo = 0;
   Store.setUpdAt();
   openOut(APK_URL);
   render();
@@ -819,16 +914,21 @@ window.updNow = function () {
 };
 /** «لاحقًا» تؤجّل أسبوعًا لا تُسكِت التذكير إلى الأبد. */
 window.updLater = function () {
+  DB.updSnoozeTo = Date.now() + 7 * 864e5;
   DB.updAt = Date.now() - (UPD_DAYS - 7) * 864e5;
   Store.setUpdAt();
   render();
 };
 function updBanner() {
   if (!updDue()) return '';
-  return '<div class="updbar"><div class="updbar-t">🔄 مضى ' + updDays()
-    + ' يومًا على آخر تحديث — ربّما صدرت نسخة أحدث.</div>'
-    + '<div class="updbar-a">'
-    + '<button class="btn white sm" onclick="updNow()">📥 حدّث الآن</button>'
+  var n = updNewer();
+  return '<div class="updbar' + (n ? ' new' : '') + '"><div class="updbar-t">'
+    + (n
+        ? '🆕 صدر الإصدار ' + esc(n.name || ('رقم ' + n.code)) + '.'
+          + (n.notes ? '<div class="updbar-n">' + esc(n.notes) + '</div>' : '')
+        : '🔄 مضى ' + updDays() + ' يومًا على آخر تحديث — ربّما صدرت نسخة أحدث.')
+    + '</div><div class="updbar-a">'
+    + '<button class="btn white sm" onclick="updNow()">📥 نزّله الآن</button>'
     + '<button class="btn white sm" onclick="updLater()">لاحقًا</button>'
     + '</div></div>';
 }
@@ -901,16 +1001,27 @@ function renderSettings() {
     + '<div class="settings-sec"><div class="settings-lbl">تحديث التطبيق</div>'
     + '<div class="ver"><span class="ver-l">المثبَّت عندك</span>'
     + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
-    + '<div class="ver"><span class="ver-l">آخر تحديث طلبتَه</span>'
-    + '<span class="ver-v">' + esc(updStamp(DB.updAt)) + '</span></div>'
-    + (updDue()
-        ? '<div class="rec-note" style="margin:10px 0">🔄 مضى ' + updDays()
-          + ' يومًا — ربّما صدرت نسخة أحدث.</div>' : '')
+    + '<div class="ver"><span class="ver-l">آخر إصدار منشور</span>'
+    + '<span class="ver-v">' + esc(DB.updLatest ? (DB.updLatest.name || DB.updLatest.code) : '—') + '</span></div>'
+    + '<div class="ver"><span class="ver-l">آخر فحص</span>'
+    + '<span class="ver-v">' + esc(DB.updChecking ? 'يفحص…' : updStamp(DB.updCheckedAt)) + '</span></div>'
+    + (updNewer()
+        ? '<div class="rec-note" style="margin:10px 0">🆕 صدر الإصدار '
+          + esc(updNewer().name || updNewer().code) + '.'
+          + (updNewer().notes ? '<br>' + esc(updNewer().notes) : '') + '</div>'
+        : updDue()
+          ? '<div class="rec-note" style="margin:10px 0">🔄 مضى ' + updDays()
+            + ' يومًا — ربّما صدرت نسخة أحدث.</div>' : '')
     + '<button class="btn full primary" onclick="updNow()">📥 نزّل آخر إصدار</button>'
-    + '<div class="muted">التطبيق لا يملك صلاحية إنترنت، فلا يستطيع أن يفحص بنفسه'
-    + ' هل صدر إصدار جديد. هذا الزر يسلّم رابط التنزيل لمتصفّح جهازك فينزّله هناك،'
-    + ' ثم تفتح الملف لتثبيته فوق نسختك — بياناتك تبقى كما هي. ونذكّرك كل '
-    + UPD_DAYS + ' يومًا.</div></div>'
+    + '<button class="btn full" style="margin-top:8px" onclick="updCheck(1)">🔍 افحص الآن</button>'
+    + '<label class="chk-row"><input type="checkbox" ' + (DB.updAuto ? 'checked' : '')
+    + ' onchange="updToggleAuto()"> 🔄 افحص تلقائيًّا عند فتح التطبيق (مرّة في اليوم)</label>'
+    + '<div class="muted">الفحص هو الاتصال <b>الوحيد</b> الذي يجريه التطبيق:'
+    + ' يطلب ملفًّا صغيرًا فيه رقم آخر إصدار، <b>ولا يرسل معه شيئًا</b> —'
+    + ' لا معرّف جهاز ولا حرفًا من بيانات مرضاك. وإن أوقفتَه هنا فلن يتصل بشيء أبدًا،'
+    + ' ويبقى التذكير كل ' + UPD_DAYS + ' يومًا وحده.'
+    + ' والتنزيل نفسه يقع في متصفّح جهازك لا في التطبيق: تفتح الملف فيُثبَّت فوق'
+    + ' نسختك، وبياناتك تبقى كما هي.</div></div>'
     + '<div class="settings-sec"><div class="settings-lbl">حول</div>'
     + '<div class="ver"><span class="ver-l">إصدار التطبيق</span>'
     + '<span class="ver-v">' + esc(appVersion()) + '</span></div>'
@@ -918,7 +1029,10 @@ function renderSettings() {
         ? '<div class="rec-note" style="margin:10px 0">⚠️ تعذّرت قراءة جزء من بياناتك في آخر فتح.'
           + ' افتح «فحص قاعدة البيانات» لترى ما لم يُقرأ.</div>' : '')
     + '<button class="btn full" onclick="goPage(\'diag\')">🩺 فحص قاعدة البيانات</button>'
-    + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط، ولا تُرسَل لأي خادم مطلقًا. التطبيق لا يملك صلاحية إنترنت أصلًا.</div></div>'
+    + '<div class="muted">جميع بياناتك محفوظة في قاعدة بيانات محلية على هذا الجهاز فقط،'
+    + ' ولا تُرسَل لأي خادم مطلقًا. التطبيق يعمل كاملًا بلا إنترنت، واتصاله الوحيد'
+    + ' هو فحص وجود إصدار أحدث — طلبٌ لا يحمل شيئًا، وتستطيع إيقافه من «تحديث التطبيق».'
+    + '</div></div>'
   );
 }
 

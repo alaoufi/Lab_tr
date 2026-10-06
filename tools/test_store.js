@@ -3635,3 +3635,104 @@ run('التحديث: لا يفتح إلا رابط التنزيل', () => {
   c.geoOpen('شارع بلا إحداثيات');
   eq(A._opened.length, 1, 'and nothing opens for what is not a location:');
 });
+
+run('التحديث: يفحص تلقائيًّا ويقارن رقمًا برقم', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub();
+  A.appVersionCode = () => 42;
+  A.checkUpdate = () => { A._checks = (A._checks || 0) + 1; };
+  c.window.AndroidBridge = A;
+  c.boot();
+
+  eq(A._checks, 1, 'the first launch checks once:');
+  eq(c.updNewer(), null, 'and claims nothing before an answer arrives:');
+
+  // جواب: إصدار أحدث
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 43, name: '5.2', notes: 'الموقع' }));
+  eq(c.updNewer().name, '5.2', 'a newer build is reported:');
+  eq(c.updDue(), true, 'so the banner shows:');
+  eq(JSON.parse(b._t.settings.upd_latest).code, 43, 'and it is remembered across restarts:');
+
+  // ونفس الرقم لا يُعدّ جديدًا
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 42, name: '5.1' }));
+  eq(c.updNewer(), null, 'the same build is not an update:');
+  eq(c.updDue(), false, 'and nothing nags:');
+
+  // فحصٌ فاشل لا يمحو ما نعرفه ولا يصرخ
+  c.onUpdateInfo(JSON.stringify({ ok: false }));
+  eq(c.DB.updLatest.code, 42, 'a failed check keeps the last answer:');
+  eq(c.DB.updCheckedAt > 0, true, 'and still counts as an attempt:');
+});
+
+run('التحديث: مرّة في اليوم لا مرّة في كل فتح', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub();
+  A.appVersionCode = () => 42;
+  A.checkUpdate = () => { A._checks = (A._checks || 0) + 1; };
+  c.window.AndroidBridge = A; c.boot();
+  eq(A._checks, 1, 'checked once:');
+
+  const c2 = load(b); c2.window.AndroidBridge = A; c2.boot();
+  eq(A._checks, 1, 'a relaunch an hour later does not check again:');
+
+  c2.DB.updCheckedAt = c2.DB.updTriedAt = Date.now() - 2 * 864e5; c2.Store.setUpdState();
+  const c3 = load(b); c3.window.AndroidBridge = A; c3.boot();
+  eq(A._checks, 2, 'but two days later it does:');
+});
+
+run('التحديث: من أوقف الفحص لا يتصل تطبيقه بشيء', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub();
+  A.appVersionCode = () => 42;
+  A.checkUpdate = () => { A._checks = (A._checks || 0) + 1; };
+  c.window.AndroidBridge = A; c.boot();
+  eq(c.DB.updAuto, 1, 'on by default:');
+
+  c.updToggleAuto();
+  eq(c.DB.updAuto, 0, 'and he can turn it off:');
+  eq(b._t.settings.upd_auto, '0', 'persisted:');
+
+  const before = A._checks;
+  const c2 = load(b); c2.window.AndroidBridge = A;
+  c2.DB.updCheckedAt = c2.DB.updTriedAt = 0;
+  c2.boot();
+  eq(A._checks, before, 'then no launch reaches the network again:');
+  eq(c2.DB.updAuto, 0, 'and the choice survives the restart:');
+});
+
+run('التحديث: «لاحقًا» تُسكِت حتى إصدارًا أحدث — أسبوعًا', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); A.appVersionCode = () => 42;
+  A.checkUpdate = () => {};
+  c.window.AndroidBridge = A; c.boot();
+  c.onUpdateInfo(JSON.stringify({ ok: true, code: 99, name: '9.9' }));
+  eq(c.updDue(), true, 'a newer build nags:');
+
+  c.updLater();
+  eq(c.updDue(), false, 'quiet after «later»:');
+  eq(!!c.updNewer(), true, 'though we still know it is there:');
+
+  const c2 = load(b); c2.window.AndroidBridge = A; c2.boot();
+  eq(c2.updDue(), false, 'and the quiet survives a restart:');
+
+  c2.DB.updSnoozeTo = Date.now() - 1000;
+  eq(c2.updDue(), true, 'but comes back when the week is up:');
+
+  c2.updNow();
+  eq(c2.DB.updSnoozeTo, 0, 'and downloading clears the snooze outright:');
+});
+
+run('التحديث: المحاولة تُعدّ ولو لم يصل جواب', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub();
+  A.appVersionCode = () => 42;
+  A.checkUpdate = () => { A._checks = (A._checks || 0) + 1; };   // لا يردّ أبدًا
+  c.window.AndroidBridge = A; c.boot();
+  eq(A._checks, 1, 'asked once:');
+  eq(b._t.settings.upd_tried > '0', true, 'the attempt is recorded, not the answer:');
+  eq(Number(b._t.settings.upd_checked), 0, 'and nothing claims to have been checked:');
+
+  // طلبٌ معلّق لا يجعل كل فتحةٍ تطلب من جديد
+  const c2 = load(b); c2.window.AndroidBridge = A; c2.boot();
+  eq(A._checks, 1, 'and a relaunch does not hammer the network:');
+});

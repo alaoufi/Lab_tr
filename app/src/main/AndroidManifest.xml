@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- لا صلاحية إنترنت مطلوبة إطلاقًا — التطبيق محلي بالكامل -->
+    <!--
+      صلاحية الإنترنت لغرضٍ واحدٍ محدَّد: فحص وجود إصدار أحدث من التطبيق.
+
+      ما يُرسَل: طلب GET واحد بلا أي بيانات — لا معرّف جهاز، ولا إحصاءات،
+      ولا شيء ممّا في قاعدة البيانات. والعنوان مكتوبٌ ثابتًا في
+      MainActivity.UPDATE_URL ولا يأتي من الواجهة، والمضيف يُتحقَّق منه بعد
+      أي تحويل. وواجهةُ WebView نفسها محبوسة في assets عبر WebViewClient
+      يرفض كل ما ليس file:// — فلا شيء فيها يستطيع الاتصال.
+
+      بيانات المرضى لا تغادر الجهاز في أي حال.
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"
