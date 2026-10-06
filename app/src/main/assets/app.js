@@ -192,6 +192,7 @@ function applyData(data) {
   DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
   DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
   DB.dir_geo = Number(data.dir_geo || st.dir_geo || 0) || 0;            // حقل الموقع فيه
+  DB.welcomed = Number(data.welcomed || st.welcomed || 0) || 0;         // شاشة الاستعادة
   DB.updAt = Number(data.updAt || st.upd_at || 0) || 0;                 // آخر تنزيل طلبه
   DB.updSnoozeTo = Number(data.updSnoozeTo || st.upd_snooze || 0) || 0; // تأجيل التذكير
   DB.updCheckedAt = Number(data.updCheckedAt || st.upd_checked || 0) || 0;
@@ -229,7 +230,7 @@ function snapshot() {
             // علاماتها تُعيد تشغيل ترقياتٍ قديمة فوق قرارات صاحبها
             cats_seeded: DB.cats_seeded, fields_out_done: DB.fields_out_done,
             img_out_done: DB.img_out_done,
-            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo,
+            dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, welcomed: DB.welcomed,
             updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
             updAuto: DB.updAuto, updLatest: DB.updLatest,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
@@ -388,6 +389,10 @@ var Store = {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
+  setWelcomed: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('welcomed', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
   setDirGeo: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('dir_geo', '1') || dbFail(); } catch (e) { return dbFail(); }
@@ -515,6 +520,19 @@ function migrateLegacy() {
   } catch (e) { /* ترحيل فاشل — تبقى النسخة القديمة مكانها بلا ضرر */ }
 }
 
+/**
+ * ما أدخله المستخدم **فعلًا** — لا ما زرعه التطبيق لنفسه.
+ *
+ * `liveCount` تعدّ التصنيفات والأقسام المزروعة أيضًا، فتثبيتٌ جديد
+ * تمامًا يُقرَأ بها «فيه بيانات». وهذا ليس تفصيلًا: النسخ الاحتياطية
+ * تدور على خمس، فتطبيقٌ فارغٌ يكتب نسخةً فارغة عند كل فتح يُزيح نسخًا
+ * حقيقية من مجلد صاحبه — خمس فتحاتٍ بعد إعادة التثبيت تمحو كل ما نجا.
+ */
+function userData() {
+  var n = KINDS.reduce(function (a, k) { return a + (DB[k] ? DB[k].length : 0); }, 0);
+  return n + DB.images.length + DB.groups.length
+    + DB.sections.filter(function (s) { return !s.builtin && s.id !== DIR_KIND; }).length;
+}
 /** كل ما يُعدّ «بيانات المستخدم» — يقرّر إن كان الاستبدال آمنًا أو خسارة. */
 function liveCount() {
   var n = KINDS.reduce(function (a, k) { return a + (DB[k] ? DB[k].length : 0); }, 0);
@@ -552,7 +570,7 @@ function stampNow() {
     نسخةٌ فارغة أسوأ من لا نسخة: لو كُتبت لأزاحت أقدم نسخةٍ صالحة من الخمس. */
 window.autoBackup = function (force) {
   if (!AB) return false;
-  if (!liveCount()) return false;
+  if (!userData()) return false;        // لا نُزيح نسخةً حقيقية بأخرى فارغة
   if (!force && Date.now() - (DB.backup_at || 0) < BACKUP_EVERY) return false;
   try {
     var name = AB.writeBackup(JSON.stringify(snapshot()), stampNow());
@@ -567,7 +585,7 @@ function backupList() {
   try { return JSON.parse(AB.listBackups() || '[]'); } catch (e) { return []; }
 }
 window.backupNow = function () {
-  if (!liveCount()) return toast('لا بيانات لحفظها بعد', 'er');
+  if (!userData()) return toast('لا بيانات لحفظها بعد', 'er');
   var name = autoBackup(true);
   if (name) { render(); toast('✅ حُفظت نسخة: ' + name); }
   else toast('تعذّر حفظ النسخة', 'er');
@@ -584,7 +602,14 @@ window.backupResetDir = function () {
 };
 /** ينادِيها أندرويد بعد اختيار المجلد أو إعادته للافتراضي. */
 window.onBackupDirPicked = function () {
+  BSUM = {};                      // مجلدٌ آخر: ملخّصاتٌ أخرى
   render();
+  if (curPage() === 'welcome') {
+    var n = backupList().length;
+    return toast(n
+      ? '📂 وجدنا ' + countWord(n, 'نسخة واحدة', 'نسختين', 'نسخ', 'نسخة')
+      : '📂 لا نسخ في هذا المجلد');
+  }
   toast('📂 مكان الحفظ: ' + backupDirLabel());
 };
 function backupDirLabel() {
@@ -593,6 +618,106 @@ function backupDirLabel() {
 function backupDirIsCustom() {
   try { return !!(AB && AB.backupDirIsCustom && AB.backupDirIsCustom()); } catch (e) { return false; }
 }
+
+/* ── ♻️ استعادة بعد إعادة تثبيت ───────────────────────────────────────
+ * تطبيقٌ فُتح وهو فارغ: إمّا أوّلُ مرّة، وإمّا أُعيد تثبيته وبياناته
+ * كانت هنا. والثاني يجب ألّا يُترك لمستخدمٍ يبحث عن ملفٍ في مدير ملفات:
+ * نحن نبحث عنه، ونعرض ما فيه قبل أن يقرّر، ونستعيده بضغطة.
+ *
+ * ومجلدُ التطبيق الخاص يزول مع إلغاء التثبيت — فالنسخة التي تنفع هنا هي
+ * ما كُتب في مجلدٍ اختاره صاحبه. لذلك نلحّ عليه أن يختار مجلدًا باقيًا.
+ */
+var BSUM = {};              // ملخّصات مقروءة — الملف قد يبلغ مئات الكيلوبايت
+function backupSummary(name) {
+  if (BSUM[name]) return BSUM[name];
+  var out = { ok: false, main: '', extra: '', count: 0 };
+  try {
+    var d = JSON.parse((AB && AB.readBackup(name)) || '{}');
+    var secs = Array.isArray(d.sections) ? d.sections : [];
+    var parts = [];
+    secs.forEach(function (s) {
+      var n = (d[s.id] || []).length;
+      if (n) { parts.push((s.title || '') + ': ' + n); out.count += n; }
+    });
+    var ex = [];
+    if ((d.cats || []).length) ex.push(countWord(d.cats.length, 'تصنيف واحد', 'تصنيفان', 'تصنيفات', 'تصنيفًا'));
+    if ((d.groups || []).length) ex.push(countWord(d.groups.length, 'مجموعة واحدة', 'مجموعتان', 'مجموعات', 'مجموعة'));
+    if ((d.images || []).length) ex.push(countWord(d.images.length, 'صورة واحدة', 'صورتان', 'صور', 'صورة'));
+    out.ok = true;
+    out.main = parts.join(' · ') || 'لا عناصر';
+    out.extra = ex.join(' · ');
+  } catch (e) { /* ملفٌ تالف — يُقال ذلك في الشاشة */ }
+  BSUM[name] = out;
+  return out;
+}
+/** هل نعرض شاشة الاستعادة؟ تطبيقٌ فارغ ولم يقل صاحبه «ابدأ من جديد». */
+function needWelcome() { return !!AB && !DB.welcomed && userData() === 0; }
+window.welcomeSkip = function () {
+  DB.welcomed = 1; Store.setWelcomed();
+  goPage('home');
+};
+/** أوّل ما يفعله المستعيد: يدلّنا على المجلد. ثم نتولّى نحن الباقي. */
+window.welcomeFind = function () {
+  if (AB && AB.pickBackupDir) { BSUM = {}; AB.pickBackupDir(); }
+  else toast('غير متاح هنا', 'er');
+};
+function renderWelcome() {
+  var list = backupList(), custom = backupDirIsCustom();
+  var html = '<div class="hero"><div class="hero-t">♻️ هل عندك نسخة سابقة؟</div>'
+    + '<div class="hero-s">التطبيق فارغ الآن. إن كنتَ أعدتَ تثبيته، فبياناتك في ملف'
+    + ' نسخةٍ احتياطية — دُلّنا على مجلده ونتولّى الباقي.</div></div>';
+
+  if (list.length) {
+    html += '<div class="updbar new"><div class="updbar-t">📂 وجدنا '
+      + countWord(list.length, 'نسخة واحدة', 'نسختين', 'نسخ', 'نسخة')
+      + ' في: ' + esc(backupDirLabel()) + '</div></div>';
+    html += list.map(function (b) {
+      var s = backupSummary(b.name);
+      return '<div class="card"><div class="row">'
+        + '<div class="grow"><div class="name">🗄️ ' + esc(b.name.replace(/^dalili-|\.json$/g, '')) + '</div>'
+        + '<div class="sub">' + (s.ok ? esc(s.main) : '⚠️ تعذّرت قراءته') + '</div>'
+        + (s.ok && s.extra ? '<div class="sub">' + esc(s.extra) + '</div>' : '')
+        + '</div>'
+        + (s.ok && s.count
+            ? '<button class="btn primary sm" onclick="welcomeRestore(\'' + esc(b.name) + '\')">♻️ استعد</button>'
+            : '')
+        + '</div></div>';
+    }).join('');
+  } else {
+    html += '<div class="rec-note">لم نجد نسخة في «' + esc(backupDirLabel()) + '».'
+      + (custom ? '' : ' وهذا مجلد التطبيق الخاص — وهو يزول مع إلغاء التثبيت،'
+          + ' فنسختك إن وُجدت ففي مجلدٍ اخترتَه أنت.')
+      + '</div>';
+  }
+
+  html += '<button class="btn full primary" style="margin-top:12px" onclick="welcomeFind()">'
+    + '📂 ابحث في مجلد…</button>'
+    + '<label class="btn full" style="display:block;text-align:center;margin-top:8px;cursor:pointer">'
+    + '📄 أو اختر ملف النسخة مباشرةً'
+    + '<input type="file" accept="application/json" onchange="importBackup(this)" style="display:none"></label>'
+    + '<button class="btn full" style="margin-top:8px" onclick="welcomeSkip()">✨ ابدأ من جديد</button>'
+    + '<div class="muted" style="margin-top:10px">لا شيء يُكتب فوق شيء: التطبيق فارغ،'
+    + ' والاستعادة تملؤه فقط. وتستطيع العودة لهذه الشاشة من الإعدادات ما دام فارغًا.</div>';
+  h('page', html);
+}
+/**
+ * تحذيرٌ على الرئيسية ما دامت النسخ تُكتب في مجلدٍ يزول مع إلغاء
+ * التثبيت. لا يُسكَت ولا يُؤجَّل: من رآه بعد فوات الأوان فقد بياناته،
+ * واختيارُ المجلد ضغطتان.
+ */
+function survivalBanner() {
+  if (!AB || backupDirIsCustom() || !userData()) return '';
+  return '<div class="updbar new"><div class="updbar-t">'
+    + '⚠️ نسخك الاحتياطية في مجلد التطبيق الخاص — <b>وهو يُحذَف مع إلغاء'
+    + ' التثبيت</b>. اختر مجلدًا باقيًا (التنزيلات مثلًا) فتنجو بياناتك'
+    + ' مهما حدث للتطبيق.</div><div class="updbar-a">'
+    + '<button class="btn white sm" onclick="backupPickDir()">📂 اختر مجلدًا باقيًا</button>'
+    + '</div></div>';
+}
+window.welcomeRestore = function (name) {
+  DB.welcomed = 1; Store.setWelcomed();
+  doRestore(name);
+};
 window.backupDelete = function (name) {
   dangerBox({
     title: 'حذف نسخة احتياطية',
@@ -691,6 +816,7 @@ function pageMeta(p) {
   if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
   if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
   if (p === 'diag') return { icon: '🩺', title: 'فحص قاعدة البيانات' };
+  if (p === 'welcome') return { icon: '♻️', title: 'استعادة بياناتك' };
   if (p.indexOf('sort:') === 0) return { icon: '↕️', title: 'ترتيب ' + kindLbl(p.slice(5)).title };
   if (p.indexOf('cat:') === 0) {
     return { icon: '🏷️', title: 'تصنيفات ' + kindLbl(p.slice(4)).title };
@@ -816,6 +942,8 @@ window.tryUnlock = async function () {
 
 function showApp() {
   $('lock').className = 'scr'; $('app').className = 'scr on';
+  // تطبيقٌ فارغ قد يكون أُعيد تثبيته: نعرض الاستعادة قبل الرئيسية
+  if (needWelcome()) { NAV = ['welcome']; render(); return; }
   render();
 }
 
@@ -1165,7 +1293,9 @@ function backupSection() {
     + '</div>'
     + '<button class="btn full" onclick="backupPickDir()">📂 تغيير مكان الحفظ…</button>'
     + (custom ? '<button class="btn full" onclick="backupResetDir()">↩️ العودة لمجلد التطبيق</button>' : '')
-    + '<button class="btn full" onclick="backupNow()">💾 احفظ نسخة الآن</button>';
+    + '<button class="btn full" onclick="backupNow()">💾 احفظ نسخة الآن</button>'
+    + (userData() ? ''
+        : '<button class="btn full" onclick="goPage(\'welcome\')">♻️ استعد بياناتي من نسخة…</button>');
   if (!list.length) return html + '<div class="muted">لا توجد نسخ بعد.</div></div>';
   html += list.map(function (b) {
     return '<div class="card"><div class="row">'
@@ -1589,6 +1719,7 @@ function render() {
   else if (p === 'sent') renderSentPage();
   else if (p === 'imgs') renderImagesPage();
   else if (p === 'diag') renderDiag();
+  else if (p === 'welcome') renderWelcome();
   else if (p.indexOf('sort:') === 0) renderSortPage(p.slice(5));
   else if (p === 'pv') renderPreview();
   else if (p.indexOf('lib:') === 0) renderLibraryPage(p.slice(4));
@@ -1623,7 +1754,7 @@ function renderHome() {
       + '<button class="btn full primary" onclick="goPage(\'diag\')">🩺 افحص قاعدة البيانات</button>';
   }
 
-  html += updBanner();
+  html += updBanner() + survivalBanner();
 
   // الوضع ظاهرٌ من الرئيسية أيضًا: يُعرَف قبل الدخول لا بعده
   html += modeBar();

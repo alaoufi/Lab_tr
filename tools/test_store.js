@@ -3713,3 +3713,106 @@ run('الهجرة: نسخة ٤٫٩ بلا علامات ترقية تحترم «o
   eq(c2.DB.out.labs, ['code'], 'nor for labs:');
   eq(c2.DB.meds[0].extra.fA, 'شركة س', 'though the values are still stored:');
 });
+
+/* ── ♻️ الاستعادة بعد إعادة التثبيت ───────────────────────────────── */
+
+run('الاستعادة: تطبيقٌ فارغ يعرض شاشة الاستعادة لا الرئيسية', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  eq(c.needWelcome(), true, 'an empty install asks first:');
+  eq(c.curPage(), 'welcome', 'and lands on the restore screen:');
+
+  c.welcomeSkip();
+  eq(c.curPage(), 'home', '«start fresh» goes home:');
+  eq(b._t.settings.welcomed, '1', 'and is remembered:');
+
+  const c2 = load(b); c2.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c2);
+  c2.boot();
+  eq(c2.curPage(), 'home', 'so it is not asked again:');
+});
+
+run('الاستعادة: من عنده بيانات لا يُسأل', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  c.welcomeSkip();
+  c._els('lf-name').value = 'CBC'; c.goPage('labs'); c.labSave('');
+
+  const c2 = load(b); c2.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c2);
+  c2.boot();
+  eq(c2.needWelcome(), false, 'a populated install goes straight in:');
+  eq(c2.curPage(), 'home', 'home as usual:');
+});
+
+run('الاستعادة: تقرأ ما في المجلد وتُلخّصه قبل أن يقرّر', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  // نسخةٌ نجت في مجلدٍ اختاره صاحبه قبل إلغاء التثبيت
+  A.writeBackup(JSON.stringify(backup49()), '2026-10-06-1350');
+
+  const list = c.backupList();
+  eq(list.length, 1, 'the folder has one backup:');
+  const s = c.backupSummary(list[0].name);
+  eq(s.ok, true, 'it reads:');
+  eq(s.count, 5, 'with his items counted before he commits:');
+  eq(s.main.indexOf('العلاجات: ') >= 0, true, 'named by section:');
+  eq(s.extra.indexOf('تصنيفات') >= 0 && s.extra.indexOf('صورة واحدة') >= 0, true, 'and categories/groups/images listed:');
+
+  c.welcomeRestore(list[0].name);
+  eq(c.DB.meds.length, 1, 'one tap restores:');
+  eq(c.DB.labs.length, 1, 'all of it:');
+  eq(c.DB.sec_custom.length, 1, 'including his own section:');
+  eq(b._t.settings.welcomed, '1', 'and the screen does not come back:');
+});
+
+run('الاستعادة: ملفٌ تالف يُقال عنه ذلك ولا يُعرَض للاستعادة', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot();
+  A.writeBackup('{ليس JSON', '2026-10-06-0900');
+  const s = c.backupSummary(c.backupList()[0].name);
+  eq(s.ok, false, 'a corrupt file is reported, not offered:');
+  eq(s.count, 0, 'with nothing claimed about it:');
+});
+
+run('الاستعادة: التحذير يظهر ما دامت النسخ في مجلدٍ يزول', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  c.boot(); c.welcomeSkip();
+  c._els('lf-name').value = 'CBC'; c.goPage('labs'); c.labSave('');
+
+  eq(c.survivalBanner().indexOf('يُحذَف مع إلغاء') >= 0, true,
+     'the private folder earns a warning:');
+  A._dir = 'Download/دليلي';     // اختار مجلدًا باقيًا
+  eq(c.survivalBanner(), '', 'and a surviving folder earns none:');
+});
+
+run('الاستعادة: تطبيقٌ فارغ لا يكتب نسخةً فارغة فوق نسخ صاحبه', () => {
+  const b = makeBridge(); const c = load(b);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  vm.runInContext('AB = window.AndroidBridge;', c);
+  // خمس نسخٍ حقيقية نجت في مجلده — والدوران يُبقي خمسًا فقط
+  ['01', '02', '03', '04', '05'].forEach(d =>
+    A.writeBackup(JSON.stringify(backup49()), '2026-10-' + d + '-1200'));
+  eq(c.backupList().length, 5, 'five real backups survived:');
+
+  // يفتح التطبيق الفارغ خمس مرّات قبل أن يستعيد
+  for (let i = 0; i < 5; i++) {
+    const ci = load(b); ci.window.AndroidBridge = A;
+    vm.runInContext('AB = window.AndroidBridge;', ci);
+    ci.boot();
+  }
+  eq(c.backupList().length, 5, 'and five are still there:');
+  const names = c.backupList().map(x => x.name).sort();
+  eq(names.every(n => n.indexOf('2026-10-0') > 0), true,
+     'all of them his, none an empty one pushing his out:');
+});
