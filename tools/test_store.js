@@ -2264,8 +2264,9 @@ run('الأمان: تصنيفات تكرّرت بأثر عطبٍ سابق تُن
   b._t.cats.push({ id: 'c3', kind: 'labs', name: 'كيمياء الدم' });
   const c = load(b); c.boot();
 
-  eq(b._t.cats.length, 2, 'the duplicate row is gone:');
-  eq(b._t.cats.map(x => x.id).sort(), ['c1', 'c3'], 'the first of each name stays:');
+  const labCats = b._t.cats.filter(x => x.kind === 'labs');
+  eq(labCats.length, 2, 'the duplicate row is gone:');
+  eq(labCats.map(x => x.id).sort(), ['c1', 'c3'], 'the first of each name stays:');
   eq(b._t.labs[0].category, 'أمراض الدم', 'and not one item lost its category:');
 });
 
@@ -3363,4 +3364,96 @@ run('الصورة: اسم المريض يظهر فيها كما في الـPDF',
   eq(drawn.indexOf('سعد العتيبي') >= 0, true, 'and the image carries it too:');
   eq(drawn.some(function (t) { return t.indexOf('قائمة تحاليل') >= 0; }), false,
      'while the auto title stays off:');
+});
+
+/* ── 📇 دليل العناوين ──────────────────────────────────────────────── */
+
+run('الدليل: يُزرَع كاملًا مرّةً واحدة بتصنيفاته وحقوله', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const sec = c.DB.sections.find(s => s.id === 'sec_dir');
+  eq(!!sec, true, 'the section exists:');
+  eq(sec.title, 'دليل العناوين', 'named:');
+  eq(sec.builtin, 0, 'and it is the user’s to rename or delete:');
+  eq(b._t.sections.some(s => s.id === 'sec_dir'), true, 'persisted:');
+
+  eq(c.DB.cats.filter(x => x.kind === 'sec_dir').map(x => x.name), [
+    'المنشآت الصحية والعيادات',
+    'الأفراد (الأطباء والمعالجون)',
+    'الطب البديل',
+    'الأجهزة والمنتجات الطبية'
+  ], 'the four categories he asked for:');
+
+  eq(c.fieldsOf('sec_dir').map(f => f.label),
+     ['الهاتف', 'التخصص أو الخدمة', 'العنوان', 'ساعات العمل', 'ملاحظات'],
+     'and the fields a directory needs:');
+  c.fieldsOf('sec_dir').forEach(f => {
+    eq(c.outHas('sec_dir', 'x:' + f.key), true, f.label + ' goes out when sent:');
+  });
+
+  // ولا يُزرَع مرّتين
+  const n = b._t.cats.length, nf = b._t.fields.length;
+  const c2 = load(b); c2.boot();
+  eq(b._t.cats.length, n, 'a second launch adds no categories:');
+  eq(b._t.fields.length, nf, 'nor fields:');
+  eq(b._t.sections.filter(s => s.id === 'sec_dir').length, 1, 'nor a second section:');
+});
+
+run('الدليل: يعمل كأي قسم — إضافة وتصنيف وإرسال', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  const keys = {};
+  c.fieldsOf('sec_dir').forEach(f => { keys[f.label] = f.key; });
+
+  c.setMode('edit'); c.goPage('sec_dir');
+  c.secItemForm('sec_dir');
+  c._els('cf-name').value = 'مستشفى الملك فهد';
+  c._els('cf-category').value = 'المنشآت الصحية والعيادات';
+  c._els('cf-x-' + keys['الهاتف']).value = '0133456789';
+  c._els('cf-x-' + keys['العنوان']).value = 'طريق الملك عبدالعزيز، الدمام';
+  c.secItemSave('sec_dir', '');
+
+  eq(b._t.items.filter(o => o.section === 'sec_dir').length, 1, 'saved into the shared items table:');
+  const row = b._t.items.find(o => o.section === 'sec_dir');
+  eq(row.name, 'مستشفى الملك فهد', 'with its name:');
+  eq(row.extra[keys['الهاتف']], '0133456789', 'and its phone:');
+
+  // يُرسَل كغيره
+  c.setMode('send');
+  c.toggleCart('sec_dir', c.DB.sec_dir[0].id);
+  const A = androidStub(); c.window.AndroidBridge = A;
+  c.previewCart('sec_dir'); c.pvSend('pdf');
+  eq(A._pdfs[0].html.indexOf('مستشفى الملك فهد') >= 0, true, 'the name reaches the paper:');
+  eq(A._pdfs[0].html.indexOf('0133456789') >= 0, true, 'and the phone with it:');
+  eq(A._pdfs[0].html.indexOf('طريق الملك عبدالعزيز') >= 0, true, 'and the address:');
+
+  // وبعد إعادة التشغيل
+  const c2 = load(b); c2.boot();
+  eq(c2.DB.sec_dir.length, 1, 'and it is all still there:');
+  eq(c2.DB.sec_dir[0].extra[keys['الهاتف']], '0133456789', 'phone included:');
+});
+
+run('الدليل: من حذفه لا يعود إليه', () => {
+  const b = makeBridge(); const c = load(b); c.boot();
+  eq(!!c.secOf('sec_dir'), true, 'seeded at first:');
+
+  c.secDel('sec_dir');
+  c._els('dz-in').value = 'دليل العناوين'; c.dzCheck();
+  c._els('cb-yes').onclick();
+  eq(!!c.secOf('sec_dir'), false, 'deleted as asked:');
+
+  const c2 = load(b); c2.boot();
+  eq(!!c2.secOf('sec_dir'), false, 'and the next launch does not bring it back:');
+});
+
+run('الدليل: المستخدم القديم يناله دون أن تُمَسّ بياناته', () => {
+  const b = makeBridge();
+  // مستخدمٌ عنده بياناته وتصنيفاته قبل هذا الإصدار
+  b._t.labs.push({ id: 'L1', name: 'CBC', category: 'كيمياء' });
+  b._t.cats.push({ id: 'c1', kind: 'labs', name: 'كيمياء' });
+  b._t.settings.cats_seeded = '1';
+  const c = load(b); c.boot();
+
+  eq(!!c.secOf('sec_dir'), true, 'the directory arrives:');
+  eq(c.DB.labs.length, 1, 'his labs are untouched:');
+  eq(c.DB.cats.filter(x => x.kind === 'labs').length, 1, 'and his own categories:');
+  eq(c.DB.cats.filter(x => x.kind === 'sec_dir').length, 4, 'with the directory’s four beside them:');
 });

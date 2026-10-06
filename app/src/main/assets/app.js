@@ -182,6 +182,7 @@ function applyData(data) {
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
   DB.showLabels = Number(data.showLabels || st.showLabels || 0) || 0; // أسماء الحقول
+  DB.dir_seeded = Number(data.dir_seeded || st.dir_seeded || 0) || 0;   // دليل العناوين
   DB.fmt = data.fmt || st.fmt || 'pdf';          // الصيغة المفضّلة للإرسال
   DB.sent = Array.isArray(data.sent) ? data.sent : [];
   DB.images = Array.isArray(data.images) ? data.images : [];
@@ -204,6 +205,7 @@ function blobSave() {
 function dbFail() { toast('⚠️ تعذّر الحفظ في قاعدة البيانات', 'er'); return false; }
 function snapshot() {
   var o = { cart: DB.cart, cats: DB.cats, groups: DB.groups, pin_hash: DB.pin_hash, mode: DB.mode, showTitle: DB.showTitle, showLabels: DB.showLabels,
+            dir_seeded: DB.dir_seeded,
             sections: DB.sections, fields: DB.fields, sent: DB.sent, images: DB.images,
             out: DB.out, outOrder: DB.outOrder, header: DB.header };
   KINDS.forEach(function (k) { o[k] = DB[k]; });
@@ -355,6 +357,10 @@ var Store = {
   clearSent: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.clearSent() || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setDirSeeded: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('dir_seeded', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
   setShowLabels: function () {
     if (!NDB) { blobSave(); return true; }
@@ -645,7 +651,8 @@ async function boot() {
   if (!Store.ok) return showRecovery();
   dedupeCats();
   pruneOrphans();
-  seedCats();
+  seedCats();            // تصنيفات الأقسام الأصلية أولًا: شرطها «لا تصنيف بعد»،
+  seedDirectory();       // فلو سبقها زرعُ الدليل لامتنعت عن الزرع إلى الأبد
   backfillFieldOut();
   backfillImgOut();
   autoBackup(false);
@@ -2274,6 +2281,49 @@ function catEnsure(kind, name) {
   var c = { id: uid(), kind: kind, name: name };
   DB.cats.push(c); Store.saveCat(c);
 }
+/* ════════════════════════ 📇 دليل العناوين ════════════════════════
+   قسمٌ جاهز يُزرَع مرّة واحدة، مبنيٌّ على آلية الأقسام المُنشأة نفسها —
+   لا جدول له ولا كود خاص به: عناصره في `items`، وحقوله في `fields`،
+   وتصنيفاته في `cats`. فيرث الترتيب والمجموعات والمعاينة والإرسال
+   والنسخ الاحتياطي كلّها بلا سطرٍ واحد إضافي.
+
+   ويُحذَف كأي قسمٍ آخر، ولا يعود: `dir_seeded` تحرس ذلك. */
+var DIR_KIND = 'sec_dir';
+var DIR_TITLE = 'دليل العناوين';
+var DIR_CATS = [
+  'المنشآت الصحية والعيادات',
+  'الأفراد (الأطباء والمعالجون)',
+  'الطب البديل',
+  'الأجهزة والمنتجات الطبية'
+];
+/* الهاتف أولًا بعد الاسم: هو ما يُطلب من دليلٍ قبل كل شيء. */
+var DIR_FIELDS = [
+  ['الهاتف', 'text'],
+  ['التخصص أو الخدمة', 'text'],
+  ['العنوان', 'area'],
+  ['ساعات العمل', 'text'],
+  ['ملاحظات', 'area']
+];
+function seedDirectory() {
+  if (DB.dir_seeded) return;
+  if (!secOf(DIR_KIND)) {
+    var sec = { id: DIR_KIND, title: DIR_TITLE, icon: '📇', builtin: 0 };
+    DB.sections.push(sec);
+    DB[DIR_KIND] = []; DB.cart[DIR_KIND] = []; DB.out[DIR_KIND] = ['category'];
+    KINDS = DB.sections.map(function (x) { return x.id; });
+    Store.saveSection(sec);
+    DIR_FIELDS.forEach(function (d) {
+      var f = { id: uid(), kind: DIR_KIND, key: fieldKey(), label: d[0], type: d[1] };
+      DB.fields.push(f); Store.saveField(f);
+      DB.out[DIR_KIND].push('x:' + f.key);
+    });
+    Store.setOut(DIR_KIND);
+    DIR_CATS.forEach(function (n) { catEnsure(DIR_KIND, n); });
+  }
+  DB.dir_seeded = 1;
+  Store.setDirSeeded();
+}
+
 /** الزرع مرّة واحدة فقط: حذف المستخدم لتصنيف مزروع لا يعيده الإقلاع التالي.
     القاعدة المرقّاة تصل ومعها تصنيفات مبنيّة من عناصرها، فلا تُزرَع فوقها. */
 function seedCats() {
