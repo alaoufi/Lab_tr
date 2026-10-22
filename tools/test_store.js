@@ -962,6 +962,7 @@ run('المعاينة: تعرض الورقة نفسها التي ستُرسَل'
 
   c.previewCart('labs');
   eq(c.curPage(), 'pv', 'opened the preview page:');
+  c.pvTab('paper');                   // الإرسال يبدأ الآن ببيانات المستلم
   eq(c._els('hdr-title').innerHTML, 'معاينة قبل الإرسال', 'page title:');
   eq(c.PV_CSS, 'n', 'paper stylesheet injected for the current density:');
 
@@ -1678,6 +1679,7 @@ run('الإرسال: الصيغة المفضّلة تتصدّر الشريط', (
 
   c.previewCart('labs');
   eq(c.DB.fmt, 'pdf', 'pdf to begin with:');
+  c.pvTab('paper');                   // الصيغ تظهر في خطوة المعاينة النهائية
   let bar = c._els('page').innerHTML;
   eq(bar.indexOf('📄 PDF') < bar.indexOf('🖼️ صورة'), true, 'pdf first:');
 
@@ -2342,8 +2344,9 @@ run('الوضعان: كل قسم يقول أين أنت وأدواتُه تتب�
     // وضع الإرسال — الافتراضي
     c.setMode('send'); c.goPage(k);
     let html = c._els('page').innerHTML;
-    eq(html.indexOf('📤 إرسال') >= 0 && html.indexOf('📝 إدخال وتعديل') >= 0, true,
-       k + ': both modes are on screen:');
+    const tabs = c._els('section-tabs').innerHTML;
+    eq(tabs.indexOf('نسخة الإرسال') >= 0 && tabs.indexOf('إضافة يدوية') >= 0, true,
+       k + ': separate tasks are in the persistent tabs:');
     eq(html.indexOf('أشِّر ما تريد إرساله') >= 0, true, k + ': and it says what this one does:');
     eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': sending reaches the groups:');
     eq(html.indexOf('إضافة عنصر') < 0, true, k + ': and offers no adding — that is the other mode:');
@@ -2353,8 +2356,8 @@ run('الوضعان: كل قسم يقول أين أنت وأدواتُه تتب�
     c.setMode('edit'); c.goPage(k);
     html = c._els('page').innerHTML;
     eq(html.indexOf('➕ إضافة عنصر') >= 0, true, k + ': adding is here, named in full:');
-    eq(html.indexOf('🏷️ التصنيفات') >= 0, true, k + ': with the categories:');
-    eq(html.indexOf('🧩 الحقول') >= 0, true, k + ': and the fields:');
+    eq(html.indexOf('🏷️ التصنيفات') < 0, true, k + ': categories belong to organization:');
+    eq(html.indexOf('🧩 الحقول') < 0, true, k + ': fields belong to organization:');
     eq(html.indexOf('أضِف عناصرك وعدّلها') >= 0, true, k + ': and it says so:');
   });
 });
@@ -2565,7 +2568,7 @@ run('الوضعان: البحث بلا نتيجة يدلّ على وضع الإ�
 
 /* ── ترتيب العناصر: ظاهرٌ على البطاقة، ويُحفَظ، ويسري في كل مكان ───── */
 
-run('الترتيب: أسهم العناصر ظاهرة فور فتح القائمة في كل قسم', () => {
+run('الترتيب: أسهم العناصر والتصنيفات في تبويب الإدارة لكل قسم', () => {
   const b = makeBridge(); const c = load(b); c.boot();
   c.setMode('edit');
   ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
@@ -2573,10 +2576,10 @@ run('الترتيب: أسهم العناصر ظاهرة فور فتح القائ
     c.Store.upsert(k, { id: 'x1-' + k, name: 'أ', trade_name: 'أ', category: 'ت', extra: {} });
     c.coll(k).push({ id: 'x1-' + k, name: 'أ', trade_name: 'أ', category: 'ت', extra: {} });
     c.coll(k).push({ id: 'x2-' + k, name: 'ب', trade_name: 'ب', category: 'ت', extra: {} });
-    c.render();
+    c.goPage('sort:' + k);
     const html = c._els('page').innerHTML;
     eq(html.indexOf("itemMove('" + k + "'") >= 0, true, k + ': the arrows are right on the card:');
-    eq(html.indexOf('catMoveNamed(&#39;' + k) >= 0, true, k + ': and the category has its own, in its header:');
+    eq(html.indexOf("catMoveNamed('" + k) >= 0, true, k + ': and the category has its own, in its header:');
   });
 });
 
@@ -2679,7 +2682,7 @@ run('الترتيب: تصنيفٌ مكتوبٌ في العناصر وحدها ي
 
 /* ── الترتيب: زرٌّ صريح، وحفظٌ مُتحقَّق منه ────────────────────────── */
 
-run('الترتيب: زرّ «↕️ ترتيب» ظاهر في كل قسم وفي الوضعين', () => {
+run('الترتيب: تبويب الإدارة متاح في كل قسم وفي الوضعين', () => {
   const b = makeBridge(); const c = load(b); c.boot();
   ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
     ['أ', 'ب'].forEach(n => {
@@ -2688,8 +2691,8 @@ run('الترتيب: زرّ «↕️ ترتيب» ظاهر في كل قسم وف
     });
     ['send', 'edit'].forEach(m => {
       c.setMode(m); c.goPage(k);
-      eq(c._els('page').innerHTML.indexOf("goPage('sort:" + k + "')") >= 0, true,
-         k + ' / ' + m + ': the sort button is right there:');
+      eq(c._els('section-tabs').innerHTML.indexOf("goSectionTab('" + k + "','organize')") >= 0, true,
+         k + ' / ' + m + ': the organization tab is right there:');
     });
   });
 });
@@ -2742,7 +2745,7 @@ run('الترتيب: «احفظ هذا الترتيب للقسم» من المع
   c.setMode('send');
   c.DB.labs.forEach(l => c.toggleCart('labs', l.id));
   c.previewCart('labs'); c.pvTab('list');
-  eq(c._els('page').innerHTML.indexOf('احفظ هذا الترتيب للقسم') >= 0, true, 'the button is offered:');
+  eq(c._els('page').innerHTML.indexOf('احفظ هذا الترتيب للقسم') < 0, true, 'sending offers only temporary ordering:');
 
   c.pvMove(0, 1);                        // FBS ينزل تحت Urea
   eq(c.rowsFor('labs', c.pvOn()).map(r => r.title), ['Urea', 'FBS', 'CBC'], 'the preview order changed:');
@@ -2948,19 +2951,19 @@ run('المرسلة: من كان يستعمل التطبيق قبلُ لا تخ�
 
 /* ── القائمة الجانبية: كل قسم يفتح على أعماله الأربعة ─────────────── */
 
-run('القائمة: كل قسم قائمة منبثقة بأعماله الأربعة', () => {
+run('القائمة: الأقسام تفتح مباشرة والتبويبات تحمل أعمالها الأربعة', () => {
   const b = makeBridge(); const c = load(b); c.boot();
   c.openDrawer();
   const dw = c._els('dw-body').innerHTML;
   ['meds', 'labs', 'imaging', 'recipes'].forEach(k => {
-    eq(dw.indexOf("dwGo('" + k + "','edit')") >= 0, true, k + ': add & edit:');
-    eq(dw.indexOf("dwGo('" + k + "','send')") >= 0, true, k + ': view & send:');
-    eq(dw.indexOf("drawerGo('sort:" + k + "')") >= 0, true, k + ': order the items:');
-    eq(dw.indexOf("drawerGo('fld:" + k + "')") >= 0, true, k + ': and the sent fields:');
+    eq(dw.indexOf("goSectionTab('" + k + "','send')") >= 0, true, k + ': section opens directly:');
+    c.goSectionTab(k, 'send');
+    const tabs = c._els('section-tabs').innerHTML;
+    ['manual', 'library', 'organize', 'send'].forEach(tab => {
+      eq(tabs.indexOf("goSectionTab('" + k + "','" + tab + "')") >= 0, true, k + ': ' + tab);
+    });
   });
-  eq(dw.indexOf("dwLib('labs')") >= 0, true, 'and the ready library, where there is one:');
-  eq(dw.indexOf('إضافة وتعديل العناصر') >= 0, true, 'each named in full:');
-  eq(dw.indexOf('الحقول المرسلة وترتيبها') >= 0, true, 'including the ordering:');
+  eq(dw.indexOf('<details class="dws">') < 0, true, 'no duplicate nested workflow menu:');
 });
 
 run('القائمة: كل مدخل يفتح على وضعه الصحيح', () => {

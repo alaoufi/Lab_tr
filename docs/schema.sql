@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 9   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 11   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -197,6 +197,7 @@ CREATE TABLE sent (
     kind      TEXT    NOT NULL,               -- القسم (sections.id)
     title     TEXT,                           -- عنوان القائمة كما أُرسِلت
     who       TEXT,                           -- اسم المريض إن كُتِب
+    notes     TEXT,                           -- ملاحظات اختيارية تظهر بعد جميع العناصر
     item_ids  TEXT    NOT NULL,               -- JSON: المعرّفات بالترتيب المُرسَل
     ts        INTEGER NOT NULL                -- وقت الإرسال
 );
@@ -316,6 +317,11 @@ CREATE INDEX idx_sent_ts       ON sent(ts);
 --
 --  الإصدار ٩ → ١٠
 --      ALTER TABLE fields ADD COLUMN opts TEXT;       -- خيارات حقل الاختيار
+--
+--  الإصدار ١٠ → ١١
+--      ALTER TABLE sent ADD COLUMN notes TEXT;        -- ملاحظات الإرسال الاختيارية
+--      -- addCols تفحص وجود العمود قبل الإضافة، وتصلحه ensureSchema عند الفتح.
+--      -- الصفوف القديمة تبقى كما هي؛ NULL يُقرأ نصًا فارغًا.
 --
 --  ملاحظة مهمة: onCreate صار ينادي addExtraColumns وaddImgColumns في آخره،
 --  فلا يفترق التثبيت الجديد عن المُرقّى. قبل ذلك كان الجهاز المثبَّت حديثًا

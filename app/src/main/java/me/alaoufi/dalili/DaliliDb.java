@@ -25,7 +25,7 @@ public class DaliliDb extends SQLiteOpenHelper {
 
     public static final String DB_NAME = "dalili.db";
     private static final String TAG = "DaliliDb";
-    private static final int DB_VERSION = 10;
+    private static final int DB_VERSION = 11;
 
     /**
      * الأقسام الأصلية الأربعة — وهي أيضًا أسماء جداولها.
@@ -246,6 +246,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 + "kind TEXT NOT NULL,"
                 + "title TEXT,"
                 + "who TEXT,"                // اسم المريض إن كُتِب
+                + "notes TEXT,"              // ملاحظات الإرسال الاختيارية بعد المحتوى
                 + "item_ids TEXT NOT NULL,"  // JSON: معرّفات بالترتيب المُرسَل
                 + "ts INTEGER NOT NULL)");
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_sent_ts ON sent(ts)");
@@ -353,7 +354,7 @@ public class DaliliDb extends SQLiteOpenHelper {
             addCols(db, "groups", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
             addCols(db, "images", new String[]{"code", "name", "data"}, "TEXT");
             addCols(db, "images", new String[]{"sort_order"}, "INTEGER NOT NULL DEFAULT 0");
-            addCols(db, "sent", new String[]{"kind", "title", "who", "item_ids"}, "TEXT");
+            addCols(db, "sent", new String[]{"kind", "title", "who", "notes", "item_ids"}, "TEXT");
             addCols(db, "sent", new String[]{"ts"}, "INTEGER NOT NULL DEFAULT 0");
         } catch (Exception e) {
             Log.e(TAG, "ensureSchema failed", e);
@@ -450,6 +451,10 @@ public class DaliliDb extends SQLiteOpenHelper {
         if (oldVersion < 10) {
             // خيارات حقل الاختيار (التخصص مثلًا) — سطرًا لكل خيار
             addCols(db, "fields", new String[]{"opts"}, "TEXT");
+        }
+        if (oldVersion < 11) {
+            // ملاحظات كل إرسال؛ الصفوف السابقة تبقى كما هي والقيمة اختيارية.
+            addCols(db, "sent", new String[]{"notes"}, "TEXT");
         }
     }
 
@@ -737,6 +742,7 @@ public class DaliliDb extends SQLiteOpenHelper {
                 o.put("kind", str(c, "kind"));
                 o.put("title", str(c, "title"));
                 o.put("who", str(c, "who"));
+                o.put("notes", str(c, "notes"));
                 o.put("ids", new JSONArray(str(c, "item_ids")));
                 o.put("ts", lng(c, "ts"));
                 arr.put(o);
@@ -766,6 +772,7 @@ public class DaliliDb extends SQLiteOpenHelper {
         v.put("kind", o.optString("kind", ""));
         v.put("title", o.optString("title", ""));
         v.put("who", o.optString("who", ""));
+        v.put("notes", o.optString("notes", ""));
         v.put("item_ids", ids == null ? "[]" : ids.toString());
         v.put("ts", o.optLong("ts", System.currentTimeMillis()));
         db.insertWithOnConflict("sent", null, v, SQLiteDatabase.CONFLICT_REPLACE);

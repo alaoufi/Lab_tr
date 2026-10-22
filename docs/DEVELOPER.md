@@ -130,8 +130,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 49       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "5.8"    // ما يراه المستخدم
+versionCode 50       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "5.9"    // ما يراه المستخدم
 ```
 
 ---
@@ -208,6 +208,12 @@ goHome()                  // يعيد التهيئة
 أسماء الصفحات: `home`, `meds`, `labs`, `imaging`, `recipes`, `settings`,
 `secs`, `pv`, `lib:<kind>`, `cat:<kind>`, `fld:<kind>`, `grp:<kind>`,
 `grp:<kind>:<groupId>`، ومعرّف أي قسم أنشأه المستخدم (`sec_<uid>`).
+
+من ٥٫٩ توجد المسارات الصريحة `manual:<kind>` و`send:<kind>` و`sort:<kind>`
+و`view-send:<kind>:<id>`. تحدد `sectionContext()` القسم والتبويب؛ ترسم
+`renderSectionTabs()` شريطًا ثابتًا خارج محتوى الصفحة، وتبدّل `goSectionTab()`
+المهمة دون تكديس نقرات التبويبات في سجل الرجوع. يبقى `lib:<kind>` للمكتبة.
+يقرأ `mode()` المسار الصريح أولًا، ويحتفظ بالمداخل القديمة للتوافق.
 
 `render()` هو الموزّع الوحيد: يضبط الترويسة (عنوان + سهم رجوع + ترس) ثم
 ينادي دالة رسم الصفحة.
@@ -767,10 +773,18 @@ printCss(scope) + docBody(title, body)         ← مصدر واحد للتنس�
 ```
 openPreview(kind, ids, title, imgTitle)   ← يملأ PV ثم goPage('pv')
    renderPreview()
+      ├─ PV_TAB 'list' → اختيار العناصر وترتيب هذه النسخة
+      ├─ PV_TAB 'details' → PV.who وPV.notes الاختياريان
       ├─ PV_TAB 'paper' → docBody(...)    ← نفس جسم المستند المُرسَل
       └─ PV_TAB 'img'   → buildCanvas(...).toDataURL()
    pvSend('pdf'|'img'|'print'|'copy')     ← pdfList / shareList / printList / copyList
 ```
+
+مع وجود عناصر محددة تبدأ المعاينة بمرحلة `details`. تظهر أزرار الإرسال فقط
+في المرحلة الأخيرة. تُمرر الملاحظات كمعامل أخير اختياري إلى وظائف الإخراج،
+وتُحفظ في `sent.notes` (SQLite 11). تستعيد السجلات القديمة نصًا فارغًا.
+الملاحظات غير الفارغة تأتي بعد العناصر، مع تهريب HTML وحفظ فواصل الأسطر
+والتفاف الكلمات الطويلة في Canvas. العنوان، عند تفعيله، في وسط الورقة والصورة.
 
 مداخلها ثلاثة: `previewCart(kind)` من شريط السلة، و`groupEditPreview()` من
 محرّر المجموعة، و`groupPreview(id)` من قائمة المجموعات. أي قائمة فارغة
@@ -1043,7 +1057,14 @@ node tools/check_backup.js dalili-2026-10-06-1350.json
 
 ```bash
 node tools/test_store.js
+node tools/test_workflows.js
+node tools/test_output_notes.js
 ```
+
+المجموع ٢١٤: الاختبارات الأصلية ١٩٢، والتنقل ٨، والملاحظات ١٤.
+اختبارات الملاحظات تستخدم `node:sqlite` لفحص SQL الترقية الإضافية على قاعدة
+مؤقتة؛ تتطلب Node يدعم هذه الوحدة. يلزم اختبار التحديث والمشاركة على هاتف فعلي
+قبل تعميم الإصدار؛ اختبارات DOM وCanvas المحلية لا تستبدل اختبار Android.
 
 ١٩٢ اختبارًا، بلا أي حزم خارجية. الفكرة: تشغيل `app.js` **الحقيقي** داخل
 `vm` مع DOM وهمي مبسّط وجسر `NativeDb` وهمي يحاكي دلالات `DaliliDb`

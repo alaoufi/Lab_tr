@@ -39,9 +39,36 @@ body{font-family:Tahoma,Arial,sans-serif;direction:rtl;background:#f0fdfa;font-s
 .rec-e{margin-top:6px;white-space:pre-wrap;word-break:break-word;font-size:11px;color:var(--mid);background:#f8fafc;border-radius:8px;padding:8px;text-align:left;direction:ltr}
 
 /* الترويسة */
-.hdr{position:sticky;top:0;z-index:40;background:linear-gradient(135deg,var(--teal2),var(--teal));color:#fff;padding:14px 16px;display:flex;align-items:center;gap:8px;box-shadow:0 3px 12px rgba(7,94,84,.25)}
-.hdr-t{font-weight:800;font-size:16px;display:flex;align-items:center;gap:8px}
+.app-nav{position:sticky;top:0;z-index:40;box-shadow:0 3px 12px rgba(7,94,84,.14);background:#fff}
+.hdr{background:linear-gradient(135deg,var(--teal2),var(--teal));color:#fff;padding:10px 12px;display:grid;grid-template-columns:76px minmax(0,1fr) 76px;align-items:center;gap:6px;min-height:60px}
+.hdr-t{font-weight:800;font-size:15px;display:flex;justify-content:center;align-items:center;gap:5px;text-align:center;min-width:0}
+#hdr-title{overflow-wrap:anywhere;line-height:1.4;max-height:2.8em;overflow:hidden}
+#hdr-icon{display:none}
+.hdr-side{display:flex;gap:4px;align-items:center;min-height:36px}
+.hdr-side.end{justify-content:flex-end}
 .hdr-b{background:rgba(255,255,255,.16);border:none;color:#fff;width:36px;height:36px;border-radius:10px;font-size:16px;cursor:pointer;flex:none}
+.section-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;max-width:820px;margin:auto;padding:7px 8px;background:#fff}
+.workflow-tab{font:inherit;font-size:12px;font-weight:700;border:1px solid transparent;border-radius:10px;background:#f8fafc;color:#475569;min-height:64px;padding:6px 3px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;line-height:1.4}
+.workflow-tab.on{background:#ecfdf5;border-color:var(--teal3);color:var(--teal2);box-shadow:inset 0 -3px 0 var(--teal)}
+.workflow-icon{font-size:19px;line-height:1.1}
+.workflow-tab:focus-visible,.pvstep:focus-visible{outline:3px solid #f59e0b;outline-offset:1px}
+.section-intro{display:flex;flex-direction:column;gap:5px;margin:4px 0 14px;line-height:1.6}
+.section-intro b{font-size:16px;color:var(--teal2)}
+.section-intro span{font-size:12px;color:var(--mid)}
+.management-actions{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.management-actions .btn{flex:1 1 100px;margin:0;font-size:12.5px;padding:11px 6px}
+.list-options{display:flex;justify-content:flex-end;margin-bottom:10px}
+.list-options .btn{margin:0}
+.pvsteps{display:flex;gap:5px;margin:4px 0 14px}
+.pvstep{flex:1;min-width:0;font:inherit;font-size:12px;font-weight:700;line-height:1.5;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--mid);padding:10px 4px;cursor:pointer}
+.pvstep.on{color:var(--teal2);border-color:var(--teal3);background:#ecfdf5}
+.pvactions{display:flex;gap:8px;margin:14px 0;align-items:stretch}
+.pvactions .btn{flex:1;margin:0;min-width:0}
+.pvdetails{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px 13px}
+#pv-notes{min-height:112px;resize:vertical;line-height:1.8}
+.pvformat{display:flex;gap:6px;margin-bottom:12px}
+.pvformat .pvt{flex:1}
+@media(max-width:360px){.hdr{padding-left:8px;padding-right:8px;gap:3px}.hdr-t{font-size:13px}#hdr-icon{display:none}.workflow-tab{font-size:11px}.section-tabs{gap:3px;padding:6px}.pvstep{font-size:11px}}
 
 /* الدرج الجانبي — المجموعات من أي صفحة. يأتي من اليمين لأن الواجهة RTL */
 .dw-bg{display:none;position:fixed;inset:0;z-index:600;background:rgba(15,23,42,.5)}
@@ -344,7 +371,8 @@ select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointe
 .toast{position:fixed;bottom:24px;right:50%;transform:translateX(50%);background:#0f172a;color:#fff;padding:11px 20px;border-radius:12px;font-size:13.5px;font-weight:700;z-index:600;opacity:0;pointer-events:none;transition:opacity .2s;max-width:88%;text-align:center}
 .toast.on{opacity:1}
 .toast.er{background:var(--red)}
-@media print{.hdr,.toolbar,.cartbar,.hero,.hgrid,.hquick,.hbar{display:none!important}}
+.cartbar,.lib-bar{top:148px}
+@media print{.app-nav,.hdr,.toolbar,.cartbar,.hero,.hgrid,.hquick,.hbar,.pvsteps,.pvactions{display:none!important}}
 </style>
 </head>
 <body>
@@ -352,13 +380,19 @@ select.sel{appearance:none;-webkit-appearance:none;font-weight:700;cursor:pointe
 <div id="lock" class="scr"></div>
 
 <div id="app" class="scr">
+ <div class="app-nav">
   <div class="hdr">
+   <div class="hdr-side">
     <button class="hdr-b" id="hdr-back" onclick="goBack()" style="display:none" aria-label="رجوع">→</button>
+   </div>
     <div class="hdr-t"><span id="hdr-icon">💊🧪</span><span id="hdr-title">دليلي الطبي</span></div>
-    <span class="grow"></span>
+   <div class="hdr-side end">
     <button class="hdr-b" id="hdr-grp" onclick="openDrawer()" aria-label="القائمة">☰</button>
     <button class="hdr-b" id="hdr-set" onclick="goPage('settings')" aria-label="الإعدادات">⚙️</button>
+   </div>
   </div>
+  <nav class="section-tabs" id="section-tabs" aria-label="مهام القسم" style="display:none"></nav>
+ </div>
   <div id="page"></div>
 </div>
 
