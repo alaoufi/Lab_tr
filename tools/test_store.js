@@ -2345,7 +2345,7 @@ run('الوضعان: كل قسم يقول أين أنت وأدواتُه تتب�
     c.setMode('send'); c.goPage(k);
     let html = c._els('page').innerHTML;
     const tabs = c._els('section-tabs').innerHTML;
-    eq(tabs.indexOf('نسخة الإرسال') >= 0 && tabs.indexOf('إضافة يدوية') >= 0, true,
+    eq(tabs.indexOf('نسخة الإرسال') >= 0 && tabs.indexOf('إضافة وتعديل') >= 0, true,
        k + ': separate tasks are in the persistent tabs:');
     eq(html.indexOf('أشِّر ما تريد إرساله') >= 0, true, k + ': and it says what this one does:');
     eq(html.indexOf('📁 المجموعات') >= 0, true, k + ': sending reaches the groups:');

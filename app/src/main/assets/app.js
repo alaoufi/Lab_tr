@@ -821,7 +821,7 @@ function renderSectionTabs(p) {
   bar.style.display = context ? '' : 'none';
   if (!context) { h('section-tabs', ''); return; }
   var tabs = [
-    ['manual', '＋', 'إضافة يدوية'], ['library', '▤', 'من المكتبة'],
+    ['manual', '✎', 'إضافة وتعديل'], ['library', '▤', 'من المكتبة'],
     ['organize', '↕', 'الترتيب والإدارة'], ['send', '↗', 'نسخة الإرسال']
   ];
   h('section-tabs', tabs.map(function (t) {
@@ -1529,7 +1529,7 @@ function renderLibraryPage(kind) {
   var lib = libList();
   if (!lib.length) {
     h('page', emptyBox('📚', 'لا توجد مكتبة جاهزة لهذا القسم', 'يمكنك إضافة عناصرك يدويًا وحفظها في هذا القسم')
-      + '<button class="btn primary full" onclick="goSectionTab(\'' + kind + '\',\'manual\')">＋ إضافة يدوية</button>');
+      + '<button class="btn primary full" onclick="goSectionTab(\'' + kind + '\',\'manual\')">＋ إضافة وتعديل</button>');
     return;
   }
   LIB_SEL = {};
@@ -2036,6 +2036,8 @@ function afterSave(kind, again, id, ok) {
     toast('⚠️ لم يُحفَظ — راجِع 🩺 فحص قاعدة البيانات', 'er');
     return;
   }
+  // التقاط المجموعة يخص إنشاء عنصر؛ إلغاء إضافة سابقة لا يغيّر وجهة تعديل قائم.
+  if (id) GRP_CATCH = null;
   var caught = grpCatch(kind);    // عنصرٌ أُنشئ لأجل مجموعة يدخلها فورًا
   if (again && !id) {
     render();
@@ -2048,6 +2050,8 @@ function afterSave(kind, again, id, ok) {
   // العودة لصفحة المجموعة لا لصفحة القسم حين كان الإنشاء لأجلها
   var back = GRP_CATCH ? 'grp:' + GRP_CATCH.kind + ':' + GRP_CATCH.id : kind;
   var context = sectionContext(curPage());
+  // تعديل عنصر قائم يعيد رسم الصفحة الحالية ويحفظ مسار الرجوع وتحديد الإرسال.
+  if (id && !GRP_CATCH && context && context.kind === kind) { render(); return; }
   if (!GRP_CATCH && context && context.kind === kind && context.tab === 'manual') back = 'manual:' + kind;
   GRP_CATCH = null;
   if (curPage() !== back) goPage(back); else render();
@@ -2064,7 +2068,7 @@ function noHit(kind, q) {
     return '<div class="empty"><div class="ei">🔎</div>'
       + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
       + '<button class="btn primary full" style="margin-top:11px" onclick="setMode(\'edit\')">'
-      + '＋ افتح الإضافة اليدوية لإضافته</button></div>';
+      + '＋ افتح الإضافة والتعديل لإضافته</button></div>';
   }
   return '<div class="empty"><div class="ei">🔎</div>'
     + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
@@ -3381,7 +3385,7 @@ function medsList(q) {
   });
   if (!list.length) {
     return q ? noHit('meds', q)
-      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'ابدأ من تبويب «إضافة يدوية» أو «من المكتبة»');
+      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(medRow).join('');
   var out = '';
@@ -3565,8 +3569,8 @@ function editTools(kind) {
 function sectionBar(kind, q, placeholder, addCall) {
   var ng = groupsOf(kind).length;
   var editing = mode() === 'edit';
-  var html = '<div class="section-intro"><b>' + (editing ? 'إضافة يدوية وتعديل' : '١ · اختيار عناصر نسخة الإرسال') + '</b><span>'
-    + (editing ? 'أضِف عناصرك وعدّلها هنا. المكتبة والترتيب في تبويبين مستقلين.' : 'أشِّر ما تريد إرساله، ثم انتقل إلى الاسم والملاحظات والمعاينة.') + '</span></div>'
+  var html = '<div class="section-intro"><b>' + (editing ? 'إضافة وتعديل' : '١ · اختيار عناصر نسخة الإرسال') + '</b><span>'
+    + (editing ? 'أضِف عناصرك وعدّلها من زر «تعديل البيانات» أسفل كل عنصر.' : 'أشِّر ما تريد إرساله، ثم انتقل إلى الاسم والملاحظات والمعاينة.') + '</span></div>'
     + '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="' + esc(placeholder) + '" value="' + esc(q)
     + '" oninput="secSearch(\'' + kind + '\')">';
@@ -3581,8 +3585,8 @@ function sectionBar(kind, q, placeholder, addCall) {
 }
 /**
  * بطاقة عنصر — واحدة لكل الأقسام.
- * في الإرسال: مربع تأشير واسمٌ وحسب، فالصفّ كلّه يؤشّر.
- * في الإدخال: تعديل وتكرار وحذف، بلا مربع تأشير يشوّش.
+ * زر تعديل البيانات مكتوب في كل وضع، مستقل عن الضغط لتحديد الإرسال.
+ * التكرار والحذف يظلان في الإضافة والتعديل وحدها.
  */
 /**
  * بطاقة العنصر. في وضع «الأسماء فقط» تُطوى تفاصيلها ويبقى اسمها —
@@ -3607,10 +3611,9 @@ function itemCard(kind, o, body, editCall, delCall) {
     + (slim ? '' : thumb(o))
     + (sending
         ? (slim ? '<button class="ic" onclick="goPage(\'view-send:' + kind + ':' + o.id + '\')" title="عرض">👁️</button>' : '')
-        : '<button class="ic" onclick="' + editCall + '">✏️</button>'
-          + (slim ? '' : '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
+        : (slim ? '' : '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
               + '<button class="ic" onclick="' + delCall + '">🗑️</button>'))
-    + '</div></div>';
+    + '</div><div class="item-actions"><button class="btn sm" onclick="' + editCall + '">✏️ تعديل البيانات</button></div></div>';
 }
 /* ── 👁️ صفحة العرض ───────────────────────────────────────────────────
  * عرضٌ بلا تعديل: كل ما في العنصر مقروءًا، وأزرار التعديل والتكرار
@@ -3671,10 +3674,10 @@ function renderViewPage(kind, id, sending) {
     + (o.img && imgByCode(o.img) ? '<img class="vpic" src="' + imgData(o.img) + '" alt="">' : '')
     + (lines || '<div class="muted">لا شيء مكتوب في حقوله بعد.</div>')
     + '</div>'
+    + '<div class="vacts"><button class="btn" onclick="editOpen(\'' + kind + '\',\'' + id + '\')">✏️ تعديل البيانات</button></div>'
     + (sending ? '<button class="btn full ' + (on ? '' : 'primary') + '" onclick="toggleCart(\'' + kind + '\',\'' + id + '\');render()">'
     + (on ? '✅ محدَّد للإرسال — اضغط لإلغائه' : '📤 أضِفه لما سأرسله') + '</button>'
     : '<div class="vacts">'
-    + '<button class="btn" onclick="editOpen(\'' + kind + '\',\'' + id + '\')">✏️ تعديل</button>'
     + '<button class="btn" onclick="dupItem(\'' + kind + '\',\'' + id + '\')">⧉ تكرار</button>'
     + '<button class="btn" onclick="delOpen(\'' + kind + '\',\'' + id + '\')">🗑️ حذف</button>'
     + '</div>'));
@@ -3830,7 +3833,7 @@ function labsList(q) {
   });
   if (!list.length) {
     return q ? noHit('labs', q)
-      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'ابدأ من تبويب «إضافة يدوية» أو «من المكتبة»');
+      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(labRow).join('');
   var out = '';
@@ -4003,7 +4006,7 @@ function imagingList(q) {
   });
   if (!list.length) {
     return q ? noHit('imaging', q)
-      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'ابدأ من تبويب «إضافة يدوية» أو «من المكتبة»');
+      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(imgRow).join('');
   var out = '';
@@ -4204,7 +4207,7 @@ function emptyOrFailed(kind, icon, title, hint) {
   if (!kindFailed(kind)) {
     if (mode() === 'edit') return emptyBox(icon, title, hint);
     return emptyBox(icon, title, hint)
-      + '<button class="btn full primary" onclick="setMode(\'edit\')">＋ افتح الإضافة اليدوية</button>';
+      + '<button class="btn full primary" onclick="setMode(\'edit\')">＋ افتح الإضافة والتعديل</button>';
   }
   return '<div class="rec-note" style="margin:12px 0">'
     + '<b>⚠️ هذا القسم ليس فارغًا — تعذّرت قراءته.</b><br>'

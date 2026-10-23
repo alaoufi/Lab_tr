@@ -10,8 +10,8 @@ android {
         applicationId "me.alaoufi.dalili"
         minSdk 24
         targetSdk 34
-        versionCode 50
-        versionName "5.9"
+        versionCode 51
+        versionName "5.9.1"
     }
 
     /*

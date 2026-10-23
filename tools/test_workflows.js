@@ -95,7 +95,7 @@ test('legacy drawer entries still choose the requested mode after explicit tabs'
   c.dwGo('meds', 'send');
   assert.equal(c.mode(), 'send');
 });
-test('reading item details from sending does not expose destructive editing', () => {
+test('reading item details from sending offers editing without deletion or duplication', () => {
   const { c } = app();
   c.goSectionTab('labs', 'manual');
   c._els('lf-name').value = 'Read only item'; c.labSave('');
@@ -105,7 +105,8 @@ test('reading item details from sending does not expose destructive editing', ()
   assert.match(c._els('page').innerHTML, /view-send:labs:/);
   c.goPage('view-send:labs:' + id);
   assert.match(c._els('page').innerHTML, /Read only item/);
-  assert.doesNotMatch(c._els('page').innerHTML, /editOpen\(|delOpen\(|dupItem\(/);
+  assert.match(c._els('page').innerHTML, /تعديل البيانات/);
+  assert.doesNotMatch(c._els('page').innerHTML, /delOpen\(|dupItem\(/);
   assert.equal(c.sectionContext(c.curPage()).tab, 'send');
   c.goBack();
   assert.equal(c.curPage(), 'send:labs');
