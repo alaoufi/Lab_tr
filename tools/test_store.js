@@ -156,15 +156,15 @@ run('حقول التحليل الستة تُحفَظ كلها', () => {
 run('الحقول المرسلة: الافتراضي ثم التغيير يبقى بعد إعادة التشغيل', () => {
   const b = makeBridge(); let c = load(b);
   c.Store.load();
-  eq(c.DB.out.meds, ['dosage', 'uses', 'img'], 'med default — the image is in, as it always printed:');
+  eq(c.DB.out.meds, ['dosage', 'uses', 'requirements', 'img'], 'med default includes requirements footer:');
   eq(c.DB.out.labs, ['code', 'requirements', 'img'], 'lab default:');
 
   c.toggleOut('meds', 'cautions');          // إضافة
   c.toggleOut('meds', 'dosage');            // إزالة
-  eq(JSON.parse(b._t.settings.out_meds), ['uses', 'img', 'cautions'], 'saved:');
+  eq(JSON.parse(b._t.settings.out_meds), ['uses', 'requirements', 'img', 'cautions'], 'saved:');
 
   c = load(b); c.Store.load();
-  eq(c.DB.out.meds, ['uses', 'img', 'cautions'], 'after restart:');
+  eq(c.DB.out.meds, ['uses', 'requirements', 'img', 'cautions'], 'after restart:');
 });
 
 run('الطباعة تُخرج الحقول المختارة فقط', () => {
@@ -756,7 +756,7 @@ run('نسخ القائمة كنص', () => {
 
   c.previewCart('labs'); c.pvSend('copy');
   eq(A._clip.indexOf('FBS — سكر صائم') >= 0, true, 'item in text:');
-  eq(A._clip.indexOf('• صيام ٨ ساعات') >= 0, true, 'field in text:');
+  eq(A._clip.indexOf('المتطلبات:\nصيام ٨ ساعات') >= 0, true, 'requirements footer in text:');
   eq(A._clip.indexOf('<') < 0, true, 'plain text, no markup:');
 
   c.clearCart('labs'); c._els('cb-yes').onclick();
@@ -2883,7 +2883,7 @@ run('المرسلة: كل حقل في النموذج موجود في القائ�
   // أعمدة كل قسم كما تُحفَظ فعلًا، مقابل ما تعرضه قائمة الحقول المرسلة
   const cols = {
     meds: ['scientific_name', 'category', 'concentration', 'dosage', 'duration',
-           'uses', 'cautions', 'notes', 'img'],
+           'uses', 'requirements', 'cautions', 'notes', 'img'],
     labs: ['code', 'category', 'purpose', 'requirements', 'prohibitions', 'img'],
     imaging: ['category', 'region', 'purpose', 'requirements', 'prohibitions', 'img'],
     recipes: ['category', 'type', 'purpose', 'ingredients', 'preparation', 'usage',

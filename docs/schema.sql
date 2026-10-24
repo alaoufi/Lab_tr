@@ -1,7 +1,7 @@
 -- ============================================================================
 --  دليلي — مخطط قاعدة البيانات المحلية (SQLite)
 --  ملف: /data/data/me.alaoufi.dalili/databases/dalili.db
---  إصدار المخطط: 11   (DaliliDb.DB_VERSION)
+--  إصدار المخطط: 12   (DaliliDb.DB_VERSION)
 --
 --  هذا الملف مرجع توثيقي مطابق حرفيًا لما تنشئه DaliliDb.onCreate().
 --  التطبيق ينشئ الجداول من كود جافا لا من هذا الملف — إن عدّلت أحدهما
@@ -31,6 +31,7 @@ CREATE TABLE meds (
     uses             TEXT,                      -- الاستخدامات
     cautions         TEXT,                      -- المحاذير
     notes            TEXT,                      -- ملاحظات
+    requirements     TEXT,                      -- متطلبات العلاج؛ تجمع أسفل نسخة الإرسال
     extra            TEXT,                      -- JSON: قيم الحقول التي عرّفها المستخدم
     default_include  INTEGER NOT NULL DEFAULT 0, -- ⭐ محدَّد افتراضيًا (0/1)
     sort_order       INTEGER NOT NULL DEFAULT 0
@@ -198,6 +199,7 @@ CREATE TABLE sent (
     title     TEXT,                           -- عنوان القائمة كما أُرسِلت
     who       TEXT,                           -- اسم المريض إن كُتِب
     notes     TEXT,                           -- ملاحظات اختيارية تظهر بعد جميع العناصر
+    send_options TEXT,                        -- JSON نصّي: requirements, notesColor, notesBold
     item_ids  TEXT    NOT NULL,               -- JSON: المعرّفات بالترتيب المُرسَل
     ts        INTEGER NOT NULL                -- وقت الإرسال
 );
@@ -320,6 +322,9 @@ CREATE INDEX idx_sent_ts       ON sent(ts);
 --
 --  الإصدار ١٠ → ١١
 --      ALTER TABLE sent ADD COLUMN notes TEXT;        -- ملاحظات الإرسال الاختيارية
+--  11 → 12:
+--      ALTER TABLE meds ADD COLUMN requirements TEXT;
+--      ALTER TABLE sent ADD COLUMN send_options TEXT;
 --      -- addCols تفحص وجود العمود قبل الإضافة، وتصلحه ensureSchema عند الفتح.
 --      -- الصفوف القديمة تبقى كما هي؛ NULL يُقرأ نصًا فارغًا.
 --

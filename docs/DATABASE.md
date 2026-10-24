@@ -11,7 +11,7 @@
 
 - **الكود:** `app/src/main/java/me/alaoufi/dalili/DaliliDb.java`
 - **المخطط الكامل كـSQL:** [`schema.sql`](schema.sql)
-- **إصدار المخطط الحالي:** `11`
+- **إصدار المخطط الحالي:** `12`
 
 ---
 
@@ -45,7 +45,7 @@ sort_order   INTEGER              ترتيب الإدراج
 
 | القسم | الحقول النصّية | عمود العلامة |
 |---|---|---|
-| `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes, extra | `default_include` |
+| `meds` | trade_name\*, scientific_name, category, concentration, dosage, duration, uses, cautions, notes, requirements, extra | `default_include` |
 | `labs` | category, code, name\*, purpose, requirements, prohibitions, extra | `is_common` |
 | `imaging` | category, name\*, region, purpose, requirements, prohibitions, extra | `is_common` |
 | `recipes` | category, name\*, type, purpose, ingredients, preparation, usage, dose, duration, effects, precautions, extra | `is_favorite` |
@@ -128,7 +128,7 @@ UPDATE <kind> SET category = ? WHERE category = ?
 ### `sent` — سجل الإرسالات
 
 ```sql
-sent(id, kind, title, who, notes, item_ids, ts)
+sent(id, kind, title, who, notes, send_options, item_ids, ts)
 ```
 
 آخر عشر قوائم أُرسِلت، لتُعاد بضغطة بلا إعادة تحديد. **لقطة تاريخية لا
@@ -136,7 +136,9 @@ sent(id, kind, title, who, notes, item_ids, ts)
 عنصر لاحقًا لا يغيّر ما جرى — يُستبعَد عند الاسترجاع فقط، مع إشعار.
 `DaliliDb.addSent` يقصّ السجل على عشرة في نفس المعاملة.
 
-`notes` نص اختياري خاص بالإرسال، يظهر بعد جميع العناصر في الورقة والصورة
+`send_options` نص JSON اختياري يحمل `requirements` و`notesColor` و`notesBold` للإرسال كله. تبقى السجلات السابقة صالحة دون هذه البيانات. ترقية `11 → 12` تضيف هذا العمود و`meds.requirements` دون تعديل الصفوف القديمة. تُحفظ علامة `med_req_out_done` في الإعدادات والنسخة الاحتياطية لتفعيل حقل العلاج الجديد مرة واحدة فقط، ثم احترام إخفائه لاحقًا.
+
+`notes` نص اختياري خاص بالإرسال، يظهر بعد جميع العناصر ومربع المتطلبات في الورقة والصورة
 والنص المنسوخ. الفراغ لا يظهر في المخرجات. تضيف ترقية المخطط `10 → 11`
 العمود `TEXT` القابل للقيمة الفارغة دون تغيير الصفوف السابقة؛ وتعيده
 `ensureSchema` إن كان ناقصًا. تُقرأ السجلات القديمة بلا ملاحظات، وتدخل

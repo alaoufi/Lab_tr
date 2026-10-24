@@ -130,8 +130,8 @@ buildTypes { release { signingConfig signingConfigs.release } }
 ارفع **الاثنين** مع كل إصدار توزّعه:
 
 ```gradle
-versionCode 51       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
-versionName "5.9.1"  // ما يراه المستخدم
+versionCode 52       // رقم صحيح يزيد دائمًا — أندرويد يمنع التحديث بدونه
+versionName "5.10"   // ما يراه المستخدم
 ```
 
 ---

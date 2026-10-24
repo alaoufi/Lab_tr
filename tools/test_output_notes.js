@@ -170,7 +170,7 @@ run('cannot advance from an empty selection', function () {
 run('native schema adds nullable notes safely to old records and fresh installs', function () {
   const file = path.join(__dirname, '..', 'app/src/main/java/me/alaoufi/dalili/DaliliDb.java');
   const java = fs.readFileSync(file, 'utf8');
-  assert.ok(/DB_VERSION = 11;/.test(java), 'schema version is 11');
+  assert.ok(/DB_VERSION = 12;/.test(java), 'schema version is 12');
   const create = java.match(/private void createSent\(SQLiteDatabase db\) \{([\s\S]*?)\n    \}/)[1];
   const sql = Array.from(create.matchAll(/db\.execSQL\(([\s\S]*?)\);/g), m =>
     Array.from(m[1].matchAll(/"((?:\\.|[^"\\])*)"/g), p => JSON.parse('"' + p[1] + '"')).join(''));
