@@ -25,6 +25,7 @@ var OUT_MEDS = [
   ['dosage', 'الجرعات'],
   ['duration', 'مدة الاستخدام'],
   ['uses', 'الاستخدامات'],
+  ['requirements', 'متطلبات العلاج'],
   ['cautions', 'المحاذير'],
   ['notes', 'ملاحظات'],
   ['img', 'الصورة']
@@ -61,7 +62,7 @@ var OUT_RECIPES = [
 /* المؤشَّر افتراضيًا على تثبيتٍ جديد. الصورة ضمنه في الجميع: من يضع صورةً
    لعنصر يريدها أن تصل، ولو لم يفتح صفحة الحقول. */
 var OUT_DEF = {
-  meds: ['dosage', 'uses', 'img'],
+  meds: ['dosage', 'uses', 'requirements', 'img'],
   labs: ['code', 'requirements', 'img'],
   imaging: ['region', 'requirements', 'img'],
   recipes: ['ingredients', 'preparation', 'dose', 'img']
@@ -186,6 +187,7 @@ function applyData(data) {
   var hasOut = !!(data.out && Object.keys(data.out).length);
   DB.fields_out_done = Number(data.fields_out_done || st.fields_out_done || (hasOut ? 1 : 0)) || 0;
   DB.img_out_done = Number(data.img_out_done || st.img_out_done || (hasOut ? 1 : 0)) || 0;
+  DB.med_req_out_done = Number(data.med_req_out_done || st.med_req_out_done || (hasOut ? 1 : 0)) || 0;
   DB.dense = Number(data.dense || st.dense || 0) || 0;
   DB.mode = (data.mode || st.mode) === 'edit' ? 'edit' : 'send';   // الوضع المحفوظ
   DB.showTitle = Number(data.showTitle || st.showTitle || 0) || 0;   // عنوان الورقة
@@ -232,7 +234,7 @@ function snapshot() {
             // علاماتُ الزرع والترقيات تُحفَظ مع البيانات: استعادةٌ بلا
             // علاماتها تُعيد تشغيل ترقياتٍ قديمة فوق قرارات صاحبها
             cats_seeded: DB.cats_seeded, fields_out_done: DB.fields_out_done,
-            img_out_done: DB.img_out_done,
+            img_out_done: DB.img_out_done, med_req_out_done: DB.med_req_out_done,
             dir_seeded: DB.dir_seeded, dir_geo: DB.dir_geo, dir_web: DB.dir_web, dir_spec: DB.dir_spec, compact: DB.compact,
             welcomed: DB.welcomed,
             updAt: DB.updAt, updSnoozeTo: DB.updSnoozeTo, updCheckedAt: DB.updCheckedAt, updTriedAt: DB.updTriedAt,
@@ -431,7 +433,8 @@ var Store = {
         && NDB.setSetting('dir_web', String(DB.dir_web || 0))
         && NDB.setSetting('dir_spec', String(DB.dir_spec || 0))
         && NDB.setSetting('fields_out_done', String(DB.fields_out_done || 0))
-        && NDB.setSetting('img_out_done', String(DB.img_out_done || 0))) || dbFail();
+        && NDB.setSetting('img_out_done', String(DB.img_out_done || 0))
+        && NDB.setSetting('med_req_out_done', String(DB.med_req_out_done || 0))) || dbFail();
     } catch (e) { return dbFail(); }
   },
   setUpdAt: function () {
@@ -474,6 +477,10 @@ var Store = {
   setImgOutDone: function () {
     if (!NDB) { blobSave(); return true; }
     try { return NDB.setSetting('img_out_done', '1') || dbFail(); } catch (e) { return dbFail(); }
+  },
+  setMedReqOutDone: function () {
+    if (!NDB) { blobSave(); return true; }
+    try { return NDB.setSetting('med_req_out_done', '1') || dbFail(); } catch (e) { return dbFail(); }
   },
   setCatOrder: function (ids) {
     if (!NDB) { blobSave(); return true; }
@@ -789,6 +796,48 @@ async function sha256(text) {
    الإعدادات، ولمن دخلها من الرئيسية إلى الرئيسية. */
 var NAV = ['home'];
 function curPage() { return NAV[NAV.length - 1]; }
+/* سياق المهمة من المسار نفسه، حتى يستعيد الرجوع أدوات الصفحة الصحيحة. */
+function sectionContext(p) {
+  if (p === 'pv' && PV) return { kind: PV.kind, tab: 'send' };
+  if (KINDS.indexOf(p) >= 0) return { kind: p, tab: mode() === 'edit' ? 'manual' : 'send' };
+  var a = String(p).split(':'), tabs = {
+    manual: 'manual', send: 'send', lib: 'library', sort: 'organize',
+    cat: 'organize', fld: 'organize', grp: 'organize', view: 'manual', 'view-send': 'send'
+  };
+  return tabs[a[0]] && KINDS.indexOf(a[1]) >= 0 ? { kind: a[1], tab: tabs[a[0]] } : null;
+}
+window.goSectionTab = function (kind, tab) {
+  var prefixes = { manual: 'manual:', library: 'lib:', organize: 'sort:', send: 'send:' };
+  if (KINDS.indexOf(kind) < 0 || !prefixes[tab]) return;
+  var target = prefixes[tab] + kind, current = sectionContext(curPage());
+  if (current && current.kind === kind) {
+    // تبديل التبويبات لا يكدّس صفحات متطابقة في زر الرجوع.
+    while (NAV.length > 1) {
+      var previous = sectionContext(NAV[NAV.length - 2]);
+      if (!previous || previous.kind !== kind) break;
+      NAV.pop();
+    }
+    NAV[NAV.length - 1] = target;
+  } else NAV.push(target);
+  window.scrollTo(0, 0);
+  render();
+};
+function renderSectionTabs(p) {
+  var context = sectionContext(p), bar = $('section-tabs');
+  if (!bar) return;
+  bar.style.display = context ? '' : 'none';
+  if (!context) { h('section-tabs', ''); return; }
+  var tabs = [
+    ['manual', '✎', 'إضافة وتعديل'], ['library', '▤', 'من المكتبة'],
+    ['organize', '↕', 'الترتيب والإدارة'], ['send', '↗', 'نسخة الإرسال']
+  ];
+  h('section-tabs', tabs.map(function (t) {
+    return '<button class="workflow-tab' + (context.tab === t[0] ? ' on' : '') + '"'
+      + (context.tab === t[0] ? ' aria-current="page"' : '')
+      + ' onclick="goSectionTab(\'' + context.kind + '\',\'' + t[0] + '\')">'
+      + '<span class="workflow-icon" aria-hidden="true">' + t[1] + '</span><span>' + t[2] + '</span></button>';
+  }).join(''));
+}
 window.goPage = function (p) {
   if (curPage() !== p) NAV.push(p);
   window.scrollTo(0, 0);
@@ -830,12 +879,16 @@ var PAGES = {
 /** عنوان صفحات المجموعات يُحسَب لأنه يتضمّن اسم القسم أو اسم المجموعة. */
 function pageMeta(p) {
   if (PAGES[p]) return PAGES[p];
+  if (p.indexOf('manual:') === 0 || p.indexOf('send:') === 0) {
+    var section = kindLbl(p.split(':')[1]);
+    return { icon: section.icon, title: section.title };
+  }
   if (p === 'secs') return { icon: '🗂️', title: 'إدارة الأقسام' };
   if (p === 'sent') return { icon: '🕘', title: 'سجل الإرسالات' };
   if (p === 'imgs') return { icon: '🖼️', title: 'مكتبة الصور' };
   if (p === 'diag') return { icon: '🩺', title: 'فحص قاعدة البيانات' };
   if (p === 'welcome') return { icon: '♻️', title: 'استعادة بياناتك' };
-  if (p.indexOf('view:') === 0) {
+  if (p.indexOf('view:') === 0 || p.indexOf('view-send:') === 0) {
     var vk = p.split(':')[1];
     return { icon: '👁️', title: kindLbl(vk).title };
   }
@@ -873,6 +926,7 @@ async function boot() {
   backfillDirSpec();
   backfillFieldOut();
   backfillImgOut();
+  backfillMedRequirementsOut();
   // عدّاد التذكير يبدأ من أول تشغيل: النسخة التي بين يديك هي آخر ما فحصت
   if (!DB.updAt) { DB.updAt = Date.now(); Store.setUpdAt(); }
   updAutoCheck();
@@ -1481,7 +1535,11 @@ function libSyncMine() {
 function renderLibraryPage(kind) {
   LIB_KIND = kind;
   var lib = libList();
-  if (!lib.length) { h('page', emptyBox('📚', 'المكتبة غير متوفرة', 'ملف library.js مفقود')); return; }
+  if (!lib.length) {
+    h('page', emptyBox('📚', 'لا توجد مكتبة جاهزة لهذا القسم', 'يمكنك إضافة عناصرك يدويًا وحفظها في هذا القسم')
+      + '<button class="btn primary full" onclick="goSectionTab(\'' + kind + '\',\'manual\')">＋ إضافة وتعديل</button>');
+    return;
+  }
   LIB_SEL = {};
   libSyncMine();
   h('page', '<div class="lib-bar">'
@@ -1815,6 +1873,8 @@ function render() {
   if (st) st.style.display = (p === 'settings') ? 'none' : '';
   h('hdr-title', esc(meta.title));
   h('hdr-icon', meta.icon);
+  renderSectionTabs(p);
+  if (p.indexOf('manual:') === 0 || p.indexOf('send:') === 0) p = p.split(':')[1];
 
   if (p === 'meds') renderMeds();
   else if (p === 'labs') renderLabs();
@@ -1826,9 +1886,9 @@ function render() {
   else if (p === 'imgs') renderImagesPage();
   else if (p === 'diag') renderDiag();
   else if (p === 'welcome') renderWelcome();
-  else if (p.indexOf('view:') === 0) {
+  else if (p.indexOf('view:') === 0 || p.indexOf('view-send:') === 0) {
     var vp = p.split(':');
-    renderViewPage(vp[1], vp.slice(2).join(':'));
+    renderViewPage(vp[1], vp.slice(2).join(':'), vp[0] === 'view-send');
   }
   else if (p.indexOf('sort:') === 0) renderSortPage(p.slice(5));
   else if (p === 'pv') renderPreview();
@@ -1845,7 +1905,7 @@ function render() {
 
 /* ── الصفحة الرئيسية ── */
 function homeCard(page, icon, title, sub, extra) {
-  return '<button class="hcard' + (extra || '') + '" onclick="goPage(\'' + page + '\')">'
+  return '<button class="hcard' + (extra || '') + '" onclick="goSectionTab(\'' + page + '\',\'send\')">'
     + '<span class="hci">' + icon + '</span>'
     + '<span class="hct">' + esc(title) + '</span>'
     + '<span class="hcs">' + esc(sub) + '</span></button>';
@@ -1866,15 +1926,14 @@ function renderHome() {
 
   html += updBanner() + survivalBanner();
 
-  // الوضع ظاهرٌ من الرئيسية أيضًا: يُعرَف قبل الدخول لا بعده
-  html += modeBar();
+  html += '<div class="section-intro"><b>اختر القسم</b><span>ثم اختر مهمتك من التبويبات أعلى الصفحة</span></div>';
 
   var cart = KINDS.reduce(function (a, k) { return a + DB.cart[k].length; }, 0);
   if (cart) {
     html += '<div class="hbar">📝 المحدد: ' + countWord(cart, 'عنصر واحد', 'عنصران', 'عناصر', 'عنصرًا')
       + KINDS.map(function (k) {
         return DB.cart[k].length
-          ? '<button class="btn white sm" onclick="goPage(\'' + k + '\')">' + kindLbl(k).title + ' (' + DB.cart[k].length + ')</button>'
+          ? '<button class="btn white sm" onclick="goSectionTab(\'' + k + '\',\'send\')">' + kindLbl(k).title + ' (' + DB.cart[k].length + ')</button>'
           : '';
       }).join('') + '</div>';
   }
@@ -1985,6 +2044,8 @@ function afterSave(kind, again, id, ok) {
     toast('⚠️ لم يُحفَظ — راجِع 🩺 فحص قاعدة البيانات', 'er');
     return;
   }
+  // التقاط المجموعة يخص إنشاء عنصر؛ إلغاء إضافة سابقة لا يغيّر وجهة تعديل قائم.
+  if (id) GRP_CATCH = null;
   var caught = grpCatch(kind);    // عنصرٌ أُنشئ لأجل مجموعة يدخلها فورًا
   if (again && !id) {
     render();
@@ -1996,6 +2057,10 @@ function afterSave(kind, again, id, ok) {
   if (!caught) toast('✅ تم الحفظ');
   // العودة لصفحة المجموعة لا لصفحة القسم حين كان الإنشاء لأجلها
   var back = GRP_CATCH ? 'grp:' + GRP_CATCH.kind + ':' + GRP_CATCH.id : kind;
+  var context = sectionContext(curPage());
+  // تعديل عنصر قائم يعيد رسم الصفحة الحالية ويحفظ مسار الرجوع وتحديد الإرسال.
+  if (id && !GRP_CATCH && context && context.kind === kind) { render(); return; }
+  if (!GRP_CATCH && context && context.kind === kind && context.tab === 'manual') back = 'manual:' + kind;
   GRP_CATCH = null;
   if (curPage() !== back) goPage(back); else render();
 }
@@ -2011,7 +2076,7 @@ function noHit(kind, q) {
     return '<div class="empty"><div class="ei">🔎</div>'
       + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
       + '<button class="btn primary full" style="margin-top:11px" onclick="setMode(\'edit\')">'
-      + '📝 انتقل لوضع الإدخال لإضافته</button></div>';
+      + '＋ افتح الإضافة والتعديل لإضافته</button></div>';
   }
   return '<div class="empty"><div class="ei">🔎</div>'
     + '<div class="et">لا نتيجة لـ«' + esc(q) + '»</div>'
@@ -2526,6 +2591,16 @@ function backfillImgOut() {
   });
   DB.img_out_done = 1;
   Store.setImgOutDone();
+}
+/** حقل العلاج جديد في 5.10؛ يُفعّل مرة فقط، ثم نحترم إخفاء المستخدم له. */
+function backfillMedRequirementsOut() {
+  if (DB.med_req_out_done) return;
+  if (DB.out.meds.indexOf('requirements') < 0) {
+    DB.out.meds.push('requirements');
+    if (Store.setOut('meds') === false) return;
+  }
+  DB.med_req_out_done = 1;
+  if (Store.setMedReqOutDone() === false) DB.med_req_out_done = 0;
 }
 function backfillFieldOut() {
   if (DB.fields_out_done) return;
@@ -3300,6 +3375,7 @@ var MED_FLD = [
   ['concentration', 'التركيز', false, 1],
   ['duration', 'مدة الاستخدام', false, 1],
   ['uses', 'الاستخدامات', true],
+  ['requirements', 'متطلبات العلاج (اختياري)', true],
   ['cautions', 'المحاذير', true, 1],
   ['notes', 'ملاحظات', true, 1]
 ];
@@ -3328,7 +3404,7 @@ function medsList(q) {
   });
   if (!list.length) {
     return q ? noHit('meds', q)
-      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
+      : emptyOrFailed('meds', '💊', 'لا توجد علاجات محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(medRow).join('');
   var out = '';
@@ -3404,11 +3480,16 @@ function orderOf(kind, ids) {
    **ويُتحقَّق من كتابتها بقراءتها** قبل أن يُقال «حُفظ». */
 function renderSortPage(kind) {
   var L = kindLbl(kind), all = coll(kind);
+  var tools = '<div class="section-intro"><b>الترتيب والإدارة</b><span>نظّم الدليل المحفوظ. ترتيب نسخة واحدة يمكن تغييره أثناء تجهيز الإرسال.</span></div>'
+    + '<div class="management-actions">'
+    + '<button class="btn" onclick="goPage(\'cat:' + kind + '\')">🏷️ التصنيفات</button>'
+    + '<button class="btn" onclick="goPage(\'fld:' + kind + '\')">🧩 حقول الإرسال</button>'
+    + '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات</button></div>';
   if (all.length < 2) {
-    h('page', emptyBox('↕️', 'لا شيء يُرتَّب', 'أضِف عنصرين على الأقل'));
+    h('page', tools + emptyBox('↕️', 'لا شيء يُرتَّب', 'أضِف عنصرين على الأقل لترتيبهما'));
     return;
   }
-  var html = '<div class="rec-note" style="margin-bottom:10px">'
+  var html = tools + '<div class="rec-note" style="margin-bottom:10px">'
     + '✅ <b>كل حركة تُحفَظ فورًا</b> — ويُتحقَّق من حفظها في قاعدة البيانات.'
     + ' وهذا الترتيب هو المعتمد في السلة والورقة وPDF والصورة والنصّ المنسوخ.</div>';
 
@@ -3457,10 +3538,22 @@ var MODES = {
   send: { icon: '📤', label: 'إرسال', hint: 'أشِّر ما تريد إرساله' },
   edit: { icon: '📝', label: 'إدخال وتعديل', hint: 'أضِف عناصرك وعدّلها ونظّمها' }
 };
-function mode() { return DB.mode === 'edit' ? 'edit' : 'send'; }
+function mode() {
+  var p = curPage();
+  if (p.indexOf('manual:') === 0) return 'edit';
+  if (p.indexOf('send:') === 0 || p.indexOf('view-send:') === 0) return 'send';
+  return DB.mode === 'edit' ? 'edit' : 'send';
+}
 window.setMode = function (m) {
-  if (mode() === m) return;
-  DB.mode = m; Store.setMode();
+  if (!MODES[m]) return;
+  var same = mode() === m;
+  if (DB.mode !== m) { DB.mode = m; Store.setMode(); }
+  if (same) return;
+  var p = curPage();
+  if (p.indexOf('manual:') === 0 || p.indexOf('send:') === 0) {
+    goSectionTab(p.split(':')[1], m === 'edit' ? 'manual' : 'send');
+    return;
+  }
   render();
   toast(MODES[m].icon + ' وضع ' + MODES[m].label);
 };
@@ -3494,28 +3587,25 @@ function editTools(kind) {
  */
 function sectionBar(kind, q, placeholder, addCall) {
   var ng = groupsOf(kind).length;
-  var html = modeBar()
+  var editing = mode() === 'edit';
+  var html = '<div class="section-intro"><b>' + (editing ? 'إضافة وتعديل' : '١ · اختيار عناصر نسخة الإرسال') + '</b><span>'
+    + (editing ? 'أضِف عناصرك وعدّلها من زر «تعديل البيانات» أسفل كل عنصر.' : 'أشِّر ما تريد إرساله، ثم انتقل إلى الاسم والملاحظات والمعاينة.') + '</span></div>'
     + '<div class="toolbar">'
     + '<input id="srch" class="srch-inp" placeholder="' + esc(placeholder) + '" value="' + esc(q)
     + '" oninput="secSearch(\'' + kind + '\')">';
   if (mode() === 'edit') {
     html += '<button class="btn primary" onclick="' + addCall + '">➕ إضافة عنصر</button></div>'
-      + editTools(kind);
+      + '<div class="list-options">' + compactBtn() + '</div>';
   } else {
     html += '<button class="btn" onclick="goPage(\'grp:' + kind + '\')">📁 المجموعات'
-      + (ng ? ' ' + ng : '') + '</button></div>';
-  }
-  // الترتيب في الوضعين: هو حاجةٌ قائمة سواء كنت تُدخِل أو تُرسِل
-  if (coll(kind).length > 1) {
-    html += '<button class="btn full sort-entry" onclick="goPage(\'sort:' + kind + '\')">'
-      + '↕️ ترتيب ' + esc(kindLbl(kind).title) + '</button>';
+      + (ng ? ' ' + ng : '') + '</button>' + compactBtn() + '</div>';
   }
   return html;
 }
 /**
  * بطاقة عنصر — واحدة لكل الأقسام.
- * في الإرسال: مربع تأشير واسمٌ وحسب، فالصفّ كلّه يؤشّر.
- * في الإدخال: تعديل وتكرار وحذف، بلا مربع تأشير يشوّش.
+ * زر تعديل البيانات مكتوب في كل وضع، مستقل عن الضغط لتحديد الإرسال.
+ * التكرار والحذف يظلان في الإضافة والتعديل وحدها.
  */
 /**
  * بطاقة العنصر. في وضع «الأسماء فقط» تُطوى تفاصيلها ويبقى اسمها —
@@ -3539,12 +3629,10 @@ function itemCard(kind, o, body, editCall, delCall) {
     + '</div>'
     + (slim ? '' : thumb(o))
     + (sending
-        ? (slim ? '<button class="ic" onclick="goPage(\'view:' + kind + ':' + o.id + '\')" title="عرض">👁️</button>' : '')
-        : orderBtns(kind, o)
-          + '<button class="ic" onclick="' + editCall + '">✏️</button>'
-          + (slim ? '' : '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
+        ? (slim ? '<button class="ic" onclick="goPage(\'view-send:' + kind + ':' + o.id + '\')" title="عرض">👁️</button>' : '')
+        : (slim ? '' : '<button class="ic" onclick="dupItem(\'' + kind + '\',\'' + o.id + '\')" title="تكرار">⧉</button>'
               + '<button class="ic" onclick="' + delCall + '">🗑️</button>'))
-    + '</div></div>';
+    + '</div><div class="item-actions"><button class="btn sm" onclick="' + editCall + '">✏️ تعديل البيانات</button></div></div>';
 }
 /* ── 👁️ صفحة العرض ───────────────────────────────────────────────────
  * عرضٌ بلا تعديل: كل ما في العنصر مقروءًا، وأزرار التعديل والتكرار
@@ -3589,7 +3677,7 @@ function viewLines(kind, o) {
   });
   return out.join('');
 }
-function renderViewPage(kind, id) {
+function renderViewPage(kind, id, sending) {
   var o = coll(kind) && coll(kind).find(function (x) { return x.id === id; });
   if (!o) {
     h('page', '<div class="empty"><div class="ei">🔎</div>'
@@ -3605,13 +3693,13 @@ function renderViewPage(kind, id) {
     + (o.img && imgByCode(o.img) ? '<img class="vpic" src="' + imgData(o.img) + '" alt="">' : '')
     + (lines || '<div class="muted">لا شيء مكتوب في حقوله بعد.</div>')
     + '</div>'
-    + '<button class="btn full ' + (on ? '' : 'primary') + '" onclick="toggleCart(\'' + kind + '\',\'' + id + '\');render()">'
+    + '<div class="vacts"><button class="btn" onclick="editOpen(\'' + kind + '\',\'' + id + '\')">✏️ تعديل البيانات</button></div>'
+    + (sending ? '<button class="btn full ' + (on ? '' : 'primary') + '" onclick="toggleCart(\'' + kind + '\',\'' + id + '\');render()">'
     + (on ? '✅ محدَّد للإرسال — اضغط لإلغائه' : '📤 أضِفه لما سأرسله') + '</button>'
-    + '<div class="vacts">'
-    + '<button class="btn" onclick="editOpen(\'' + kind + '\',\'' + id + '\')">✏️ تعديل</button>'
+    : '<div class="vacts">'
     + '<button class="btn" onclick="dupItem(\'' + kind + '\',\'' + id + '\')">⧉ تكرار</button>'
     + '<button class="btn" onclick="delOpen(\'' + kind + '\',\'' + id + '\')">🗑️ حذف</button>'
-    + '</div>');
+    + '</div>'));
 }
 /** تبديل «الأسماء فقط» — إعدادٌ واحد يسري على كل الأقسام. */
 window.toggleCompact = function () {
@@ -3764,7 +3852,7 @@ function labsList(q) {
   });
   if (!list.length) {
     return q ? noHit('labs', q)
-      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
+      : emptyOrFailed('labs', '🧪', 'لا توجد تحاليل محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(labRow).join('');
   var out = '';
@@ -3789,8 +3877,6 @@ function accBlock(title, inner, open, pick, kind, cat) {
   if (mode() === 'send') {
     tools = pick ? '<button class="acc-pick" onclick="event.stopPropagation();event.preventDefault();'
       + pick + '" title="تحديد الكل">☑️</button>' : '';
-  } else if (kind && cat) {
-    tools = catMoveBtns(kind, cat);
   }
   return '<details class="acc"' + (open ? ' open' : '') + '><summary>' + esc(title)
     + tools + '<span class="arrow">▾</span></summary><div class="acc-b">' + inner + '</div></details>';
@@ -3939,7 +4025,7 @@ function imagingList(q) {
   });
   if (!list.length) {
     return q ? noHit('imaging', q)
-      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'أضِف واحدًا، أو استورد من المكتبة الجاهزة في ⚙️');
+      : emptyOrFailed('imaging', '📷', 'لا توجد فحوصات محفوظة', 'ابدأ من تبويب «إضافة وتعديل» أو «من المكتبة»');
   }
   if (q) return list.map(imgRow).join('');
   var out = '';
@@ -4140,7 +4226,7 @@ function emptyOrFailed(kind, icon, title, hint) {
   if (!kindFailed(kind)) {
     if (mode() === 'edit') return emptyBox(icon, title, hint);
     return emptyBox(icon, title, hint)
-      + '<button class="btn full primary" onclick="setMode(\'edit\')">📝 انتقل لوضع الإدخال وابدأ</button>';
+      + '<button class="btn full primary" onclick="setMode(\'edit\')">＋ افتح الإضافة والتعديل</button>';
   }
   return '<div class="rec-note" style="margin:12px 0">'
     + '<b>⚠️ هذا القسم ليس فارغًا — تعذّرت قراءته.</b><br>'
@@ -4308,20 +4394,11 @@ function renderDrawer() {
 /** قسمٌ في القائمة: رأسٌ يطوي ويفتح، وتحته أعماله الأربعة مسمّاة. */
 function drawerSection(k) {
   var L = kindLbl(k), n = coll(k).length;
-  var hasLib = ((window.LIBRARY || {})[k] || []).length > 0;
-  return '<details class="dws"><summary class="dwi">'
+  return '<button class="dwi" onclick="closeDrawer();goSectionTab(\'' + k + '\',\'send\')">'
     + '<span class="dwi-i">' + L.icon + '</span>'
     + '<span class="dwi-t">' + esc(L.title) + '</span>'
     + '<span class="dwi-n">' + (n || '—') + '</span>'
-    + '<span class="dws-a">▾</span></summary><div class="dws-b">'
-    + '<button class="dwa" onclick="dwGo(\'' + k + '\',\'edit\')">📝 إضافة وتعديل العناصر</button>'
-    + (hasLib
-        ? '<button class="dwa sub" onclick="dwLib(\'' + k + '\')">📚 إضافة من المكتبة الجاهزة</button>'
-        : '')
-    + '<button class="dwa" onclick="dwGo(\'' + k + '\',\'send\')">📤 عرض وإرسال</button>'
-    + '<button class="dwa" onclick="drawerGo(\'sort:' + k + '\')">↕️ ترتيب العناصر</button>'
-    + '<button class="dwa" onclick="drawerGo(\'fld:' + k + '\')">🖨️ الحقول المرسلة وترتيبها</button>'
-    + '</div></details>';
+    + '</button>';
 }
 /** يدخل القسم في الوضع المطلوب — فيرى شكل الإرسال وحده أو أدوات الإدخال. */
 window.dwGo = function (kind, m) { setMode(m); closeDrawer(); goPage(kind); };
@@ -4672,12 +4749,13 @@ function dirOf(t) {
   return /[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/.test(m[0])
     ? 'rtl' : 'ltr';
 }
-function outLines(kind, o) {
+function outLines(kind, o, send) {
   var defs = outDefs(kind);
   var merged = kind === 'meds' ? 'scientific_name' : kind === 'labs' ? 'code' : '';
   var sel = DB.out[kind], lines = [];
   defs.forEach(function (f) {
     if (f[0] === merged || sel.indexOf(f[0]) < 0) return;
+    if (send && f[0] === 'requirements') return; // المتطلبات في مربع واحد أسفل القائمة
     var v = String(outValue(o, f[0])).trim();
     if (!v) return;
     var line = { l: f[1], v: v };
@@ -4704,13 +4782,13 @@ function plainText(v) {
     return '[صورة: ' + (im.name || im.code) + ']';
   }).join('');
 }
-function rowsFor(kind, ids) {
+function rowsFor(kind, ids, send) {
   var src = coll(kind);
   return ids.map(function (id, i) {
     var o = src.find(function (x) { return x.id === id; });
     // الصورة حقلٌ كغيره: لا تخرج إلا إن كانت ضمن الحقول المرسلة
     var show = (DB.out[kind] || []).indexOf('img') >= 0;
-    return o ? { n: i + 1, title: outTitle(kind, o), lines: outLines(kind, o),
+    return o ? { n: i + 1, title: outTitle(kind, o), lines: outLines(kind, o, send),
                  img: (show && o.img && imgByCode(o.img)) ? o.img : '' } : null;
   }).filter(Boolean);
 }
@@ -4721,8 +4799,8 @@ function cartRows(kind) { return rowsFor(kind, DB.cart[kind]); }
  * عربي من اليمين ورقمُه عن يمينه — وسطور الحقول تبقى عربية لأن عناوينها
  * عربية، مهما كانت لغة الاسم فوقها.
  */
-function itemsHtml(kind, ids) {
-  return rowsFor(kind, ids).map(function (r) {
+function itemsHtml(kind, ids, options) {
+  return rowsFor(kind, ids, !!options).map(function (r) {
     return '<div class="rx-item">'
       + '<div class="rx-name" dir="auto"><span class="rx-n">' + r.n + '.</span>'
       + '<span class="rx-t">' + esc(r.title) + '</span></div>'
@@ -4738,6 +4816,44 @@ function itemsHtml(kind, ids) {
   }).join('');
 }
 function cartItemsHtml(kind) { return itemsHtml(kind, DB.cart[kind]); }
+
+/** تطابق نصّي فقط؛ لا ندمج تعليمات مختلفة في الأرقام أو الصياغة. */
+function uniqueRequirements(text) {
+  var seen = Object.create(null), lines = [];
+  String(text || '').split(/\r\n|\r|\n/).forEach(function (line) {
+    line = line.trim();
+    var key = line.replace(/[ \t\u00a0]+/g, ' ');
+    if (!key || seen[key]) return;
+    seen[key] = true; lines.push(line);
+  });
+  return lines.join('\n');
+}
+function requirementsFor(kind, ids) {
+  if ((DB.out[kind] || []).indexOf('requirements') < 0) return '';
+  return uniqueRequirements(ids.map(function (id) {
+    var o = itemById(kind, id);
+    return o && o.requirements || '';
+  }).join('\n'));
+}
+function readSendOptions(options) {
+  if (typeof options === 'string') {
+    try { options = JSON.parse(options); } catch (e) { options = null; }
+  }
+  return options && typeof options === 'object' && !Array.isArray(options) ? options : {};
+}
+/** لا نقبل HTML أو CSS من السجل أو النسخة الاحتياطية. */
+function sendOptions(kind, ids, options) {
+  var o = readSendOptions(options);
+  return {
+    requirements: uniqueRequirements(typeof o.requirements === 'string' ? o.requirements : requirementsFor(kind, ids)),
+    notesColor: typeof o.notesColor === 'string' && /^#[0-9a-f]{6}$/i.test(o.notesColor) ? o.notesColor.toLowerCase() : '#0f172a',
+    notesBold: o.notesBold === true
+  };
+}
+function noteStyle(options) {
+  var o = sendOptions('', [], options);
+  return 'color:' + o.notesColor + ';font-weight:' + (o.notesBold ? 'bold' : 'normal');
+}
 
 /** الترويسة اختيارية: لا تظهر إطلاقًا ما لم يملأ المستخدم سطرًا منها. */
 function headerHtml() {
@@ -4768,7 +4884,7 @@ function printCss(scope, dense) {
     // في المعاينة لا نضبط الهوامش: بطاقة `.paper` تحتفظ بهوامشها في الواجهة.
     + body + '{' + (scope ? '' : 'margin:0;')
     + 'color:#0f172a;font-size:' + F.base + ';line-height:' + F.lh + ';-webkit-print-color-adjust:exact}'
-    + s + 'h1{font-size:' + F.h1 + ';color:#0f766e;margin:0}'
+    + s + 'h1{font-size:' + F.h1 + ';color:#0f766e;margin:0;text-align:center}'
     // الاسم والتاريخ طرفا سطرٍ واحد، بينهما فراغ لا فاصلة
     + s + '.sub{color:#64748b;font-size:8.5pt;margin:2px 0 8px;padding-bottom:5px;'
     + 'border-bottom:1.5pt solid #0f766e;display:flex;justify-content:space-between;align-items:baseline}'
@@ -4788,6 +4904,12 @@ function printCss(scope, dense) {
     // الموقع وصلة: تُضغَط في الـPDF، وتُقرأ عنوانًا كاملًا على الورق المطبوع
     + s + '.rx-u{color:#0f766e;text-decoration:underline;word-break:break-all}'
     + s + '.rx-l{color:#475569;font-weight:bold}'
+    + s + '.rx-requirements{border:0.8pt solid #94a3b8;border-radius:5pt;padding:7pt;'
+    + 'margin-top:9pt;font-size:' + F.line + ';overflow-wrap:anywhere}'
+    + s + '.rx-req-title{font-weight:bold;color:#0f766e;margin-bottom:4pt;page-break-after:avoid}'
+    + s + '.rx-req-text{white-space:pre-wrap}'
+    + s + '.rx-notes{white-space:pre-wrap;overflow-wrap:anywhere;margin-top:10pt;'
+    + 'padding-top:6pt;border-top:0.6pt solid #cbd5e1;font-size:' + F.line + '}'
     + s + '.rx-pic{display:block;max-width:' + (dense ? '38mm' : '52mm')
     + ';max-height:' + (dense ? '30mm' : '42mm') + ';margin:2pt 0;border:0.4pt solid #cbd5e1;border-radius:3pt}'
     + s + '.lh{border-bottom:1.5pt solid #0f766e;padding-bottom:5pt;margin-bottom:7pt}'
@@ -4804,29 +4926,35 @@ function printCss(scope, dense) {
  * — فحذفُه يترك الورقة لاسم المريض وتاريخه وحدهما. ومن أراده كتبه بنفسه
  * في حقل الاسم. ويبقى العنوان مستعمَلًا في اسم الملف وفي سجل الإرسالات.
  */
-function docBody(title, body, who) {
+function docBody(title, body, who, notes, options) {
   // الاسم طرفًا والتاريخ الطرف الآخر — لا ملتصقين بفاصلة بينهما
   var head = (DB.showTitle ? '<h1>' + esc(title) + '</h1>' : '')
     + '<div class="sub' + (DB.showTitle ? '' : ' solo') + '">'
     + '<span class="who">' + (who ? esc(who) : '') + '</span>'
     + '<span class="when">' + new Date().toLocaleDateString('ar-SA-u-nu-latn') + '</span></div>';
-  return headerHtml() + head + body;
+  notes = String(notes || '').trim();
+  var opt = sendOptions('', [], options);
+  return headerHtml() + head + body
+    + (opt.requirements ? '<div class="rx-requirements"><div class="rx-req-title">المتطلبات</div>'
+      + '<div class="rx-req-text" dir="auto">' + textHtml(opt.requirements) + '</div></div>' : '')
+    + (notes ? '<div class="rx-notes" dir="auto" style="' + noteStyle(opt) + '">' + esc(notes) + '</div>' : '');
 }
 /** صفحة الطباعة: تخطيط مضغوط الأسطر يتّسع لأكبر عدد في الصفحة بلا ازدحام. */
-function printDoc(title, body, who) {
+function printDoc(title, body, who, notes, options) {
   return '<!DOCTYPE html><html lang="ar" dir="rtl"><head><meta charset="utf-8">'
     + '<meta name="viewport" content="width=device-width,initial-scale=1"><title>' + esc(title) + '</title>'
     + '<style>' + printCss('', DB.dense) + '</style></head><body>'
-    + docBody(title, body, who) + '</body></html>';
+    + docBody(title, body, who, notes, options) + '</body></html>';
 }
 /** اسم الملف وعنوان مهمّة الطباعة: العنوان ومعه اسم المريض إن كُتِب. */
 function outName(title, who) {
   return String(title || 'دليلي') + (who ? ' - ' + who : '');
 }
-window.printList = function (kind, ids, title, who) {
-  var body = itemsHtml(kind, ids);
+window.printList = function (kind, ids, title, who, notes, options) {
+  options = sendOptions(kind, ids, options);
+  var body = itemsHtml(kind, ids, options);
   if (!body) return toast('القائمة فارغة', 'er');
-  var html = printDoc(title, body, who);
+  var html = printDoc(title, body, who, notes, options);
   title = outName(title, who);
 
   // داخل التطبيق: window.open لا يعمل في WebView إطلاقًا، فنمرّر الصفحة
@@ -4850,6 +4978,20 @@ window.printList = function (kind, ids, title, who) {
 function wrapText(ctx, text, maxW) {
   var words = String(text).split(/[ \t]+/), out = [], cur = '';
   words.forEach(function (w) {
+    // الرابط أو المعرّف الطويل قد يخلو من المسافات: نقسمه دون إسقاط حروفه.
+    if (ctx.measureText(w).width > maxW) {
+      if (cur) { out.push(cur); cur = ''; }
+      for (var i = 0; i < w.length; i++) {
+        var ch = w.charAt(i), code = w.charCodeAt(i), next = w.charCodeAt(i + 1);
+        // الرمز خارج BMP حرف واحد ولو شغل وحدتي UTF-16، فلا نفصله بين سطرين.
+        if (code >= 0xD800 && code <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) {
+          ch += w.charAt(++i);
+        }
+        if (cur && ctx.measureText(cur + ch).width > maxW) { out.push(cur); cur = ch; }
+        else cur += ch;
+      }
+      return;
+    }
     var t = cur ? cur + ' ' + w : w;
     if (!cur || ctx.measureText(t).width <= maxW) cur = t;
     else { out.push(cur); cur = w; }
@@ -4875,15 +5017,18 @@ function cartTitle(kind, withIcon) {
   return withIcon ? L.icon + ' ' + t : t;
 }
 /** رموز الصور المستعملة في قائمة: صورة العنصر وما داخل نصوصه. */
-function imgsUsed(kind, ids) {
+function imgsUsed(kind, ids, options) {
   var out = [];
-  rowsFor(kind, ids).forEach(function (r) {
+  rowsFor(kind, ids, true).forEach(function (r) {
     if (r.img && out.indexOf(r.img) < 0) out.push(r.img);
     r.lines.forEach(function (x) {
       segsOf(x.v).forEach(function (g) {
         if (g.t === 'img' && out.indexOf(g.code) < 0) out.push(g.code);
       });
     });
+  });
+  segsOf(sendOptions(kind, ids, options).requirements).forEach(function (g) {
+    if (g.t === 'img' && out.indexOf(g.code) < 0) out.push(g.code);
   });
   return out;
 }
@@ -4902,7 +5047,8 @@ function loadImgs(codes, cb) {
   });
 }
 
-function buildCanvas(kind, ids, title, pics, who) {
+function buildCanvas(kind, ids, title, pics, who, notes, options) {
+  options = sendOptions(kind, ids, options);
   pics = pics || {};
   var W = 900, PAD = 28, headH = 108, MAXW = W - PAD * 2 - 22;
   var TITLE_F = 'bold 23px Tahoma, Arial, sans-serif';
@@ -4921,7 +5067,7 @@ function buildCanvas(kind, ids, title, pics, who) {
     var h = Math.round(im.naturalHeight * (w / im.naturalWidth));
     return { im: im, w: Math.round(w), h: h };
   }
-  var rows = rowsFor(kind, ids).map(function (r) {
+  var rows = rowsFor(kind, ids, true).map(function (r) {
     ctx.font = TITLE_F;
     // الرقم يأخذ عرضه من الهامش فتصطفّ الأسماء تحت بعضها مهما طال الرقم
     var num = r.n + '.';
@@ -4948,7 +5094,23 @@ function buildCanvas(kind, ids, title, pics, who) {
     };
   });
 
-  var H = headH + rows.reduce(function (a, r) { return a + r.h; }, 0) + PAD / 2;
+  notes = String(notes || '').trim();
+  ctx.font = LINE_F;
+  var reqLines = [], reqContentH = 0;
+  if (options.requirements) segsOf(options.requirements).forEach(function (g) {
+    if (g.t === 'img') {
+      var pic = picLine(g.code);
+      if (pic) { reqLines.push(pic); reqContentH += pic.h + 8; }
+    } else wrapBlock(ctx, g.v, MAXW).forEach(function (line) {
+      reqLines.push(line); reqContentH += LINE_H;
+    });
+  });
+  var reqH = reqLines.length ? 54 + reqContentH : 0;
+  var NOTE_F = (options.notesBold ? 'bold ' : '') + LINE_F;
+  ctx.font = NOTE_F;
+  var noteLines = notes ? wrapBlock(ctx, notes, MAXW) : [];
+  var noteH = noteLines.length ? 24 + noteLines.length * LINE_H : 0;
+  var H = headH + rows.reduce(function (a, r) { return a + r.h; }, 0) + reqH + noteH + PAD / 2;
   c.width = W; c.height = H;
   ctx = c.getContext('2d');
   ctx.fillStyle = '#f0fdfa'; ctx.fillRect(0, 0, W, H);
@@ -4959,9 +5121,9 @@ function buildCanvas(kind, ids, title, pics, who) {
   ctx.direction = 'rtl'; ctx.textBaseline = 'middle';
   var when = new Date().toLocaleDateString('ar-SA-u-nu-latn');
   if (DB.showTitle) {
-    ctx.textAlign = 'right';
+    ctx.textAlign = 'center';
     ctx.fillStyle = '#fff'; ctx.font = 'bold 31px Tahoma, Arial, sans-serif';
-    ctx.fillText(title, W - PAD, 42);
+    ctx.fillText(title, W / 2, 42);
   }
   // الاسم والتاريخ طرفا سطرٍ واحد — لا ملتصقين بفاصلة
   var y2 = DB.showTitle ? 80 : 54;
@@ -5005,21 +5167,50 @@ function buildCanvas(kind, ids, title, pics, who) {
     });
     y += r.h;
   });
+  if (reqLines.length) {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(PAD / 2, y + 8, W - PAD, reqH - 12);
+    ctx.strokeStyle = '#94a3b8'; ctx.lineWidth = 1;
+    ctx.strokeRect(PAD / 2, y + 8, W - PAD, reqH - 12);
+    ctx.fillStyle = '#0f766e'; ctx.font = 'bold ' + LINE_F;
+    ctx.direction = 'rtl'; ctx.textAlign = 'right';
+    ctx.fillText('المتطلبات', W - PAD - 11, y + 28);
+    ctx.fillStyle = '#0f172a'; ctx.font = LINE_F;
+    var reqY = y + 54;
+    reqLines.forEach(function (line) {
+      if (typeof line !== 'string') {
+        ctx.drawImage(line.im, W - PAD - 11 - line.w, reqY - 8, line.w, line.h);
+        reqY += line.h + 8; return;
+      }
+      ctx.direction = dirOf(line); ctx.textAlign = ctx.direction === 'ltr' ? 'left' : 'right';
+      ctx.fillText(line, ctx.direction === 'ltr' ? PAD + 11 : W - PAD - 11, reqY); reqY += LINE_H;
+    });
+    y += reqH;
+  }
+  if (noteLines.length) {
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(PAD / 2, y + 4, W - PAD, noteH - 4);
+    ctx.fillStyle = options.notesColor; ctx.font = NOTE_F;
+    ctx.direction = dirOf(notes); ctx.textAlign = ctx.direction === 'ltr' ? 'left' : 'right';
+    var noteX = ctx.direction === 'ltr' ? PAD + 11 : W - PAD - 11;
+    var noteY = y + 24;
+    noteLines.forEach(function (line) { ctx.fillText(line, noteX, noteY); noteY += LINE_H; });
+  }
   return c;
 }
 /** يبني نفس ورقة الطباعة لكن يُخرجها ملف PDF ويفتح قائمة الإرسال مباشرةً. */
-window.pdfList = function (kind, ids, title, who) {
-  var body = itemsHtml(kind, ids);
+window.pdfList = function (kind, ids, title, who, notes, options) {
+  options = sendOptions(kind, ids, options);
+  var body = itemsHtml(kind, ids, options);
   if (!body) return toast('القائمة فارغة', 'er');
   if (!(window.AndroidBridge && typeof window.AndroidBridge.sharePdf === 'function')) {
     return toast('إرسال PDF متاح داخل التطبيق', 'er');
   }
-  window.AndroidBridge.sharePdf(printDoc(title, body, who), outName(title, who));
+  window.AndroidBridge.sharePdf(printDoc(title, body, who, notes, options), outName(title, who));
   toast('📄 يجري تجهيز ملف PDF…');
 };
 
 /** نصّ عادي للصق في واتساب أو أي مكان — أخفّ من الصورة وقابل للبحث. */
-function listText(kind, ids, title, who) {
+function listText(kind, ids, title, who, notes, options) {
+  options = sendOptions(kind, ids, options);
   var hd = DB.header || {}, lines = [];
   if (hd.name) lines.push(hd.name);
   if (hd.title) lines.push(hd.title);
@@ -5028,7 +5219,7 @@ function listText(kind, ids, title, who) {
   lines.push((DB.showTitle ? title + ' — ' : '') + (who ? who + ' — ' : '')
     + new Date().toLocaleDateString('ar-SA-u-nu-latn'));
   lines.push('');
-  rowsFor(kind, ids).forEach(function (r) {
+  rowsFor(kind, ids, true).forEach(function (r) {
     // LRM/RLM قبل الرقم: محرف غير مرئي يثبّت ترتيب السطر في واتساب وغيره
     var mark = dirOf(r.title) === 'ltr' ? '\u200E' : '\u200F';
     lines.push(mark + r.n + '. ' + r.title);
@@ -5038,11 +5229,14 @@ function listText(kind, ids, title, who) {
       for (var i = 1; i < segs.length; i++) lines.push('     ' + segs[i]);
     });
   });
+  if (options.requirements) { lines.push(''); lines.push('المتطلبات:'); lines.push(plainText(options.requirements)); }
+  notes = String(notes || '').trim();
+  if (notes) { lines.push(''); lines.push(notes); }
   return lines.join('\n');
 }
-window.copyList = function (kind, ids, title, who) {
+window.copyList = function (kind, ids, title, who, notes, options) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
-  var text = listText(kind, ids, title, who);
+  var text = listText(kind, ids, title, who, notes, options);
   if (window.AndroidBridge && typeof window.AndroidBridge.copyText === 'function') {
     window.AndroidBridge.copyText(text);
     return toast('📋 نُسخ النص — الصقه حيث تشاء');
@@ -5052,13 +5246,13 @@ window.copyList = function (kind, ids, title, who) {
       function () { toast('تعذّر النسخ', 'er'); });
   } catch (e) { toast('تعذّر النسخ', 'er'); }
 };
-window.shareList = function (kind, ids, title, imgTitle, who) {
+window.shareList = function (kind, ids, title, imgTitle, who, notes, options) {
   if (!ids.length) return toast('القائمة فارغة', 'er');
   var name = outName(title || kindLbl(kind).title, who);
   var head = imgTitle || (kindLbl(kind).icon + ' ' + (title || name));
   var fname = name.replace(/[ /\\]/g, '_') + '_' + new Date().toISOString().slice(0, 10) + '.png';
-  loadImgs(imgsUsed(kind, ids), function (pics) {
-    sendCanvas(buildCanvas(kind, ids, head, pics, who), fname);
+  loadImgs(imgsUsed(kind, ids, options), function (pics) {
+    sendCanvas(buildCanvas(kind, ids, head, pics, who, notes, options), fname);
   });
 };
 /** إرسال اللوحة: جسر أندرويد، أو مشاركة الويب، أو تنزيل — كما كان. */
@@ -5090,7 +5284,7 @@ function sendCanvas(canvas, fname) {
    صفحة واحدة تجمع كل مخارج القائمة: تعرض ما سيُرسَل فعلًا — الورقة (نفس
    تنسيق PDF والطباعة حرفيًا) أو الصورة (نفس لوحة الرسم المُرسَلة) — ثم
    شريط إرسال ثابت أسفلها. لا شيء يُرسَل قبل أن يراه المستخدم. */
-var PV = null, PV_TAB = 'paper';
+var PV = null, PV_TAB = 'details';
 
 /**
  * يفتح المعاينة لقائمة معيّنة (سلة أو مجموعة أو إرسالٌ سابق).
@@ -5103,13 +5297,19 @@ window.openPreview = function (kind, ids, title, imgTitle) {
   var live = liveIds(kind, ids);
   if (!live.length) { PV = null; return toast('لا عناصر في هذه القائمة', 'er'); }
   title = title || kindLbl(kind).title;
-  PV = { kind: kind, ids: live, off: {}, title: title,
+  PV = { kind: kind, ids: live, off: {}, title: title, who: '', notes: '', options: {}, reqEditedAt: null,
          imgTitle: imgTitle || (kindLbl(kind).icon + ' ' + title) };
-  PV_TAB = 'paper';
+  PV_TAB = 'details';
   goPage('pv');
   if (live.length < (ids || []).length) toast('أُسقطت عناصر لم تعد موجودة');
 };
-window.pvTab = function (t) { PV_TAB = t; render(); };
+window.pvTab = function (t) {
+  if (!PV || ['list', 'details', 'paper', 'img'].indexOf(t) < 0) return;
+  if (PV_TAB === 'details') { pvWho(); pvNotes(); }
+  if (t !== 'list' && !pvOn().length) return toast('حدّد عنصرًا واحدًا على الأقل للمتابعة', 'er');
+  PV_TAB = t;
+  render();
+};
 /** الصيغ الأربع — الأولى في الشريط هي آخر ما استعمله المستخدم. */
 var FMTS = [['pdf', '📄 PDF', 'wa'], ['img', '🖼️ صورة', 'wa'],
             ['print', '🖨️ طباعة', 'white'], ['copy', '📋 نسخ', 'white']];
@@ -5128,6 +5328,38 @@ window.pvWho = function () {
     if (who) who.textContent = PV.who;
   } catch (err) { /* بيئة بلا DOM كامل */ }
 };
+/** الكتابة تحفظ النص فقط، فلا يعاد بناء الحقل ولا يضيع موضع المؤشر. */
+window.pvNotes = function () {
+  var e = $('pv-notes');
+  if (PV && e) PV.notes = String(e.value || '');
+};
+function pvOptions() { return sendOptions(PV.kind, pvOn(), PV.options); }
+function pvSelectionKey() { return pvOn().slice().sort().join('\n'); }
+window.pvRequirements = function () {
+  var e = $('pv-requirements');
+  if (!PV || !e) return;
+  PV.options.requirements = String(e.value || '');
+  PV.reqEditedAt = pvSelectionKey();
+};
+window.pvResetRequirements = function () {
+  if (!PV) return;
+  delete PV.options.requirements;
+  PV.reqEditedAt = null;
+  render();
+};
+window.pvNoteStyle = function () {
+  if (!PV) return;
+  var color = $('pv-notes-color'), bold = $('pv-notes-bold');
+  if (color) PV.options.notesColor = color.value;
+  if (bold) PV.options.notesBold = !!bold.checked;
+  var opt = pvOptions(), notes = $('pv-notes');
+  if (notes) { notes.style.color = opt.notesColor; notes.style.fontWeight = opt.notesBold ? 'bold' : 'normal'; }
+};
+function pvRequirementsHint() {
+  return PV.reqEditedAt !== null && PV.reqEditedAt !== pvSelectionKey()
+    ? '<div class="hint">تغيّرت العناصر بعد تعديل المتطلبات. راجع المتطلبات أو '
+      + '<button class="btn sm" onclick="pvResetRequirements()">استعادة متطلبات العناصر</button></div>' : '';
+}
 
 /** تنسيق الورقة محصورًا داخل `.paper` — يُعاد بناؤه إذا تغيّرت الكثافة. */
 var PV_CSS = null;
@@ -5163,11 +5395,11 @@ function pvImgFill() {
   if (!PV) return;
   try {
     var ids = pvOn();
-    loadImgs(imgsUsed(PV.kind, ids), function (pics) {
+    loadImgs(imgsUsed(PV.kind, ids, pvOptions()), function (pics) {
       var box = $('pv-img');
       if (!box || PV_TAB !== 'img') return;
       try {
-        var c = buildCanvas(PV.kind, ids, PV.imgTitle, pics, PV.who);
+        var c = buildCanvas(PV.kind, ids, PV.imgTitle, pics, PV.who, PV.notes, pvOptions());
         box.innerHTML = '<img alt="معاينة الصورة" src="' + c.toDataURL('image/png') + '">';
       } catch (e) {
         box.innerHTML = '<div class="es">تعذّر توليد الصورة — جرّب الورقة أو الإرسال مباشرة</div>';
@@ -5180,11 +5412,17 @@ function renderPreview() {
   if (!PV) { h('page', emptyBox('👁️', 'لا يوجد ما يُعرَض', 'اختر عناصر ثم اضغط «عرض وإرسال»')); return; }
   ensurePreviewCss();
   var on = pvOn(), n = on.length, all = PV.ids.length, L = kindLbl(PV.kind);
-  var html = '<div class="pvtabs">'
-    + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
-    + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button>'
-    + '<button class="pvt' + (PV_TAB === 'list' ? ' on' : '') + '" onclick="pvTab(\'list\')">☑️ اختر وأعِد الترتيب</button>'
-    + '</div>'
+  var opt = pvOptions();
+  var finalStep = PV_TAB === 'paper' || PV_TAB === 'img';
+  var step = finalStep ? 'paper' : PV_TAB;
+  var html = '<nav class="pvsteps" aria-label="مراحل الإرسال">'
+    + [['list', '١. اختيار العناصر'], ['details', '٢. بيانات الإرسال'], ['paper', '٣. المعاينة والإرسال']]
+      .map(function (s) {
+        return '<button class="pvstep' + (step === s[0] ? ' on' : '') + '"'
+          + (step === s[0] ? ' aria-current="step"' : '')
+          + ' onclick="pvTab(\'' + s[0] + '\')">' + s[1] + '</button>';
+      }).join('')
+    + '</nav>'
     + '<div class="hint">' + L.icon + ' ' + esc(PV.title) + ' — '
     + (n === all ? countWord(n, L.one, L.two, L.few, L.many)
                  : '<b>' + n + ' من ' + all + '</b> ' + L.few)
@@ -5192,16 +5430,51 @@ function renderPreview() {
         + ' onclick="pvDense()">' + (DB.dense ? '📄 عادي' : '🗜️ مضغوط') + '</button>' : '')
     + '</div>';
 
-  // اسم المريض اختياري بالكامل: فارغ = لا يظهر شيء في الورقة ولا اسم الملف
-  html += '<div class="f pvwho"><label>اسم المريض (اختياري)</label>'
-    + '<input id="pv-who" class="inp" value="' + esc(PV.who || '') + '"'
-    + ' placeholder="يظهر في الورقة وفي اسم الملف" oninput="pvWho()"></div>';
+  if (PV_TAB === 'details') {
+    html += '<div class="card pvdetails"><div class="hint">الحقول اختيارية. الحقل الفارغ لا يظهر في الإرسال.</div>'
+      + '<div class="f pvwho"><label for="pv-who">اسم المريض (اختياري)</label>'
+      + '<input id="pv-who" class="inp" value="' + esc(PV.who || '') + '"'
+      + ' placeholder="يظهر في الورقة وفي اسم الملف" oninput="pvWho()"></div>'
+      + '<div class="f pvrequirements"><label for="pv-requirements">المتطلبات أسفل القائمة</label>'
+      + '<div class="sub">تُجمع من العناصر المختارة دون تكرار حسب الحقول المرسلة. كل متطلب في سطر مستقل، وتعديلك لهذه الإرسالية فقط.</div>'
+      + '<textarea id="pv-requirements" class="inp" rows="4" dir="auto" oninput="pvRequirements()"'
+      + ' placeholder="أضف متطلبات التحليل أو العلاج هنا">'
+      + esc(typeof PV.options.requirements === 'string' ? PV.options.requirements : opt.requirements) + '</textarea>'
+      + '<button class="btn sm" onclick="pvResetRequirements()">استعادة متطلبات العناصر</button>'
+      + pvRequirementsHint() + '</div>'
+      + '<div class="f"><label for="pv-notes">ملاحظات الإرسال (اختياري)</label>'
+      + '<div class="pv-note-tools"><label for="pv-notes-color">لون الملاحظات</label>'
+      + '<select id="pv-notes-color" class="inp" onchange="pvNoteStyle()">'
+      + [['#0f172a', 'أسود'], ['#b91c1c', 'أحمر'], ['#1d4ed8', 'أزرق'], ['#047857', 'أخضر'], ['#7e22ce', 'بنفسجي']]
+        .concat(['#0f172a', '#b91c1c', '#1d4ed8', '#047857', '#7e22ce'].indexOf(opt.notesColor) < 0 ? [[opt.notesColor, 'لون محفوظ']] : [])
+        .map(function (color) { return '<option value="' + color[0] + '"' + (opt.notesColor === color[0] ? ' selected' : '') + '>' + color[1] + '</option>'; }).join('')
+      + '</select><label class="pv-bold"><input id="pv-notes-bold" type="checkbox"'
+      + (opt.notesBold ? ' checked' : '') + ' onchange="pvNoteStyle()">خط غامق</label></div>'
+      + '<textarea id="pv-notes" class="inp" rows="4" dir="auto"'
+      + ' style="' + noteStyle(opt) + '" placeholder="تظهر بعد مربع المتطلبات" oninput="pvNotes()">'
+      + esc(PV.notes || '') + '</textarea>'
+      + '<div class="sub">التنسيق للملاحظات كاملة في الصورة وPDF والطباعة. النسخ ينقل النص دون تنسيق.</div></div></div>';
+  } else if (PV_TAB === 'list') html += pvListHtml();
+  else {
+    html += '<div class="pvtabs pvformat" aria-label="شكل المعاينة">'
+      + '<button class="pvt' + (PV_TAB === 'paper' ? ' on' : '') + '" onclick="pvTab(\'paper\')">📄 الورقة</button>'
+      + '<button class="pvt' + (PV_TAB === 'img' ? ' on' : '') + '" onclick="pvTab(\'img\')">🖼️ الصورة</button></div>';
+    html += pvRequirementsHint();
+    html += PV_TAB === 'img' ? pvImgHtml()
+      : '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, on, opt), PV.who, PV.notes, opt) + '</div>';
+  }
 
-  if (PV_TAB === 'img') html += pvImgHtml();
-  else if (PV_TAB === 'list') html += pvListHtml();
-  else html += '<div class="paper">' + docBody(PV.title, itemsHtml(PV.kind, on), PV.who) + '</div>';
+  html += '<div class="pvactions">';
+  if (PV_TAB === 'details') {
+    html += '<button class="btn" onclick="pvTab(\'list\')">السابق: اختيار العناصر</button>'
+      + '<button class="btn primary" onclick="pvTab(\'paper\')">التالي: المعاينة والإرسال</button>';
+  } else if (PV_TAB === 'list') {
+    html += '<button class="btn primary"' + (n ? '' : ' disabled')
+      + ' onclick="pvTab(\'details\')">التالي: بيانات الإرسال</button>';
+  } else html += '<button class="btn" onclick="pvTab(\'details\')">السابق: بيانات الإرسال</button>';
+  html += '</div>';
 
-  html += '<div class="pvbar">' + FMTS.slice()
+  if (finalStep) html += '<div class="pvbar">' + FMTS.slice()
     .sort(function (a, b) {                       // المفضّلة أولًا
       return (b[0] === DB.fmt ? 1 : 0) - (a[0] === DB.fmt ? 1 : 0);
     })
@@ -5230,7 +5503,6 @@ function pvListHtml() {
     + '<button class="btn sm" onclick="pvAll(1)">☑️ تحديد الكل</button>'
     + '<button class="btn sm" onclick="pvAll(0)">⬜ إلغاء الكل</button>'
     + '<span class="pvsel-n">' + on + ' / ' + all + '</span></div>'
-    + '<button class="btn full" onclick="pvKeepOrder()">💾 احفظ هذا الترتيب للقسم</button>'
     + PV.ids.map(function (id, i) {
       var o = itemById(PV.kind, id), off = !!(PV.off && PV.off[id]);
       return '<div class="card pvrow' + (off ? ' off' : '') + '"><div class="row">'
@@ -5241,8 +5513,7 @@ function pvListHtml() {
         + '<button class="ic"' + (i === 0 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',-1)">⬆️</button>'
         + '<button class="ic"' + (i === PV.ids.length - 1 ? ' disabled' : '') + ' onclick="pvMove(' + i + ',1)">⬇️</button>'
         + '</div></div>';
-    }).join('')
-    + '<div class="pvpad"></div>';
+    }).join('');
 }
 /** المؤشَّر منها بترتيبه — هو وحده ما يُطبع ويُرسل ويُسجَّل. */
 function pvOn() {
@@ -5295,20 +5566,22 @@ window.pvSend = function (how) {
   var ids = pvOn();
   if (!ids.length) return toast('لم تؤشّر شيئًا للإرسال', 'er');
   pvWho();
-  var who = PV.who || '';
-  if (how === 'pdf') pdfList(PV.kind, ids, PV.title, who);
-  else if (how === 'img') shareList(PV.kind, ids, PV.title, PV.imgTitle, who);
-  else if (how === 'print') printList(PV.kind, ids, PV.title, who);
-  else copyList(PV.kind, ids, PV.title, who);
+  pvNotes();
+  var who = PV.who || '', notes = PV.notes || '', opt = pvOptions();
+  if (how === 'pdf') pdfList(PV.kind, ids, PV.title, who, notes, opt);
+  else if (how === 'img') shareList(PV.kind, ids, PV.title, PV.imgTitle, who, notes, opt);
+  else if (how === 'print') printList(PV.kind, ids, PV.title, who, notes, opt);
+  else copyList(PV.kind, ids, PV.title, who, notes, opt);
   if (DB.fmt !== how) { DB.fmt = how; Store.setFmt(); }
-  logSent(PV.kind, ids, PV.title, who);
+  logSent(PV.kind, ids, PV.title, who, notes, opt);
 };
 
 /* ── سجل الإرسالات ──────────────────────────────────────────────
    لقطة لما أُرسِل فعلًا: تعيده بضغطة بلا إعادة تحديد. لا يحفظ العناصر
    نفسها بل معرّفاتها، فما حُذف منها لاحقًا يُستبعَد عند الاسترجاع. */
-function logSent(kind, ids, title, who) {
+function logSent(kind, ids, title, who, notes, options) {
   var rec = { id: uid(), kind: kind, title: title || '', who: who || '',
+              notes: String(notes || '').trim(), send_options: JSON.stringify(sendOptions(kind, ids, options)),
               ids: ids.slice(), ts: Date.now() };
   DB.sent.unshift(rec);
   DB.sent = DB.sent.slice(0, 10);
@@ -5354,7 +5627,11 @@ window.sentOpen = function (id) {
   var live = r.ids.filter(function (i) { return itemById(r.kind, i); });
   if (!live.length) return toast('عناصر هذه القائمة لم تعد موجودة', 'er');
   openPreview(r.kind, live, r.title, null);
-  if (PV) PV.who = r.who || '';
+  if (PV) {
+    PV.who = r.who || ''; PV.notes = r.notes || '';
+    PV.options = readSendOptions(r.send_options);
+    PV.reqEditedAt = typeof PV.options.requirements === 'string' ? r.ids.slice().sort().join('\n') : null;
+  }
   if (live.length < r.ids.length) toast('بعض العناصر حُذفت — عُرِض الباقي');
   render();
 };
